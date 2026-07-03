@@ -67,7 +67,7 @@ cargo run -- --x11 --render-profile=compat
 cargo run -- --wayland --render-profile=compat
 ```
 
-Every desktop run prints a startup line with the selected window mode, X11/Wayland display detection, Winit backend, render profile, audio state, and asset mode. If no display is detected, the app now auto-selects headless mode (`window=disabled(headless-smoke)`); force a popup with `cargo run -- --windowed`, or keep auto headless and run `cargo run -- --headless-smoke --no-audio`.
+Every desktop run prints a startup line with the selected window mode, X11/Wayland display detection, Winit backend, render profile, audio state, and asset mode. The app now defaults to a popup window, and only enters headless smoke mode when explicitly requested (`--headless-smoke` or `BEVY_OPEN_ARPG_HEADLESS_SMOKE=1`); for CI/no-window runs, keep `--headless-smoke` or `BEVY_OPEN_ARPG_HEADLESS_SMOKE=1`.
 
 ## Controls
 
