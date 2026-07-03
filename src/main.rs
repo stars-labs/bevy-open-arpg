@@ -2079,11 +2079,19 @@ pub(crate) fn valor_summary(stats: &RunStats) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn with_env_values<F>(display: Option<&str>, wayland_display: Option<&str>, action: F)
     where
         F: FnOnce(),
     {
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned");
+
         let old_display = std::env::var_os("DISPLAY");
         let old_wayland = std::env::var_os("WAYLAND_DISPLAY");
         let old_headless = std::env::var_os("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
