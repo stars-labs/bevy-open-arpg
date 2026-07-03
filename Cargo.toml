@@ -1,0 +1,111 @@
+[package]
+name = "bevy-open-arpg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.19", default-features = false, features = [
+    # Core desktop ARPG profiles.
+    "3d",
+    "ui",
+    "audio-all-formats",
+    "scene",
+    "picking",
+    # These are also pulled in by the profiles above today, but the game relies
+    # on them directly for Blender-authored monsters, HUD focus/widgets, and
+    # click targeting. Keep them visible when auditing Bevy feature drift.
+    "bevy_animation",
+    "gltf_animation",
+    "morph",
+    "morph_animation",
+    "bevy_input_focus",
+    "bevy_ui_widgets",
+    "mesh_picking",
+    "ui_picking",
+    # `3d`/`ui` pull these through `default_platform`; keep them explicit so
+    # the native runtime requirements stay visible when auditing Bevy features.
+    "accesskit_unix",
+    "bevy_clipboard",
+    "default_font",
+    "multi_threaded",
+    "webgl2",
+    "area_light_luts",
+    "asset_processor",
+    "basis-universal",
+    "bevy_remote",
+    "bevy_settings",
+    "bevy_ui_debug",
+    "bluenoise_texture",
+    "bmp",
+    "compressed_image_saver",
+    "custom_cursor",
+    "dds",
+    "dfg_lut",
+    "experimental_pbr_pcss",
+    "exr",
+    "ff",
+    "gamepad",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "ktx2",
+    "pbr_anisotropy_texture",
+    "pbr_clustered_decals",
+    "pbr_light_textures",
+    "pbr_multi_layer_material_textures",
+    "pbr_specular_textures",
+    "pbr_transmission_textures",
+    "pnm",
+    "qoi",
+    "raw_vulkan_init",
+    "reflect_documentation",
+    "reflect_functions",
+    "serialize",
+    "shader_format_glsl",
+    "shader_format_spirv",
+    "shader_format_wesl",
+    "smaa_luts",
+    "sysinfo_plugin",
+    "system_clipboard",
+    "system_font_discovery",
+    "tga",
+    "tiff",
+    "tonemapping_luts",
+    "wayland",
+    "webp",
+    "x11",
+    "zlib",
+    "zstd_rust",
+] }
+bevy_render = { version = "0.19", default-features = false, features = ["gles"] }
+rand = "0.9"
+rodio = { version = "0.20.1", default-features = false, features = ["flac", "mp3", "vorbis", "wav"] }
+ron = "0.11"
+serde = { version = "1", features = ["derive"] }
+
+[features]
+default = []
+dev_tools = [
+    "bevy/bevy_camera_controller",
+    "bevy/bevy_debug_stepping",
+    "bevy/debug_glam_assert",
+    "bevy/detailed_trace",
+    "bevy/dev",
+    "bevy/dynamic_linking",
+    "bevy/file_watcher",
+    "bevy/free_camera",
+    "bevy/glam_assert",
+    "bevy/schedule_data",
+    "bevy/trace",
+    "bevy/trace_chrome",
+    "bevy/track_location",
+    "bevy/type_label_buffers",
+]
+ci = ["bevy/bevy_ci_testing"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
