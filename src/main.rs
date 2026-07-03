@@ -481,14 +481,19 @@ impl OpenArpgRuntimeConfig {
         let debug_visuals_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_DEBUG_GIZMOS");
         let explicit_headless_request = args.headless_smoke.is_some();
         let headless_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
-        let headless_smoke_auto = !explicit_headless_request
-            && headless_from_env.is_none()
-            && !open_arpg_display_is_present();
-        let headless_smoke = args
-            .headless_smoke
-            .or(headless_from_env)
-            .or(Some(headless_smoke_auto))
-            .unwrap_or(false);
+        let display_is_present = open_arpg_display_is_present();
+        let requested_windowed = args.headless_smoke == Some(false);
+        let headless_smoke_auto =
+            (!explicit_headless_request && headless_from_env.is_none() && !display_is_present)
+                || (args.headless_smoke == Some(false) && !display_is_present);
+        let headless_smoke = if requested_windowed && !display_is_present {
+            true
+        } else {
+            args.headless_smoke
+                .or(headless_from_env)
+                .or(Some(!display_is_present))
+                .unwrap_or(false)
+        };
         Self {
             audio_enabled: args.audio_enabled.or(audio_from_env).unwrap_or(true),
             audio_locked: args.audio_enabled.is_some() || audio_from_env.is_some(),
@@ -2172,8 +2177,9 @@ mod tests {
 
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
-            assert!(!config.headless_smoke);
-            assert!(!config.headless_smoke_auto);
+            assert!(config.headless_smoke);
+            assert!(config.headless_smoke_auto);
+            assert!(config.window_backend.is_none());
         });
     }
 
