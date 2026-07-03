@@ -598,6 +598,17 @@ fn main() {
     let config = OpenArpgRuntimeConfig::from_env();
     apply_process_env_overrides(config);
     log_startup_window_diagnostic(config);
+
+    if !config.headless_smoke && !open_arpg_display_is_present() {
+        eprintln!(
+            "No graphical display server was detected. Bevy Open ARPG will not start windowed here.",
+        );
+        eprintln!(
+            "Set DISPLAY or WAYLAND_DISPLAY in this shell and relaunch, or run with `cargo run -- --headless-smoke` to continue in smoke mode.",
+        );
+        std::process::exit(1);
+    }
+
     let mut app = build_app(config);
     app.run();
 }
@@ -871,6 +882,39 @@ fn open_arpg_audio_enabled_from_env() -> Option<bool> {
             "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO"
         )
     })
+}
+
+fn open_arpg_display_is_present() -> bool {
+    let env_display_present = env_value_present(std::env::var("DISPLAY").ok().as_deref())
+        || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref());
+
+    if env_display_present {
+        return true;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+
+        if Path::new("/tmp/.X11-unix").exists() {
+            return true;
+        }
+
+        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+            let wayland_dir = Path::new(&runtime_dir);
+            if wayland_dir.exists() {
+                if std::fs::read_dir(wayland_dir).ok().is_some_and(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .any(|entry| entry.file_name().to_string_lossy().starts_with("wayland-"))
+                }) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 fn parse_open_arpg_cli_args<I, S>(args: I) -> OpenArpgCliArgs
