@@ -12712,19 +12712,21 @@ fn cooldown_label(seconds: f32) -> String {
     }
 }
 
+fn queue_safe_despawn(mut commands: Commands, entity: Entity) {
+    // `try_despawn` is the safest API for one-shot teardown:
+    // it is silent when the entity is already invalid.
+    commands.entity(entity).try_despawn();
+}
+
 fn despawn_menu(mut commands: Commands, query: Query<Entity, (With<MenuUi>, Without<ChildOf>)>) {
     for entity in &query {
-        if let Ok(mut entity_commands) = commands.get_entity(entity) {
-            entity_commands.try_despawn();
-        }
+        queue_safe_despawn(commands.reborrow(), entity);
     }
 }
 
 fn despawn_hud(mut commands: Commands, query: Query<Entity, (With<HudUi>, Without<ChildOf>)>) {
     for entity in &query {
-        if let Ok(mut entity_commands) = commands.get_entity(entity) {
-            entity_commands.try_despawn();
-        }
+        queue_safe_despawn(commands.reborrow(), entity);
     }
 }
 
@@ -12743,9 +12745,7 @@ fn update_minimap(
         **text = minimap_objective_line(&progress);
     }
     for entity in &dots {
-        if let Ok(mut entity_commands) = commands.get_entity(entity) {
-            entity_commands.try_despawn();
-        }
+        queue_safe_despawn(commands.reborrow(), entity);
     }
 
     let (player, enemies, loot, health_globes, fury_globes, interactables) = queries;

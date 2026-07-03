@@ -131,9 +131,81 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
     });
 }
 
-fn finish_loading(assets: Option<Res<GameAssets>>, mut next_state: ResMut<NextState<GameState>>) {
-    if assets.is_none() {
+fn finish_loading(
+    assets: Option<Res<GameAssets>>,
+    asset_server: Res<AssetServer>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    if !game_assets_ready(&asset_server, &assets) {
         return;
     }
+    info!("asset loading complete, entering MainMenu");
     next_state.set(GameState::MainMenu);
+}
+
+fn game_assets_ready(asset_server: &AssetServer, assets: &GameAssets) -> bool {
+    let handles = [
+        &assets.hero,
+        &assets.skeleton,
+        &assets.cultist,
+        &assets.butcher,
+        &assets.sword,
+        &assets.chest,
+        &assets.altar,
+        &assets.quartermaster,
+        &assets.fortune_shrine,
+        &assets.storm_shrine,
+        &assets.healing_well,
+        &assets.cursed_shrine,
+        &assets.blood_obelisk,
+        &assets.reliquary_vault,
+        &assets.ember_rift_prop,
+        &assets.ashen_pylon,
+        &assets.lore_page,
+        &assets.breakable_urn,
+        &assets.breakable_coffer,
+        &assets.slash_arc,
+        &assets.hit_spark,
+        &assets.bone_shatter,
+        &assets.bone_impact,
+        &assets.blood_spray,
+        &assets.execution_burst,
+        &assets.arcane_impact,
+        &assets.holy_impact,
+        &assets.ember_impact,
+        &assets.frost_impact,
+        &assets.void_impact,
+        &assets.frenzy_impact,
+        &assets.vampiric_siphon,
+        &assets.desecrator_burst,
+        &assets.guard_clash,
+        &assets.armor_break,
+        &assets.soul_ward_hit,
+        &assets.hit_bone_rune,
+        &assets.hit_bone_lock,
+        &assets.marrow_flash,
+        &assets.bone_fracture_echo,
+        &assets.elite_affix_break,
+        &assets.shadow_burst,
+        &assets.headshot_burst,
+        &assets.crit_bone_crown,
+        &assets.crit_burst,
+        &assets.stagger_burst,
+        &assets.shadow_trail,
+        &assets.loot_prism,
+        &assets.objective_sigil,
+        &assets.ember_vent,
+        &assets.boss_summon_portal,
+        &assets.affix_ember_aura,
+        &assets.affix_arcane_aura,
+        &assets.affix_frost_aura,
+        &assets.affix_blood_aura,
+        &assets.affix_ward_aura,
+    ];
+    handles
+        .into_iter()
+        .all(|handle| asset_server.is_loaded_with_dependencies(handle))
 }
