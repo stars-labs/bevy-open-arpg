@@ -463,6 +463,7 @@ struct OpenArpgRuntimeConfig {
     asset_mode: OpenArpgAssetMode,
     render_profile: Option<OpenArpgRenderProfile>,
     window_backend: Option<OpenArpgWindowBackend>,
+    headless_smoke_auto: bool,
 }
 
 impl OpenArpgRuntimeConfig {
@@ -478,6 +479,16 @@ impl OpenArpgRuntimeConfig {
         let args = parse_open_arpg_cli_args(args);
         let audio_from_env = open_arpg_audio_enabled_from_env();
         let debug_visuals_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_DEBUG_GIZMOS");
+        let explicit_headless_request = args.headless_smoke.is_some();
+        let headless_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
+        let headless_smoke_auto = !explicit_headless_request
+            && headless_from_env.is_none()
+            && !open_arpg_display_is_present();
+        let headless_smoke = args
+            .headless_smoke
+            .or(headless_from_env)
+            .or(Some(headless_smoke_auto))
+            .unwrap_or(false);
         Self {
             audio_enabled: args.audio_enabled.or(audio_from_env).unwrap_or(true),
             audio_locked: args.audio_enabled.is_some() || audio_from_env.is_some(),
@@ -494,9 +505,8 @@ impl OpenArpgRuntimeConfig {
             free_camera_enabled: args
                 .free_camera_enabled
                 .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_FREE_CAMERA")),
-            headless_smoke: args
-                .headless_smoke
-                .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_HEADLESS_SMOKE")),
+            headless_smoke,
+            headless_smoke_auto,
             remote_enabled: args
                 .remote_enabled
                 .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_REMOTE")),
@@ -852,6 +862,11 @@ fn open_arpg_audio_enabled_from_env() -> Option<bool> {
     })
 }
 
+fn open_arpg_display_is_present() -> bool {
+    env_value_present(std::env::var("DISPLAY").ok().as_deref())
+        || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref())
+}
+
 fn parse_open_arpg_cli_args<I, S>(args: I) -> OpenArpgCliArgs
 where
     I: IntoIterator<Item = S>,
@@ -1012,7 +1027,11 @@ fn startup_window_diagnostic(
         )
     };
 
-    if !config.headless_smoke && !display_present {
+    if config.headless_smoke && config.headless_smoke_auto && !display_present {
+        message.push_str(
+            " No DISPLAY or WAYLAND_DISPLAY was detected, so headless mode was auto-selected for this startup.",
+        );
+    } else if !config.headless_smoke && !display_present {
         message.push_str(
             " No DISPLAY or WAYLAND_DISPLAY was detected, so a desktop window cannot be created from this process. Run from a graphical terminal, or use `cargo run -- --headless-smoke --no-audio` for a no-window smoke test.",
         );
@@ -2061,6 +2080,53 @@ pub(crate) fn valor_summary(stats: &RunStats) -> String {
 mod tests {
     use super::*;
 
+    fn with_env_values<F>(display: Option<&str>, wayland_display: Option<&str>, action: F)
+    where
+        F: FnOnce(),
+    {
+        let old_display = std::env::var_os("DISPLAY");
+        let old_wayland = std::env::var_os("WAYLAND_DISPLAY");
+        let old_headless = std::env::var_os("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
+
+        unsafe {
+            match display {
+                Some(value) => std::env::set_var("DISPLAY", value),
+                None => std::env::remove_var("DISPLAY"),
+            }
+        }
+        unsafe {
+            match wayland_display {
+                Some(value) => std::env::set_var("WAYLAND_DISPLAY", value),
+                None => std::env::remove_var("WAYLAND_DISPLAY"),
+            }
+        }
+        unsafe {
+            std::env::remove_var("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
+        }
+
+        action();
+
+        unsafe {
+            match old_headless {
+                Some(value) => std::env::set_var("BEVY_OPEN_ARPG_HEADLESS_SMOKE", value),
+                None => std::env::remove_var("BEVY_OPEN_ARPG_HEADLESS_SMOKE"),
+            }
+        }
+
+        unsafe {
+            match old_display {
+                Some(value) => std::env::set_var("DISPLAY", value),
+                None => std::env::remove_var("DISPLAY"),
+            }
+        }
+        unsafe {
+            match old_wayland {
+                Some(value) => std::env::set_var("WAYLAND_DISPLAY", value),
+                None => std::env::remove_var("WAYLAND_DISPLAY"),
+            }
+        }
+    }
+
     fn runtime_config_for_test(headless_smoke: bool) -> OpenArpgRuntimeConfig {
         OpenArpgRuntimeConfig {
             audio_enabled: true,
@@ -2077,7 +2143,51 @@ mod tests {
             asset_mode: OpenArpgAssetMode::Unprocessed,
             render_profile: None,
             window_backend: None,
+            headless_smoke_auto: false,
         }
+    }
+
+    #[test]
+    fn headless_smoke_auto_fallback_when_no_display_server_is_detected() {
+        with_env_values(None, None, || {
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
+            assert!(config.headless_smoke);
+            assert!(config.headless_smoke_auto);
+            assert!(config.window_backend.is_none());
+        });
+
+        with_env_values(Some(":0"), None, || {
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
+            assert!(!config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
+        });
+
+        with_env_values(None, None, || {
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
+            assert!(!config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
+        });
+    }
+
+    #[test]
+    fn headless_smoke_env_is_obeyed_even_without_display() {
+        with_env_values(None, None, || {
+            unsafe {
+                std::env::set_var("BEVY_OPEN_ARPG_HEADLESS_SMOKE", "off");
+            }
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
+            assert!(!config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
+        });
+
+        with_env_values(None, None, || {
+            unsafe {
+                std::env::set_var("BEVY_OPEN_ARPG_HEADLESS_SMOKE", "1");
+            }
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
+            assert!(config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
+        });
     }
 
     #[test]
