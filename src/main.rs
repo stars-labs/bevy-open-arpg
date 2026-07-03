@@ -482,12 +482,11 @@ impl OpenArpgRuntimeConfig {
         let explicit_headless_request = args.headless_smoke.is_some();
         let headless_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
         let display_is_present = open_arpg_display_is_present();
-        let requested_windowed = args.headless_smoke == Some(false);
+        let explicit_windowed_request = args.headless_smoke == Some(false);
         let headless_smoke_auto =
-            (!explicit_headless_request && headless_from_env.is_none() && !display_is_present)
-                || (args.headless_smoke == Some(false) && !display_is_present);
-        let headless_smoke = if requested_windowed && !display_is_present {
-            true
+            !explicit_headless_request && headless_from_env.is_none() && !display_is_present;
+        let headless_smoke = if explicit_windowed_request {
+            false
         } else {
             args.headless_smoke
                 .or(headless_from_env)
@@ -606,10 +605,26 @@ pub fn not_paused(pause: Res<PauseState>) -> bool {
 
 fn main() {
     let config = OpenArpgRuntimeConfig::from_env();
+    if should_fail_fast_on_missing_display(config) {
+        eprintln!(
+            "{}",
+            startup_window_diagnostic(
+                config,
+                std::env::var("DISPLAY").ok().as_deref(),
+                std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
+                std::env::var("WINIT_UNIX_BACKEND").ok().as_deref(),
+            )
+        );
+        std::process::exit(1);
+    }
     apply_process_env_overrides(config);
     log_startup_window_diagnostic(config);
     let mut app = build_app(config);
     app.run();
+}
+
+fn should_fail_fast_on_missing_display(config: OpenArpgRuntimeConfig) -> bool {
+    !config.headless_smoke && !open_arpg_display_is_present()
 }
 
 fn build_app(config: OpenArpgRuntimeConfig) -> App {
@@ -1036,14 +1051,16 @@ fn startup_window_diagnostic(
         message.push_str(
             " No DISPLAY or WAYLAND_DISPLAY was detected, so headless mode was auto-selected for this startup.",
         );
-    } else if !config.headless_smoke && !display_present {
-        message.push_str(
-            " No DISPLAY or WAYLAND_DISPLAY was detected, so a desktop window cannot be created from this process. Run from a graphical terminal, or use `cargo run -- --headless-smoke --no-audio` for a no-window smoke test.",
-        );
     } else if !config.headless_smoke {
-        message.push_str(
-            " If no window appears, retry `cargo run -- --x11 --render-profile=compat` or `cargo run -- --wayland --render-profile=compat`.",
-        );
+        if display_present {
+            message.push_str(
+                " If no window appears, retry `cargo run -- --x11 --render-profile=compat` or `cargo run -- --wayland --render-profile=compat`.",
+            );
+        } else {
+            message.push_str(
+                " A graphical display server was not detected, but windowed mode was requested. Verify `DISPLAY`/`WAYLAND_DISPLAY` in your shell launch context, then retry with a matching backend switch (`--x11` or `--wayland`) or unset `--headless-smoke` overrides.",
+            );
+        }
     }
     message.push_str(&format!(
         " Feature audit: {}.",
@@ -2177,9 +2194,24 @@ mod tests {
 
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
-            assert!(config.headless_smoke);
-            assert!(config.headless_smoke_auto);
+            assert!(!config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
             assert!(config.window_backend.is_none());
+        });
+    }
+
+    #[test]
+    fn explicit_windowed_request_is_not_headless_when_no_display_is_detected() {
+        with_env_values(None, None, || {
+            let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
+
+            assert_eq!(config.headless_smoke, false);
+            assert_eq!(config.headless_smoke_auto, false);
+            assert!(
+                startup_window_diagnostic(config, None, None, None).contains(
+                    "A graphical display server was not detected, but windowed mode was requested",
+                )
+            );
         });
     }
 
@@ -2784,9 +2816,8 @@ mod tests {
         let diagnostic = startup_window_diagnostic(config, None, Some(" "), None);
 
         assert!(diagnostic.contains("display=none"));
-        assert!(diagnostic.contains("No DISPLAY or WAYLAND_DISPLAY was detected"));
-        assert!(diagnostic.contains("desktop window cannot be created"));
-        assert!(diagnostic.contains("cargo run -- --headless-smoke --no-audio"));
+        assert!(diagnostic.contains("A graphical display server was not detected"));
+        assert!(diagnostic.contains("Verify `DISPLAY`/`WAYLAND_DISPLAY`"));
         assert!(
             diagnostic.contains("Feature audit: profiles=3d+ui+scene+picking+audio-all-formats")
         );

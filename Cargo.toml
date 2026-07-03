@@ -5,15 +5,17 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.19", default-features = false, features = [
-    # Core desktop ARPG profiles.
+    # Core desktop ARPG feature profile.
+    "default_app",
+    "default_platform",
     "3d",
+    "3d_bevy_render",
     "ui",
+    "ui_bevy_render",
     "audio-all-formats",
     "scene",
     "picking",
-    # These are also pulled in by the profiles above today, but the game relies
-    # on them directly for Blender-authored monsters, HUD focus/widgets, and
-    # click targeting. Keep them visible when auditing Bevy feature drift.
+    # These are also used directly by the game codepaths, so keep them explicit.
     "bevy_animation",
     "gltf_animation",
     "morph",
