@@ -28,7 +28,7 @@ use bevy::anti_alias::{
     AntiAliasPlugin,
     smaa::{Smaa, SmaaPreset},
 };
-use bevy::app::{AppExit, ScheduleRunnerPlugin};
+use bevy::app::AppExit;
 use bevy::asset::{AssetApp, AssetMode, AssetPlugin};
 use bevy::audio::AudioPlugin;
 use bevy::camera::Hdr;
@@ -458,6 +458,8 @@ struct OpenArpgRuntimeConfig {
     #[cfg(feature = "dev_tools")]
     free_camera_enabled: bool,
     headless_smoke: bool,
+    headless_smoke_auto: bool,
+    headless_smoke_fallback_forced: bool,
     remote_enabled: bool,
     smoke_frames: u32,
     asset_mode: OpenArpgAssetMode,
@@ -479,11 +481,24 @@ impl OpenArpgRuntimeConfig {
         let audio_from_env = open_arpg_audio_enabled_from_env();
         let debug_visuals_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_DEBUG_GIZMOS");
         let headless_from_env = open_arpg_env_flag_value("BEVY_OPEN_ARPG_HEADLESS_SMOKE");
+        let explicit_headless_request = args.headless_smoke.is_some();
         let explicit_windowed_request = args.headless_smoke == Some(false);
+        let display_is_present = open_arpg_display_is_present();
+        let mut headless_smoke_fallback_forced = false;
+        let headless_smoke_auto =
+            !explicit_headless_request && headless_from_env.is_none() && !display_is_present;
         let headless_smoke = if explicit_windowed_request {
-            false
+            if display_is_present {
+                false
+            } else {
+                headless_smoke_fallback_forced = true;
+                true
+            }
         } else {
-            args.headless_smoke.or(headless_from_env).unwrap_or(false)
+            args.headless_smoke
+                .or(headless_from_env)
+                .or(Some(headless_smoke_auto))
+                .unwrap_or(false)
         };
         Self {
             audio_enabled: args.audio_enabled.or(audio_from_env).unwrap_or(true),
@@ -502,6 +517,8 @@ impl OpenArpgRuntimeConfig {
                 .free_camera_enabled
                 .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_FREE_CAMERA")),
             headless_smoke,
+            headless_smoke_auto,
+            headless_smoke_fallback_forced,
             remote_enabled: args
                 .remote_enabled
                 .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_REMOTE")),
@@ -596,26 +613,10 @@ pub fn not_paused(pause: Res<PauseState>) -> bool {
 
 fn main() {
     let config = OpenArpgRuntimeConfig::from_env();
-    if should_fail_fast_on_missing_display(config) {
-        eprintln!(
-            "{}",
-            startup_window_diagnostic(
-                config,
-                std::env::var("DISPLAY").ok().as_deref(),
-                std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
-                std::env::var("WINIT_UNIX_BACKEND").ok().as_deref(),
-            )
-        );
-        std::process::exit(1);
-    }
     apply_process_env_overrides(config);
     log_startup_window_diagnostic(config);
     let mut app = build_app(config);
     app.run();
-}
-
-fn should_fail_fast_on_missing_display(config: OpenArpgRuntimeConfig) -> bool {
-    !config.headless_smoke && !open_arpg_display_is_present()
 }
 
 fn build_app(config: OpenArpgRuntimeConfig) -> App {
@@ -729,8 +730,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         app.insert_resource(HeadlessSmokeExit {
             frames_remaining: config.smoke_frames,
         })
-        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_millis(16)))
-        .add_systems(Update, headless_smoke_exit);
+        .set_runner(headless_smoke_runner);
     }
     app.init_state::<GameState>().add_plugins((
         GameDataPlugin,
@@ -833,11 +833,28 @@ fn open_arpg_primary_window(headless_smoke: bool) -> Option<Window> {
     }
 }
 
-fn headless_smoke_exit(mut smoke: ResMut<HeadlessSmokeExit>, mut exit: MessageWriter<AppExit>) {
-    if smoke.frames_remaining == 0 {
-        exit.write(AppExit::Success);
-    } else {
-        smoke.frames_remaining -= 1;
+fn headless_smoke_runner(mut app: App) -> AppExit {
+    app.finish();
+    app.cleanup();
+
+    let mut frames_remaining = app
+        .world_mut()
+        .remove_resource::<HeadlessSmokeExit>()
+        .map(|resource| resource.frames_remaining)
+        .unwrap_or_default();
+
+    loop {
+        if frames_remaining == 0 {
+            return AppExit::Success;
+        }
+
+        app.update();
+
+        if let Some(exit) = app.should_exit() {
+            return exit;
+        }
+
+        frames_remaining = frames_remaining.saturating_sub(1);
     }
 }
 
@@ -1037,6 +1054,21 @@ fn startup_window_diagnostic(
             config.asset_mode.label()
         )
     };
+
+    if config.headless_smoke && config.headless_smoke_auto && !display_present {
+        message.push_str(
+            " No DISPLAY or WAYLAND_DISPLAY was detected, so headless mode was auto-selected for this startup.",
+        );
+    }
+
+    if config.headless_smoke
+        && config.headless_smoke_fallback_forced
+        && !display_present
+    {
+        message.push_str(
+            " --windowed was requested but no display server was detected, so headless mode was forced.",
+        );
+    }
 
     if !config.headless_smoke {
         if display_present {
@@ -2155,6 +2187,8 @@ mod tests {
             #[cfg(feature = "dev_tools")]
             free_camera_enabled: false,
             headless_smoke,
+            headless_smoke_auto: false,
+            headless_smoke_fallback_forced: false,
             remote_enabled: false,
             smoke_frames: 30,
             asset_mode: OpenArpgAssetMode::Unprocessed,
@@ -2164,34 +2198,39 @@ mod tests {
     }
 
     #[test]
-    fn runtime_defaults_to_windowed_when_no_display_server_is_not_explicitly_overridden() {
+    fn runtime_headless_smoke_auto_when_no_display_server_is_not_explicitly_overridden() {
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
-            assert!(!config.headless_smoke);
+            assert!(config.headless_smoke);
+            assert!(config.headless_smoke_auto);
+            assert!(!config.headless_smoke_fallback_forced);
             assert!(config.window_backend.is_none());
         });
 
         with_env_values(Some(":0"), None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--window-title=unused"]);
             assert!(!config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
         });
 
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
-            assert!(!config.headless_smoke);
+            assert!(config.headless_smoke);
+            assert!(!config.headless_smoke_auto);
+            assert!(config.headless_smoke_fallback_forced);
             assert!(config.window_backend.is_none());
         });
     }
 
     #[test]
-    fn explicit_windowed_request_is_not_headless_when_no_display_is_detected() {
+    fn explicit_windowed_request_falls_back_to_headless_when_no_display_is_detected() {
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
 
-            assert_eq!(config.headless_smoke, false);
+            assert_eq!(config.headless_smoke, true);
             assert!(
                 startup_window_diagnostic(config, None, None, None).contains(
-                    "A graphical display server was not detected, but windowed mode was requested",
+                    "--windowed was requested but no display server was detected, so headless mode was forced",
                 )
             );
         });
