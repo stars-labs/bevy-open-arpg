@@ -463,6 +463,7 @@ struct OpenArpgRuntimeConfig {
     asset_mode: OpenArpgAssetMode,
     render_profile: Option<OpenArpgRenderProfile>,
     window_backend: Option<OpenArpgWindowBackend>,
+    explicit_windowed_request: bool,
 }
 
 impl OpenArpgRuntimeConfig {
@@ -509,6 +510,7 @@ impl OpenArpgRuntimeConfig {
             asset_mode: args.asset_mode.unwrap_or_else(open_arpg_asset_mode),
             render_profile: args.render_profile.or_else(open_arpg_render_profile),
             window_backend: args.window_backend,
+            explicit_windowed_request,
         }
     }
 }
@@ -595,13 +597,12 @@ pub fn not_paused(pause: Res<PauseState>) -> bool {
 }
 
 fn main() {
-    let config = OpenArpgRuntimeConfig::from_env();
-    apply_process_env_overrides(config);
-    log_startup_window_diagnostic(config);
+    let mut config = OpenArpgRuntimeConfig::from_env();
+    let display_present = open_arpg_display_is_present();
 
-    if !config.headless_smoke && !open_arpg_display_is_present() {
+    if config.explicit_windowed_request && !display_present {
         eprintln!(
-            "No graphical display server was detected. Bevy Open ARPG will not start windowed here.",
+            "No graphical display server was detected and --windowed was explicitly requested.",
         );
         eprintln!(
             "Set DISPLAY or WAYLAND_DISPLAY in this shell and relaunch, or run with `cargo run -- --headless-smoke` to continue in smoke mode.",
@@ -609,8 +610,23 @@ fn main() {
         std::process::exit(1);
     }
 
+    if should_fallback_to_headless_smoke(config, display_present) {
+        eprintln!(
+            "No graphical display server was detected. Falling back to headless smoke mode for this run.",
+        );
+        eprintln!("Set DISPLAY or WAYLAND_DISPLAY in this shell for popup mode.");
+        config.headless_smoke = true;
+    }
+
+    apply_process_env_overrides(config);
+    log_startup_window_diagnostic(config);
+
     let mut app = build_app(config);
     app.run();
+}
+
+fn should_fallback_to_headless_smoke(config: OpenArpgRuntimeConfig, display_present: bool) -> bool {
+    !config.headless_smoke && !display_present && !config.explicit_windowed_request
 }
 
 fn build_app(config: OpenArpgRuntimeConfig) -> App {
@@ -885,36 +901,9 @@ fn open_arpg_audio_enabled_from_env() -> Option<bool> {
 }
 
 fn open_arpg_display_is_present() -> bool {
-    let env_display_present = env_value_present(std::env::var("DISPLAY").ok().as_deref())
-        || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref());
-
-    if env_display_present {
-        return true;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::path::Path;
-
-        if Path::new("/tmp/.X11-unix").exists() {
-            return true;
-        }
-
-        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-            let wayland_dir = Path::new(&runtime_dir);
-            if wayland_dir.exists() {
-                if std::fs::read_dir(wayland_dir).ok().is_some_and(|entries| {
-                    entries
-                        .filter_map(Result::ok)
-                        .any(|entry| entry.file_name().to_string_lossy().starts_with("wayland-"))
-                }) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+    env_value_present(std::env::var("DISPLAY").ok().as_deref())
+        || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref())
+        || env_value_present(std::env::var("WAYLAND_SOCKET").ok().as_deref())
 }
 
 fn parse_open_arpg_cli_args<I, S>(args: I) -> OpenArpgCliArgs
@@ -1029,6 +1018,12 @@ fn apply_process_env_overrides(config: OpenArpgRuntimeConfig) {
 }
 
 fn log_startup_window_diagnostic(config: OpenArpgRuntimeConfig) {
+    let wayland_socket = std::env::var("WAYLAND_SOCKET").ok();
+    let display_env_present = display_vars_present(
+        std::env::var("DISPLAY").ok().as_deref(),
+        std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
+        wayland_socket.as_deref(),
+    );
     eprintln!(
         "{}",
         startup_window_diagnostic(
@@ -1036,12 +1031,20 @@ fn log_startup_window_diagnostic(config: OpenArpgRuntimeConfig) {
             std::env::var("DISPLAY").ok().as_deref(),
             std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
             std::env::var("WINIT_UNIX_BACKEND").ok().as_deref(),
+            display_env_present,
+            wayland_socket.as_deref(),
         )
     );
 }
 
-fn display_vars_present(display: Option<&str>, wayland_display: Option<&str>) -> bool {
-    env_value_present(display) || env_value_present(wayland_display)
+fn display_vars_present(
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+    wayland_socket: Option<&str>,
+) -> bool {
+    env_value_present(display)
+        || env_value_present(wayland_display)
+        || env_value_present(wayland_socket)
 }
 
 fn env_value_present(value: Option<&str>) -> bool {
@@ -1053,9 +1056,10 @@ fn startup_window_diagnostic(
     display: Option<&str>,
     wayland_display: Option<&str>,
     winit_backend: Option<&str>,
+    display_present: bool,
+    wayland_socket: Option<&str>,
 ) -> String {
-    let display_present = display_vars_present(display, wayland_display);
-    let display = display_server_label(display, wayland_display);
+    let display = display_server_label(display, wayland_display, wayland_socket);
     let backend = startup_window_backend_label(config.window_backend, winit_backend);
     let render = config
         .render_profile
@@ -1096,15 +1100,24 @@ fn startup_window_diagnostic(
     message
 }
 
-fn display_server_label(display: Option<&str>, wayland_display: Option<&str>) -> &'static str {
+fn display_server_label(
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+    wayland_socket: Option<&str>,
+) -> &'static str {
     match (
         env_value_present(display),
         env_value_present(wayland_display),
+        env_value_present(wayland_socket),
     ) {
-        (true, true) => "x11+wayland",
-        (true, false) => "x11",
-        (false, true) => "wayland",
-        (false, false) => "none",
+        (true, false, false) => "x11",
+        (true, true, false) => "x11+wayland",
+        (true, true, true) => "x11+wayland+socket",
+        (true, false, true) => "x11+socket",
+        (false, true, false) => "wayland",
+        (false, true, true) => "wayland+socket",
+        (false, false, true) => "socket",
+        (false, false, false) => "none",
     }
 }
 
@@ -2199,6 +2212,7 @@ mod tests {
             asset_mode: OpenArpgAssetMode::Unprocessed,
             render_profile: None,
             window_backend: None,
+            explicit_windowed_request: false,
         }
     }
 
@@ -2223,13 +2237,31 @@ mod tests {
     }
 
     #[test]
+    fn implicit_windowing_request_falls_back_to_headless_when_no_display() {
+        with_env_values(None, None, || {
+            let config = runtime_config_for_test(false);
+            assert!(should_fallback_to_headless_smoke(config, false));
+        });
+    }
+
+    #[test]
+    fn explicit_windowed_request_blocks_headless_fallback() {
+        with_env_values(None, None, || {
+            let mut config = runtime_config_for_test(false);
+            config.explicit_windowed_request = true;
+            assert!(!should_fallback_to_headless_smoke(config, false));
+        });
+    }
+
+    #[test]
     fn explicit_windowed_request_is_not_headless_when_no_display_is_detected() {
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
 
             assert_eq!(config.headless_smoke, false);
+            assert!(config.explicit_windowed_request);
             assert!(
-                startup_window_diagnostic(config, None, None, None).contains(
+                startup_window_diagnostic(config, None, None, None, false, None).contains(
                     "A graphical display server was not detected, but windowed mode was requested",
                 )
             );
@@ -2760,19 +2792,32 @@ mod tests {
 
     #[test]
     fn display_detection_accepts_x11_or_wayland_socket() {
-        assert!(display_vars_present(Some(":0"), None));
-        assert!(display_vars_present(None, Some("wayland-0")));
-        assert!(display_vars_present(Some("  :1  "), Some("")));
-        assert!(!display_vars_present(None, None));
-        assert!(!display_vars_present(Some(" "), Some("")));
+        assert!(display_vars_present(Some(":0"), None, None));
+        assert!(display_vars_present(None, Some("wayland-0"), None));
+        assert!(display_vars_present(Some("  :1  "), Some(""), None));
+        assert!(display_vars_present(None, None, Some("wayland-0")));
+        assert!(!display_vars_present(None, None, None));
+        assert!(!display_vars_present(Some(" "), Some(""), Some("")));
 
-        assert_eq!(display_server_label(Some(":0"), None), "x11");
-        assert_eq!(display_server_label(None, Some("wayland-0")), "wayland");
+        assert_eq!(display_server_label(Some(":0"), None, None), "x11");
         assert_eq!(
-            display_server_label(Some(":0"), Some("wayland-0")),
+            display_server_label(None, Some("wayland-0"), None),
+            "wayland"
+        );
+        assert_eq!(
+            display_server_label(Some(":0"), Some("wayland-0"), None),
             "x11+wayland"
         );
-        assert_eq!(display_server_label(None, None), "none");
+        assert_eq!(
+            display_server_label(Some(":0"), None, Some("wayland-socket")),
+            "x11+socket"
+        );
+        assert_eq!(
+            display_server_label(None, Some("wayland-0"), Some("socket")),
+            "wayland+socket"
+        );
+        assert_eq!(display_server_label(None, None, Some("socket")), "socket");
+        assert_eq!(display_server_label(None, None, None), "none");
     }
 
     #[test]
@@ -2794,7 +2839,8 @@ mod tests {
         config.render_profile = Some(OpenArpgRenderProfile::Compatibility);
         config.window_backend = Some(OpenArpgWindowBackend::X11);
 
-        let diagnostic = startup_window_diagnostic(config, Some(":0"), None, Some("wayland"));
+        let diagnostic =
+            startup_window_diagnostic(config, Some(":0"), None, Some("wayland"), true, None);
 
         assert!(diagnostic.contains("window=enabled"));
         assert!(diagnostic.contains("title=\"Bevy Open ARPG\""));
@@ -2815,7 +2861,7 @@ mod tests {
         config.audio_enabled = false;
         config.asset_mode = OpenArpgAssetMode::Processed;
 
-        let diagnostic = startup_window_diagnostic(config, Some(":0"), None, None);
+        let diagnostic = startup_window_diagnostic(config, Some(":0"), None, None, true, None);
 
         assert!(diagnostic.contains("window=disabled(headless-smoke)"));
         assert!(diagnostic.contains("audio=off"));
@@ -2832,7 +2878,7 @@ mod tests {
     fn startup_window_diagnostic_explains_missing_display_server() {
         let config = runtime_config_for_test(false);
 
-        let diagnostic = startup_window_diagnostic(config, None, Some(" "), None);
+        let diagnostic = startup_window_diagnostic(config, None, Some(" "), None, false, None);
 
         assert!(diagnostic.contains("display=none"));
         assert!(diagnostic.contains("A graphical display server was not detected"));

@@ -208,6 +208,9 @@ struct LootPickupBannerText;
 struct RewardToastText;
 
 #[derive(Component)]
+struct RewardToastPanel;
+
+#[derive(Component)]
 struct SkillFeedbackText;
 
 #[derive(Component)]
@@ -6359,24 +6362,39 @@ fn spawn_hud(mut commands: Commands) {
                 TextColor(Color::srgb(0.92, 0.82, 0.62)),
                 LootPickupBannerText,
             ));
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    top: Val::Px(164.0),
-                    width: Val::Px(680.0),
-                    margin: UiRect::left(Val::Px(-340.0)),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(18.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.74, 0.28)),
-                RewardToastText,
-            ));
+            parent
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(50.0),
+                        top: Val::Px(164.0),
+                        width: Val::Px(700.0),
+                        min_height: Val::Px(44.0),
+                        margin: UiRect::left(Val::Px(-340.0)),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    Visibility::Hidden,
+                    ZIndex(500),
+                    BorderColor::all(Color::srgba(0.84, 0.62, 0.38, 0.6)),
+                    BackgroundColor(Color::srgba(0.03, 0.015, 0.01, 0.75)),
+                    RewardToastPanel,
+                ))
+                .with_children(|toast_panel| {
+                    toast_panel.spawn((
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 0.74, 0.28)),
+                        RewardToastText,
+                    ));
+                });
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -6990,9 +7008,13 @@ fn update_reward_toast(
     time: Res<Time>,
     mut state: ResMut<RewardToastState>,
     mut events: MessageReader<CombatEvent>,
-    mut banner: Query<(&mut Text, &mut TextColor), With<RewardToastText>>,
+    mut banner: Query<(&mut Text, &mut TextColor, &mut Visibility), With<RewardToastText>>,
+    mut panel: Query<&mut Visibility, (With<RewardToastPanel>, Without<RewardToastText>)>,
 ) {
-    let Ok((mut text, mut color)) = banner.single_mut() else {
+    let Ok((mut text, mut color, mut visibility)) = banner.single_mut() else {
+        return;
+    };
+    let Ok(mut panel_visibility) = panel.single_mut() else {
         return;
     };
 
@@ -7004,18 +7026,24 @@ fn update_reward_toast(
         state.timer.reset();
         **text = toast.copy;
         color.0 = toast.color;
+        *visibility = Visibility::Visible;
+        *panel_visibility = Visibility::Visible;
     }
 
     if state.timer.is_finished() {
         if !text.is_empty() {
             **text = String::new();
         }
+        *visibility = Visibility::Hidden;
+        *panel_visibility = Visibility::Hidden;
         return;
     }
 
     state.timer.tick(time.delta());
     if state.timer.is_finished() {
         **text = String::new();
+        *visibility = Visibility::Hidden;
+        *panel_visibility = Visibility::Hidden;
     }
 }
 
@@ -7152,6 +7180,8 @@ fn reward_toast_from_event(text: &str) -> Option<RewardToast> {
 }
 
 fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
+    let normalized = text.trim().to_ascii_lowercase().replace("  ", " ");
+
     if text.starts_with("Picked up ")
         || text.starts_with("Massacre ")
         || text.starts_with("Carnage ")
@@ -7160,6 +7190,97 @@ fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
         || text.starts_with("Valor ")
     {
         return None;
+    }
+
+    if normalized.starts_with("main quest complete") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "QUEST COMPLETE",
+            detail.to_string(),
+            Color::srgb(1.0, 0.78, 0.24),
+            4.2,
+        ));
+    }
+    if normalized.starts_with("main quest:") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "QUEST UPDATED",
+            detail.to_string(),
+            Color::srgb(1.0, 0.70, 0.28),
+            3.4,
+        ));
+    }
+    if normalized.starts_with("relic shrine") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "RELIC SHRINE",
+            detail.to_string(),
+            Color::srgb(0.96, 0.56, 0.23),
+            3.4,
+        ));
+    }
+    if normalized.starts_with("fortune shrine") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "FORTUNE SHRINE",
+            detail.to_string(),
+            Color::srgb(0.95, 0.75, 0.34),
+            3.4,
+        ));
+    }
+    if normalized.starts_with("storm shrine") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "STORM SHRINE",
+            detail.to_string(),
+            Color::srgb(0.48, 0.84, 0.95),
+            3.4,
+        ));
+    }
+    if normalized.starts_with("shrine resonance x") {
+        let detail = text.to_string();
+        return Some((
+            "SHRINE RESONANCE",
+            detail,
+            Color::srgb(0.95, 0.58, 0.95),
+            3.2,
+        ));
+    }
+    if normalized.starts_with("blood obelisk awakened") {
+        if let Some((_, detail)) = text.split_once(':') {
+            return Some((
+                "BLOOD OBELISK",
+                detail.trim().to_string(),
+                Color::srgb(0.95, 0.25, 0.18),
+                3.8,
+            ));
+        }
+    }
+    if normalized.starts_with("ashen pylon") {
+        let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
+        return Some((
+            "ASHEN PYLON",
+            detail.to_string(),
+            Color::srgb(0.88, 0.46, 0.16),
+            3.2,
+        ));
+    }
+    if normalized.starts_with("ember rift sealed") {
+        let suffix = text
+            .strip_prefix("Ember rift sealed")
+            .or_else(|| text.strip_prefix("Ember rift sealed:"))
+            .unwrap_or("")
+            .trim();
+        return Some((
+            "RIFT SEALED",
+            if suffix.is_empty() {
+                "rift sealed".to_string()
+            } else {
+                format!("rift sealed{suffix}")
+            },
+            Color::srgb(1.0, 0.48, 0.18),
+            3.6,
+        ));
     }
 
     if let Some(detail) = text.strip_prefix("MAIN ") {
@@ -7192,6 +7313,151 @@ fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
             "QUEST UPDATED",
             detail.to_string(),
             Color::srgb(1.0, 0.70, 0.28),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Relic shrine: ") {
+        return Some((
+            "RELIC SHRINE",
+            detail.to_string(),
+            Color::srgb(0.96, 0.56, 0.23),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Fortune shrine: ") {
+        return Some((
+            "FORTUNE SHRINE",
+            detail.to_string(),
+            Color::srgb(0.95, 0.75, 0.34),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Storm shrine: ") {
+        return Some((
+            "STORM SHRINE",
+            detail.to_string(),
+            Color::srgb(0.48, 0.84, 0.95),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Renewal well restored ") {
+        return Some((
+            "HEALING WELL",
+            format!("Renewal well restored {detail}"),
+            Color::srgb(0.42, 0.94, 0.92),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Lore recovered: ") {
+        return Some((
+            "LORE RECOVERED",
+            detail.to_string(),
+            Color::srgb(0.72, 0.68, 0.48),
+            3.2,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Shrine resonance x") {
+        return Some((
+            "SHRINE RESONANCE",
+            format!("Shrine resonance x{detail}"),
+            Color::srgb(0.95, 0.58, 0.95),
+            3.2,
+        ));
+    }
+    if text.starts_with("Cursed shrine claimed ") {
+        return Some((
+            "CURSED SHRINE",
+            text.to_string(),
+            Color::srgb(0.98, 0.25, 0.34),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Blood obelisk awakened: ") {
+        return Some((
+            "BLOOD OBELISK",
+            format!("{detail}"),
+            Color::srgb(0.95, 0.25, 0.18),
+            3.8,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Blood obelisk completed: ") {
+        return Some((
+            "RITE COMPLETE",
+            format!("{detail}"),
+            Color::srgb(1.0, 0.30, 0.22),
+            3.4,
+        ));
+    }
+    if text == "Blood obelisk faded before it was fed" {
+        return Some((
+            "BLOOD OBELISK",
+            "Blood obelisk faded before it was fed".to_string(),
+            Color::srgb(0.85, 0.26, 0.20),
+            3.6,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Ember rift opened: ") {
+        return Some((
+            "EMBER RIFT",
+            detail.to_string(),
+            Color::srgb(1.0, 0.32, 0.12),
+            3.4,
+        ));
+    }
+    if text.starts_with("Ember rift sealed") {
+        return Some((
+            "RIFT SEALED",
+            text.strip_prefix("Ember rift sealed").map_or_else(
+                || "".to_string(),
+                |suffix| {
+                    if suffix.is_empty() {
+                        "rift sealed".to_string()
+                    } else {
+                        format!("rift sealed{suffix}")
+                    }
+                },
+            ),
+            Color::srgb(1.0, 0.48, 0.18),
+            3.6,
+        ));
+    }
+    if text == "Ember rift collapsed before it was sealed" {
+        return Some((
+            "RIFT COLLAPSED",
+            text.to_string(),
+            Color::srgb(0.88, 0.33, 0.20),
+            3.6,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Ashen pylon: ") {
+        return Some((
+            "ASHEN PYLON",
+            detail.to_string(),
+            Color::srgb(0.88, 0.46, 0.16),
+            3.2,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Reliquary cache opened: ") {
+        return Some((
+            "CACHE OPENED",
+            detail.to_string(),
+            Color::srgb(0.79, 0.92, 0.57),
+            3.4,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Reliquary vault opened: ") {
+        return Some((
+            "VAULT OPENED",
+            detail.to_string(),
+            Color::srgb(0.89, 0.68, 0.95),
+            3.6,
+        ));
+    }
+    if let Some(detail) = text.strip_prefix("Ember altar extinguished: ") {
+        return Some((
+            "ALTAR EXTINGUISHED",
+            detail.to_string(),
+            Color::srgb(0.34, 0.86, 0.54),
             3.4,
         ));
     }
@@ -16842,6 +17108,64 @@ mod tests {
         let paragon = reward_toast_from_event("Ember Paragon 3 awakened")
             .expect("paragon rank awakenings should produce a toast");
         assert_eq!(paragon.copy, "EMBER PARAGON\nRank 3 awakened");
+
+        let relic = reward_toast_from_event("Relic shrine: +35% damage and +18% speed")
+            .expect("relic shrine activation should produce a toast");
+        assert!(relic.copy.starts_with("RELIC SHRINE\n+35%"));
+
+        let fortune =
+            reward_toast_from_event("Fortune shrine: +50% gold, +25% XP, and better drops")
+                .expect("fortune shrine activation should produce a toast");
+        assert!(fortune.copy.starts_with("FORTUNE SHRINE\n+50%"));
+
+        let storm = reward_toast_from_event("Storm shrine: conduit lightning awakened")
+            .expect("storm shrine activation should produce a toast");
+        assert_eq!(storm.copy, "STORM SHRINE\nconduit lightning awakened");
+
+        let well =
+            reward_toast_from_event("Renewal well restored 145 health, 90 barrier, 2 potions")
+                .expect("healing well should produce a toast");
+        assert_eq!(
+            well.copy,
+            "HEALING WELL\nRenewal well restored 145 health, 90 barrier, 2 potions"
+        );
+
+        let lore = reward_toast_from_event("Lore recovered: Steward warning sigil")
+            .expect("lore page reads should produce a toast");
+        assert_eq!(lore.copy, "LORE RECOVERED\nSteward warning sigil");
+
+        let cache = reward_toast_from_event("Reliquary cache opened: treasure released")
+            .expect("cache opening should produce a toast");
+        assert_eq!(cache.copy, "CACHE OPENED\ntreasure released");
+
+        let vault = reward_toast_from_event("Reliquary vault opened: +3 affix essence")
+            .expect("vault opening should produce a toast");
+        assert_eq!(vault.copy, "VAULT OPENED\n+3 affix essence");
+
+        let cursed = reward_toast_from_event("Cursed shrine claimed 12 health and released a boon")
+            .expect("cursed shrine rewards should produce a toast");
+        assert_eq!(
+            cursed.copy,
+            "CURSED SHRINE\nCursed shrine claimed 12 health and released a boon"
+        );
+
+        let obelisk = reward_toast_from_event("Blood obelisk awakened: feed it four kills")
+            .expect("obelisk activation should produce a toast");
+        assert_eq!(obelisk.copy, "BLOOD OBELISK\nfeed it four kills");
+
+        let pylon =
+            reward_toast_from_event("Ashen pylon: +55% damage, +24% speed, +42 barrier, +38 fury")
+                .expect("pylon activation should produce a toast");
+        assert_eq!(
+            pylon.copy,
+            "ASHEN PYLON\n+55% damage, +24% speed, +42 barrier, +38 fury"
+        );
+
+        let rift = reward_toast_from_event(
+            "Ember rift sealed: +135 gold +7 shards +5 essence, Momentum 1x",
+        )
+        .expect("rifts should produce a toast");
+        assert!(rift.copy.contains("RIFT SEALED"));
     }
 
     #[test]
