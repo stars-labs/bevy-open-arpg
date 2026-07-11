@@ -1588,19 +1588,34 @@ fn legendary_power_skill_synergy(power: LegendaryPower, skill: Option<SkillCast>
     let Some(skill) = skill else {
         return false;
     };
-    match (power, skill) {
+    matches!(
+        (power, skill),
         (LegendaryPower::Emberbrand, SkillCast::Nova(NovaRune::Ember))
-        | (LegendaryPower::Emberbrand, SkillCast::Rupture(RuptureRune::Hemorrhage))
-        | (LegendaryPower::Frostbrand, SkillCast::Nova(NovaRune::Frost))
-        | (LegendaryPower::Frostbrand, SkillCast::Rupture(RuptureRune::Expose))
-        | (LegendaryPower::Stormbrand, SkillCast::Dash(DashRune::Reap))
-        | (LegendaryPower::Stormbrand, SkillCast::Nova(NovaRune::Frost))
-        | (LegendaryPower::Soulreaver, SkillCast::Dash(DashRune::Reap))
-        | (LegendaryPower::Soulreaver, SkillCast::Rupture(RuptureRune::Hemorrhage))
-        | (LegendaryPower::Aegisbrand, SkillCast::Dash(DashRune::Cleanse))
-        | (LegendaryPower::Aegisbrand, SkillCast::Rupture(RuptureRune::Expose)) => true,
-        _ => false,
-    }
+            | (
+                LegendaryPower::Emberbrand,
+                SkillCast::Rupture(RuptureRune::Hemorrhage)
+            )
+            | (LegendaryPower::Frostbrand, SkillCast::Nova(NovaRune::Frost))
+            | (
+                LegendaryPower::Frostbrand,
+                SkillCast::Rupture(RuptureRune::Expose)
+            )
+            | (LegendaryPower::Stormbrand, SkillCast::Dash(DashRune::Reap))
+            | (LegendaryPower::Stormbrand, SkillCast::Nova(NovaRune::Frost))
+            | (LegendaryPower::Soulreaver, SkillCast::Dash(DashRune::Reap))
+            | (
+                LegendaryPower::Soulreaver,
+                SkillCast::Rupture(RuptureRune::Hemorrhage)
+            )
+            | (
+                LegendaryPower::Aegisbrand,
+                SkillCast::Dash(DashRune::Cleanse)
+            )
+            | (
+                LegendaryPower::Aegisbrand,
+                SkillCast::Rupture(RuptureRune::Expose)
+            )
+    )
 }
 
 fn legendary_proc_ratio(
@@ -3322,6 +3337,7 @@ fn tick_conduit_lightning(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_conduit_lightning(
     commands: &mut Commands,
     combat_events: &mut MessageWriter<CombatEvent>,

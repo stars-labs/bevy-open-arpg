@@ -1,7 +1,9 @@
 use crate::player::LegendaryPower;
 use bevy::prelude::*;
 use serde::Deserialize;
-use std::{collections::HashMap, fs};
+use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
 
 #[derive(Clone, Debug, Deserialize, Resource)]
 pub struct PlayerTuning {
@@ -100,9 +102,25 @@ fn load_ron<T>(path: &str) -> T
 where
     T: for<'de> Deserialize<'de>,
 {
-    let content =
-        fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
-    ron::from_str(&content).unwrap_or_else(|err| panic!("failed to parse {path}: {err}"))
+    let content = data_file_content(path);
+    ron::from_str(content.as_ref()).unwrap_or_else(|err| panic!("failed to parse {path}: {err}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_file_content(path: &str) -> String {
+    fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"))
+}
+
+// wasm has no filesystem, so the tuning data ships inside the binary. Keep this
+// list in sync with GameDataPlugin::build above.
+#[cfg(target_arch = "wasm32")]
+fn data_file_content(path: &str) -> &'static str {
+    match path {
+        "assets/data/player.ron" => include_str!("../assets/data/player.ron"),
+        "assets/data/enemies.ron" => include_str!("../assets/data/enemies.ron"),
+        "assets/data/loot.ron" => include_str!("../assets/data/loot.ron"),
+        _ => panic!("no embedded data file for {path}"),
+    }
 }
 
 #[cfg(test)]

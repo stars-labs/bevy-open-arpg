@@ -827,16 +827,16 @@ fn use_interactables(
         return;
     };
 
-    if let Ok((_, _, mut interactable)) = interactables.get_mut(selected.entity) {
-        if interactable_available(&interactable) {
-            if !interactable.reusable {
-                interactable.used = true;
-            }
-            used_events.write(InteractableUsed {
-                kind: selected.kind,
-                position: selected.position,
-            });
+    if let Ok((_, _, mut interactable)) = interactables.get_mut(selected.entity)
+        && interactable_available(&interactable)
+    {
+        if !interactable.reusable {
+            interactable.used = true;
         }
+        used_events.write(InteractableUsed {
+            kind: selected.kind,
+            position: selected.position,
+        });
     }
 }
 

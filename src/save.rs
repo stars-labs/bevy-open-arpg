@@ -26,7 +26,9 @@ use crate::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+use std::path::Path;
 
 const SAVE_PATH: &str = "saves/slot1.ron";
 
@@ -1686,6 +1688,7 @@ fn apply_breakable_save(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_save(path: impl AsRef<Path>, save: &SaveGame) -> Result<(), String> {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
@@ -1696,9 +1699,20 @@ fn write_save(path: impl AsRef<Path>, save: &SaveGame) -> Result<(), String> {
     fs::write(path, content).map_err(|err| err.to_string())
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_save(_path: impl AsRef<Path>, _save: &SaveGame) -> Result<(), String> {
+    Err("save slots are not persisted in the web build".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn read_save(path: impl AsRef<Path>) -> Result<SaveGame, String> {
     let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
     ron::from_str(&content).map_err(|err| err.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_save(_path: impl AsRef<Path>) -> Result<SaveGame, String> {
+    Err("save slots are not persisted in the web build".to_string())
 }
 
 impl From<&InventoryItem> for SaveInventoryItem {

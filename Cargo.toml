@@ -26,20 +26,17 @@ bevy = { version = "0.19", default-features = false, features = [
     "ui_picking",
     # `3d`/`ui` pull these through `default_platform`; keep them explicit so
     # the native runtime requirements stay visible when auditing Bevy features.
-    "accesskit_unix",
     "bevy_clipboard",
     "default_font",
     "multi_threaded",
     "webgl2",
     "area_light_luts",
     "asset_processor",
-    "basis-universal",
     "bevy_remote",
     "bevy_settings",
     "bevy_ui_debug",
     "bluenoise_texture",
     "bmp",
-    "compressed_image_saver",
     "custom_cursor",
     "dds",
     "dfg_lut",
@@ -60,7 +57,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "pbr_transmission_textures",
     "pnm",
     "qoi",
-    "raw_vulkan_init",
     "reflect_documentation",
     "reflect_functions",
     "serialize",
@@ -82,12 +78,30 @@ bevy = { version = "0.19", default-features = false, features = [
 ] }
 bevy_render = { version = "0.19", default-features = false, features = ["gles"] }
 rand = "0.9"
-rodio = { version = "0.20.1", default-features = false, features = ["flac", "mp3", "vorbis", "wav"] }
 ron = "0.11"
 serde = { version = "1", features = ["derive"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rodio = { version = "0.20.1", default-features = false, features = ["flac", "mp3", "vorbis", "wav"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# rand 0.9 reaches getrandom 0.3, which needs an explicit JS backend on
+# wasm32-unknown-unknown (paired with RUSTFLAGS --cfg getrandom_backend="wasm_js"
+# in scripts/build_web.sh).
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [features]
-default = []
+default = ["native"]
+# Bevy integrations that only build on native targets: accesskit_unix drags
+# bevy_tasks/async-io (polling/errno hard-error on wasm) and basis-universal
+# compiles a C++ transcoder. Web builds use
+# `--no-default-features --features webgpu` (see scripts/build_web.sh).
+native = [
+    "bevy/accesskit_unix",
+    "bevy/basis-universal",
+    "bevy/compressed_image_saver",
+    "bevy/raw_vulkan_init",
+]
 dev_tools = [
     "bevy/bevy_camera_controller",
     "bevy/bevy_debug_stepping",
@@ -105,6 +119,16 @@ dev_tools = [
     "bevy/type_label_buffers",
 ]
 ci = ["bevy/bevy_ci_testing"]
+webgpu = ["bevy/web", "bevy/webgpu", "bevy/web_asset_cache"]
+
+# Sized for the wasm/Pages bundle (mirrors bevy-open-rts). No `strip = true`:
+# it removes the wasm `target_features` section and wasm-opt then rejects the
+# bulk-memory ops; wasm-opt -Oz already strips the output.
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
 
 [profile.dev]
 opt-level = 1

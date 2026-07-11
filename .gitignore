@@ -7,3 +7,7 @@ result
 
 /target
 saves/
+
+# Web build outputs (scripts/build_web.sh)
+/web/pkg/
+/web/assets/

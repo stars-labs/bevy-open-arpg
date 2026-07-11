@@ -62,6 +62,9 @@
                 clippy
                 openssl
                 rustfmt
+                # wasm32-unknown-unknown links through lld (scripts/build_web.sh)
+                lld
+                binaryen
               ];
               LD_LIBRARY_PATH = lib.makeLibraryPath [
                 alsa-lib

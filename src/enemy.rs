@@ -3187,6 +3187,7 @@ fn projectile_is_armed(projectile: &EnemyProjectile) -> bool {
     projectile.arm_timer.as_ref().is_none_or(Timer::is_finished)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn move_enemy_projectiles(
     time: Res<Time>,
     mut commands: Commands,

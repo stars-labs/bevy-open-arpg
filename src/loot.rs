@@ -2399,15 +2399,15 @@ fn quartermaster_next_need_summary(
         );
     }
     if equipment.quality == "legendary" && equipment.legendary_power != LegendaryPower::None {
-        if let Some(gem) = equipment.socketed_gem {
-            if gem.rank >= ANCIENT_AWAKEN_MIN_GEM_RANK {
-                let (gold, shards, essence) = ancient_awaken_cost(gem);
-                return format!(
-                    "Quartermaster needs: {} to awaken {}",
-                    resource_gap_summary(stats, gold, shards, essence, 0),
-                    gem.label()
-                );
-            }
+        if let Some(gem) = equipment.socketed_gem
+            && gem.rank >= ANCIENT_AWAKEN_MIN_GEM_RANK
+        {
+            let (gold, shards, essence) = ancient_awaken_cost(gem);
+            return format!(
+                "Quartermaster needs: {} to awaken {}",
+                resource_gap_summary(stats, gold, shards, essence, 0),
+                gem.label()
+            );
         }
         return "Quartermaster needs: rank 4+ socketed gem to awaken legendary gear".to_string();
     }

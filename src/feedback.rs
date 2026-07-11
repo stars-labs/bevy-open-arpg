@@ -13,13 +13,15 @@ use crate::{
 use bevy::prelude::*;
 use bevy::time::{Real, Virtual};
 use bevy::window::PrimaryWindow;
+#[cfg(not(target_arch = "wasm32"))]
 use rodio::Source;
+use std::{collections::VecDeque, sync::mpsc::Sender};
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
-    collections::VecDeque,
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc::{self, Receiver},
 };
 
 const LOG_CAPACITY: usize = 6;
@@ -111,6 +113,8 @@ pub enum AudioBackendStatus {
     Starting,
     Ready,
     NoOutputDevice,
+    // Only the native backend spawns the mixer thread that can fail.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     ThreadFailed,
 }
 
@@ -626,6 +630,24 @@ fn audio_backend_should_attempt(
             ))
 }
 
+// The cue mixer runs rodio on a dedicated OS thread; the web build has neither,
+// so it reports NoOutputDevice and combat cues stay silent there.
+#[cfg(target_arch = "wasm32")]
+fn try_start_audio_backend(
+    audio_settings: &AudioSettings,
+    audio: &mut GameAudio,
+    status: &mut AudioBackendStatus,
+    _warn_failures: bool,
+) {
+    *status = if !audio_settings.enabled {
+        AudioBackendStatus::Muted
+    } else {
+        AudioBackendStatus::NoOutputDevice
+    };
+    audio.sender = None;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn try_start_audio_backend(
     audio_settings: &AudioSettings,
     audio: &mut GameAudio,
@@ -663,6 +685,7 @@ fn try_start_audio_backend(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
     let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
         bevy::log::warn!("Bevy Open ARPG audio: no output device available");
@@ -680,6 +703,7 @@ fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn play_audio_file(
     handle: &rodio::OutputStreamHandle,
     path: &Path,
@@ -693,6 +717,7 @@ fn play_audio_file(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sound_cue_file(cue: SoundCue) -> &'static str {
     match cue {
         SoundCue::Hit => "hit.wav",
@@ -728,6 +753,7 @@ fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sound_cue_gain(cue: SoundCue) -> f32 {
     match cue {
         SoundCue::Hit => 0.48,

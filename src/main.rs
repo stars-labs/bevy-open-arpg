@@ -71,12 +71,14 @@ use bevy::reflect::{
     TypeInfo, Typed,
     func::{ArgList, FunctionRegistry},
 };
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 #[cfg(feature = "dev_tools")]
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
 use bevy::render::{
     RenderPlugin,
-    pipelined_rendering::PipelinedRenderingPlugin,
     settings::{
         Backends, InstanceFlags, RenderCreation, WgpuFeatures, WgpuSettings, WgpuSettingsPriority,
     },
@@ -370,15 +372,9 @@ impl AudioSettings {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct DebugVisuals {
     pub enabled: bool,
-}
-
-impl Default for DebugVisuals {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 /// Player-facing runtime preferences persisted by Bevy Settings and exposed to Bevy Remote tooling.
@@ -634,7 +630,14 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     let mut default_plugins = DefaultPlugins
         .build()
         .set(AssetPlugin {
+            // On web, assets are fetched over HTTP relative to the page, so the
+            // path must stay relative; native runs anchor to the crate root so
+            // `cargo run` works from any directory.
+            #[cfg(not(target_arch = "wasm32"))]
             file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
+            #[cfg(target_arch = "wasm32")]
+            file_path: "assets".to_string(),
+            #[cfg(not(target_arch = "wasm32"))]
             processed_file_path: format!("{}/imported_assets/Default", env!("CARGO_MANIFEST_DIR")),
             watch_for_changes_override: open_arpg_watch_for_changes_override(),
             mode: config.asset_mode.bevy_mode(),
@@ -659,11 +662,14 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         default_plugins = default_plugins.disable::<AudioPlugin>();
     }
     if config.headless_smoke {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            default_plugins = default_plugins.disable::<PipelinedRenderingPlugin>();
+        }
         default_plugins = default_plugins
             .disable::<WinitPlugin>()
             .disable::<GilrsPlugin>()
             .disable::<RenderPlugin>()
-            .disable::<PipelinedRenderingPlugin>()
             .disable::<CorePipelinePlugin>()
             .disable::<SpriteRenderPlugin>()
             .disable::<UiRenderPlugin>()
@@ -703,6 +709,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         })
         .add_plugins(default_plugins);
     app.add_plugins(SettingsPlugin::new("org.stars-labs.bevy-open-arpg"));
+    #[cfg(not(target_arch = "wasm32"))]
     if config.remote_enabled {
         app.add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()));
     }
@@ -838,6 +845,12 @@ fn open_arpg_primary_window(headless_smoke: bool) -> Option<Window> {
             visible: true,
             decorations: true,
             resizable: true,
+            // Render into the loader page's canvas and track the browser
+            // viewport instead of opening a fixed-size surface.
+            #[cfg(target_arch = "wasm32")]
+            canvas: Some("#bevy-canvas".to_string()),
+            #[cfg(target_arch = "wasm32")]
+            fit_canvas_to_parent: true,
             ..default()
         })
     }
@@ -901,6 +914,11 @@ fn open_arpg_audio_enabled_from_env() -> Option<bool> {
 }
 
 fn open_arpg_display_is_present() -> bool {
+    // The browser canvas is always available on web; the X11/Wayland env probe
+    // only applies to native desktop runs.
+    if cfg!(target_arch = "wasm32") {
+        return true;
+    }
     env_value_present(std::env::var("DISPLAY").ok().as_deref())
         || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref())
         || env_value_present(std::env::var("WAYLAND_SOCKET").ok().as_deref())
@@ -1007,6 +1025,7 @@ fn parse_open_arpg_smoke_frames(value: Option<&str>) -> u32 {
         .unwrap_or(12)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn apply_process_env_overrides(config: OpenArpgRuntimeConfig) {
     let Some(window_backend) = config.window_backend else {
         return;
@@ -1016,6 +1035,9 @@ fn apply_process_env_overrides(config: OpenArpgRuntimeConfig) {
         std::env::set_var("WINIT_UNIX_BACKEND", window_backend.winit_value());
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn apply_process_env_overrides(_config: OpenArpgRuntimeConfig) {}
 
 fn log_startup_window_diagnostic(config: OpenArpgRuntimeConfig) {
     let wayland_socket = std::env::var("WAYLAND_SOCKET").ok();
@@ -1408,6 +1430,7 @@ fn gamepad_just_pressed(gamepads: &Query<&Gamepad>, buttons: &[GamepadButton]) -
         .any(|gamepad| buttons.iter().any(|button| gamepad.just_pressed(*button)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn main_menu_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
@@ -1587,6 +1610,7 @@ fn ui_debug_overlay_status(enabled: Option<bool>) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn copy_runtime_summary_to_clipboard(
     keyboard: Res<ButtonInput<KeyCode>>,
     state: Res<State<GameState>>,
@@ -2258,7 +2282,7 @@ mod tests {
         with_env_values(None, None, || {
             let config = OpenArpgRuntimeConfig::from_env_and_args(["--windowed"]);
 
-            assert_eq!(config.headless_smoke, false);
+            assert!(!config.headless_smoke);
             assert!(config.explicit_windowed_request);
             assert!(
                 startup_window_diagnostic(config, None, None, None, false, None).contains(

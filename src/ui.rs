@@ -59,7 +59,9 @@ use crate::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+use std::path::Path;
 
 const PROFILE_PATH: &str = "saves/profile.ron";
 
@@ -1201,16 +1203,11 @@ impl Default for CombatStreakBannerState {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Resource, Debug, Clone, Copy, Eq, PartialEq, Default)]
 enum HudDensity {
+    #[default]
     Clean,
     Tactical,
-}
-
-impl Default for HudDensity {
-    fn default() -> Self {
-        Self::Clean
-    }
 }
 
 impl HudDensity {
@@ -3576,9 +3573,12 @@ fn load_chapter_record_profile(mut records: ResMut<ChapterRecords>) {
 }
 
 fn profile_missing(err: &str) -> bool {
-    err.contains("No such file") || err.contains("os error 2")
+    err.contains("No such file")
+        || err.contains("os error 2")
+        || err.contains("not persisted in the web build")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_chapter_record_profile(
     path: impl AsRef<Path>,
     records: &ChapterRecords,
@@ -3592,9 +3592,23 @@ fn write_chapter_record_profile(
     fs::write(path, content).map_err(|err| err.to_string())
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_chapter_record_profile(
+    _path: impl AsRef<Path>,
+    _records: &ChapterRecords,
+) -> Result<(), String> {
+    Err("chapter records are not persisted in the web build".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn read_chapter_record_profile(path: impl AsRef<Path>) -> Result<ChapterRecords, String> {
     let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
     ron::from_str(&content).map_err(|err| err.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_chapter_record_profile(_path: impl AsRef<Path>) -> Result<ChapterRecords, String> {
+    Err("chapter records are not persisted in the web build".to_string())
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -7246,15 +7260,15 @@ fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
             3.2,
         ));
     }
-    if normalized.starts_with("blood obelisk awakened") {
-        if let Some((_, detail)) = text.split_once(':') {
-            return Some((
-                "BLOOD OBELISK",
-                detail.trim().to_string(),
-                Color::srgb(0.95, 0.25, 0.18),
-                3.8,
-            ));
-        }
+    if normalized.starts_with("blood obelisk awakened")
+        && let Some((_, detail)) = text.split_once(':')
+    {
+        return Some((
+            "BLOOD OBELISK",
+            detail.trim().to_string(),
+            Color::srgb(0.95, 0.25, 0.18),
+            3.8,
+        ));
     }
     if normalized.starts_with("ashen pylon") {
         let detail = text.split_once(':').map_or("", |(_, detail)| detail).trim();
@@ -7375,7 +7389,7 @@ fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
     if let Some(detail) = text.strip_prefix("Blood obelisk awakened: ") {
         return Some((
             "BLOOD OBELISK",
-            format!("{detail}"),
+            detail.to_string(),
             Color::srgb(0.95, 0.25, 0.18),
             3.8,
         ));
@@ -7383,7 +7397,7 @@ fn reward_toast_copy(text: &str) -> Option<(&'static str, String, Color, f32)> {
     if let Some(detail) = text.strip_prefix("Blood obelisk completed: ") {
         return Some((
             "RITE COMPLETE",
-            format!("{detail}"),
+            detail.to_string(),
             Color::srgb(1.0, 0.30, 0.22),
             3.4,
         ));
@@ -9018,6 +9032,7 @@ fn dash_action_label(runes: &SkillRunes) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_buff_bar(
     mut texts: Query<(&mut Text, &mut Node), With<BuffBarText>>,
     player: BuffBarPlayerQuery,
