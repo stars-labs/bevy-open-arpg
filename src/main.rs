@@ -651,13 +651,18 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
                 ExitCondition::OnAllClosed
             },
             ..default()
-        })
-        .set(RenderPlugin {
+        });
+    // On web, Bevy's default WebGPU render setup is the reliable path; the
+    // profile-driven WgpuSettings overrides are for native backend debugging.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        default_plugins = default_plugins.set(RenderPlugin {
             render_creation: RenderCreation::Automatic(Box::new(open_arpg_wgpu_settings(
                 config.render_profile,
             ))),
             ..default()
         });
+    }
     if !config.audio_enabled {
         default_plugins = default_plugins.disable::<AudioPlugin>();
     }
