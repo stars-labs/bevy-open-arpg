@@ -1,4 +1,4 @@
-use crate::player::LegendaryPower;
+use crate::player::{GearSlot, LegendaryPower};
 use bevy::prelude::*;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -63,10 +63,15 @@ pub struct LootEntry {
     #[serde(default)]
     pub legendary_power: LegendaryPower,
     pub potions: u32,
+    /// Paper-doll slot this entry drops for; weapons when omitted.
+    #[serde(default)]
+    pub slot: GearSlot,
 }
 
 #[derive(Clone, Debug, Deserialize, Resource)]
 pub struct LootTable {
+    /// Every droppable gear entry — weapons and paper-doll armor pieces alike
+    /// (the field name predates armor slots; the RON key stays stable).
     pub weapons: Vec<LootEntry>,
 }
 
@@ -276,6 +281,44 @@ mod tests {
         assert_eq!(table.weapons[6].quality, "ancient");
         assert_eq!(table.weapons[6].potions, 3);
         assert_eq!(table.weapons[6].legendary_power, LegendaryPower::Aegisbrand);
+        // Entries without a slot field stay weapons for old data files.
+        assert_eq!(table.weapons[0].slot, GearSlot::Weapon);
+    }
+
+    #[test]
+    fn loot_entries_parse_paper_doll_slots() {
+        let table: LootTable = ron::from_str(
+            r#"(
+                weapons: [
+                    (
+                        name: "Ashen Warhelm",
+                        quality: "common",
+                        weight: 32,
+                        damage_bonus: 0.0,
+                        crit_chance: 0.0,
+                        health_bonus: 8.0,
+                        armor_bonus: 6.0,
+                        potions: 0,
+                        slot: helm,
+                    ),
+                    (
+                        name: "Primal Seal of Vhal",
+                        quality: "primal",
+                        weight: 1,
+                        damage_bonus: 10.0,
+                        crit_chance: 0.12,
+                        health_bonus: 24.0,
+                        armor_bonus: 14.0,
+                        potions: 2,
+                        slot: ring,
+                    ),
+                ],
+            )"#,
+        )
+        .unwrap();
+
+        assert_eq!(table.weapons[0].slot, GearSlot::Helm);
+        assert_eq!(table.weapons[1].slot, GearSlot::Ring);
     }
 
     #[test]

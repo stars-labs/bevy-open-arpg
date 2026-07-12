@@ -15,10 +15,10 @@ use crate::{
     player::{
         ARMORY_SLOT_COUNT, Armory, ArmoryLoadout, Barrier, ChapterBoon, ChapterBoonChoice, Charm,
         ConduitBuff, DamageBonus, DashRune, DeathWard, EMBER_PARAGON_BASE_XP, ElixirBelt,
-        ElixirBuff, ElixirKind, EmberParagon, Equipment, Evade, FortuneBuff, Fury, GloryBuff,
-        Health, Inventory, InventoryItem, LegendaryCodex, LegendaryPower, NovaRune, Player,
-        PlayerLevel, PotionBelt, RelicBuff, RuptureRune, SkillRunes, SocketedGem, SurgeBuff,
-        Talents, TownPortal, configure_elixir_buff, potion_cooldown_secs_for_capacity,
+        ElixirBuff, ElixirKind, EmberParagon, Equipment, Evade, FortuneBuff, Fury, GearSlot,
+        GloryBuff, Health, Inventory, InventoryItem, LegendaryCodex, LegendaryPower, NovaRune,
+        Player, PlayerLevel, PotionBelt, RelicBuff, RuptureRune, SkillRunes, SocketedGem,
+        SurgeBuff, Talents, TownPortal, configure_elixir_buff, potion_cooldown_secs_for_capacity,
     },
     rift::EmberRift,
     story::{StoryBeat, StoryLog},
@@ -546,6 +546,9 @@ struct SaveEquipment {
     temper_level: u32,
     #[serde(default)]
     socketed_gem: Option<SocketedGem>,
+    /// Worn paper-doll pieces; empty in saves that predate armor slots.
+    #[serde(default)]
+    worn: Vec<Option<SaveInventoryItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -563,6 +566,8 @@ struct SaveInventoryItem {
     temper_level: u32,
     #[serde(default)]
     socketed_gem: Option<SocketedGem>,
+    #[serde(default)]
+    slot: GearSlot,
 }
 
 pub struct SavePlugin;
@@ -1126,6 +1131,11 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
                 legendary_power: equipment.legendary_power,
                 temper_level: equipment.temper_level,
                 socketed_gem: equipment.socketed_gem,
+                worn: equipment
+                    .worn
+                    .iter()
+                    .map(|piece| piece.as_ref().map(SaveInventoryItem::from))
+                    .collect(),
             },
             charm: charm.clone(),
             inventory: inventory
@@ -1484,6 +1494,14 @@ fn apply_save(
     equipment.legendary_power = save.player.equipment.legendary_power;
     equipment.temper_level = save.player.equipment.temper_level;
     equipment.socketed_gem = save.player.equipment.socketed_gem;
+    equipment.worn = save
+        .player
+        .equipment
+        .worn
+        .iter()
+        .map(|piece| piece.as_ref().map(InventoryItem::from))
+        .collect();
+    equipment.normalize_worn();
     *charm = save.player.charm.clone();
     inventory.items = save
         .player
@@ -1727,6 +1745,7 @@ impl From<&InventoryItem> for SaveInventoryItem {
             legendary_power: item.legendary_power,
             temper_level: item.temper_level,
             socketed_gem: item.socketed_gem,
+            slot: item.slot,
         }
     }
 }
@@ -1743,6 +1762,7 @@ impl From<&SaveInventoryItem> for InventoryItem {
             legendary_power: item.legendary_power,
             temper_level: item.temper_level,
             socketed_gem: item.socketed_gem,
+            slot: item.slot,
         }
     }
 }
@@ -1983,6 +2003,7 @@ mod tests {
                         kind: crate::player::GemKind::Ruby,
                         rank: 2,
                     }),
+                    worn: Vec::new(),
                 },
                 charm: Charm {
                     name: "Stormglass Charm".to_string(),
@@ -2003,6 +2024,7 @@ mod tests {
                         kind: crate::player::GemKind::Ruby,
                         rank: 2,
                     }),
+                    slot: GearSlot::Weapon,
                 }],
                 inventory_capacity: 12,
                 armory_loadout: Some(ArmoryLoadout {
@@ -2019,6 +2041,7 @@ mod tests {
                             kind: crate::player::GemKind::Ruby,
                             rank: 2,
                         }),
+                        slot: GearSlot::Weapon,
                     },
                     charm: Charm {
                         name: "Stormglass Charm".to_string(),
@@ -2343,6 +2366,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                worn: Vec::new(),
             },
             charm: Charm::default(),
             inventory: vec![],
@@ -2412,6 +2436,7 @@ mod tests {
                 legendary_power: LegendaryPower::Emberbrand,
                 temper_level: 1,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             },
             charm: Charm::default(),
             dash_rune: DashRune::Cleanse,
@@ -2489,6 +2514,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let inventory = Inventory {
             items: vec![InventoryItem {
@@ -2501,6 +2527,7 @@ mod tests {
                 legendary_power: LegendaryPower::Frostbrand,
                 temper_level: 0,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -2512,5 +2539,67 @@ mod tests {
             codex.unlocked,
             vec![LegendaryPower::Emberbrand, LegendaryPower::Frostbrand]
         );
+    }
+
+    #[test]
+    fn worn_paper_doll_gear_round_trips_through_ron() {
+        let helm = SaveInventoryItem {
+            name: "Crown of the Ashen Saint".to_string(),
+            quality: "legendary".to_string(),
+            damage_bonus: 4.0,
+            crit_chance: 0.05,
+            health_bonus: 30.0,
+            armor_bonus: 20.0,
+            legendary_power: LegendaryPower::None,
+            temper_level: 0,
+            socketed_gem: None,
+            slot: GearSlot::Helm,
+        };
+        let equipment = SaveEquipment {
+            weapon_name: "Initiate Blade".to_string(),
+            quality: "common".to_string(),
+            crit_chance: 0.03,
+            health_bonus: 0.0,
+            armor_bonus: 0.0,
+            legendary_power: LegendaryPower::None,
+            temper_level: 0,
+            socketed_gem: None,
+            worn: vec![Some(helm.clone()), None],
+        };
+
+        let content = ron::ser::to_string(&equipment).unwrap();
+        let parsed: SaveEquipment = ron::from_str(&content).unwrap();
+
+        assert_eq!(parsed.worn.len(), 2);
+        assert_eq!(parsed.worn[0].as_ref(), Some(&helm));
+        assert_eq!(parsed.worn[1], None);
+        assert_eq!(parsed.worn[0].as_ref().unwrap().slot, GearSlot::Helm);
+    }
+
+    #[test]
+    fn old_equipment_saves_without_worn_gear_remain_valid() {
+        let content = r#"(
+            weapon_name: "Initiate Blade",
+            quality: "common",
+            crit_chance: 0.03,
+            health_bonus: 0.0,
+        )"#;
+
+        let parsed: SaveEquipment = ron::from_str(content).unwrap();
+
+        assert!(parsed.worn.is_empty());
+
+        let item: SaveInventoryItem = ron::from_str(
+            r#"(
+                name: "Iron Fang",
+                quality: "common",
+                damage_bonus: 4.0,
+                crit_chance: 0.04,
+                health_bonus: 0.0,
+            )"#,
+        )
+        .unwrap();
+
+        assert_eq!(item.slot, GearSlot::Weapon);
     }
 }

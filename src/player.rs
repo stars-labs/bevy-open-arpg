@@ -537,6 +537,44 @@ pub struct Equipment {
     pub legendary_power: LegendaryPower,
     pub temper_level: u32,
     pub socketed_gem: Option<SocketedGem>,
+    /// Worn armor pieces, indexed by `GearSlot::armor_index` (paper-doll slots).
+    pub worn: Vec<Option<InventoryItem>>,
+}
+
+impl Equipment {
+    pub fn empty_worn() -> Vec<Option<InventoryItem>> {
+        vec![None; ARMOR_SLOTS.len()]
+    }
+
+    pub fn normalize_worn(&mut self) {
+        self.worn.resize(ARMOR_SLOTS.len(), None);
+    }
+
+    pub fn worn_piece(&self, slot: GearSlot) -> Option<&InventoryItem> {
+        slot.armor_index()
+            .and_then(|index| self.worn.get(index))
+            .and_then(|piece| piece.as_ref())
+    }
+
+    pub fn worn_damage_bonus(&self) -> f32 {
+        self.worn_sum(|item| item.damage_bonus)
+    }
+
+    pub fn worn_crit_bonus(&self) -> f32 {
+        self.worn_sum(|item| item.crit_chance)
+    }
+
+    pub fn worn_health_bonus(&self) -> f32 {
+        self.worn_sum(|item| item.health_bonus)
+    }
+
+    pub fn worn_armor_bonus(&self) -> f32 {
+        self.worn_sum(|item| item.armor_bonus)
+    }
+
+    fn worn_sum(&self, stat: impl Fn(&InventoryItem) -> f32) -> f32 {
+        self.worn.iter().flatten().map(stat).sum()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -882,6 +920,51 @@ pub fn legendary_codex_pursuit_summary(codex: &LegendaryCodex, equipment: &Equip
     "Codex complete: all powers mastered".to_string()
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GearSlot {
+    #[default]
+    Weapon,
+    Helm,
+    Chest,
+    Gloves,
+    Boots,
+    Amulet,
+    Ring,
+}
+
+/// Non-weapon slots, in paper-doll display order. Indexes into `Equipment::worn`.
+pub const ARMOR_SLOTS: [GearSlot; 6] = [
+    GearSlot::Helm,
+    GearSlot::Amulet,
+    GearSlot::Chest,
+    GearSlot::Gloves,
+    GearSlot::Ring,
+    GearSlot::Boots,
+];
+
+impl GearSlot {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Weapon => "Weapon",
+            Self::Helm => "Helm",
+            Self::Chest => "Chest",
+            Self::Gloves => "Gloves",
+            Self::Boots => "Boots",
+            Self::Amulet => "Amulet",
+            Self::Ring => "Ring",
+        }
+    }
+
+    pub fn is_weapon(self) -> bool {
+        self == Self::Weapon
+    }
+
+    pub fn armor_index(self) -> Option<usize> {
+        ARMOR_SLOTS.iter().position(|slot| *slot == self)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InventoryItem {
     pub name: String,
@@ -893,6 +976,8 @@ pub struct InventoryItem {
     pub legendary_power: LegendaryPower,
     pub temper_level: u32,
     pub socketed_gem: Option<SocketedGem>,
+    #[serde(default)]
+    pub slot: GearSlot,
 }
 
 #[derive(Component, Debug)]
@@ -1044,16 +1129,100 @@ pub fn inventory_swap_index(
     current_weapon_name: &str,
     offset: i32,
 ) -> Option<usize> {
-    let len = inventory.items.len();
-    if len == 0 {
-        return None;
-    }
-    let current = inventory
+    // Cycle over weapons only; armor pieces live in the paper-doll slots.
+    let weapon_positions: Vec<usize> = inventory
         .items
         .iter()
-        .position(|item| item.name == current_weapon_name)
+        .enumerate()
+        .filter(|(_, item)| item.slot.is_weapon())
+        .map(|(index, _)| index)
+        .collect();
+    if weapon_positions.is_empty() {
+        return None;
+    }
+    let current = weapon_positions
+        .iter()
+        .position(|&index| inventory.items[index].name == current_weapon_name)
         .unwrap_or(0);
-    Some((current as i32 + offset).rem_euclid(len as i32) as usize)
+    let next = (current as i32 + offset).rem_euclid(weapon_positions.len() as i32) as usize;
+    Some(weapon_positions[next])
+}
+
+/// Quality-weighted score used to rank gear pieces contending for one slot.
+pub fn gear_piece_power(item: &InventoryItem) -> f32 {
+    let quality_bonus = match item.quality.as_str() {
+        "primal" => 48.0,
+        "ancient" => 38.0,
+        "legendary" => 30.0,
+        "rare" => 20.0,
+        "magic" => 12.0,
+        _ => 6.0,
+    };
+    item.damage_bonus * 2.4
+        + item.crit_chance * 120.0
+        + item.health_bonus * 0.35
+        + item.armor_bonus * 0.8
+        + item.temper_level as f32 * 2.0
+        + quality_bonus
+}
+
+/// Put an armor piece into its paper-doll slot, applying its health bonus.
+/// Returns the replaced piece on success, or gives the item back as `Err`
+/// when it does not belong to an armor slot.
+pub fn equip_gear_piece(
+    item: InventoryItem,
+    equipment: &mut Equipment,
+    health: &mut Health,
+) -> Result<Option<InventoryItem>, InventoryItem> {
+    let Some(index) = item.slot.armor_index() else {
+        return Err(item);
+    };
+    equipment.normalize_worn();
+    let old = equipment.worn[index].take();
+    let old_health = old
+        .as_ref()
+        .map(|piece| piece.health_bonus)
+        .unwrap_or_default();
+    apply_equipment_health_delta(health, old_health, item.health_bonus);
+    equipment.worn[index] = Some(item);
+    Ok(old)
+}
+
+/// Equip the strongest bagged piece for every armor slot; replaced pieces go
+/// back into the bag. Returns a description per newly worn piece.
+pub fn don_best_gear_from_inventory(
+    inventory: &mut Inventory,
+    equipment: &mut Equipment,
+    health: &mut Health,
+) -> Vec<String> {
+    let mut worn_reports = Vec::new();
+    for slot in ARMOR_SLOTS {
+        let current_power = equipment
+            .worn_piece(slot)
+            .map(gear_piece_power)
+            .unwrap_or(f32::MIN);
+        let best = inventory
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.slot == slot)
+            .max_by(|(_, a), (_, b)| gear_piece_power(a).total_cmp(&gear_piece_power(b)));
+        let Some((index, item)) = best else {
+            continue;
+        };
+        if gear_piece_power(item) <= current_power {
+            continue;
+        }
+        let item = inventory.items.remove(index);
+        let label = format!("{} {} ({})", item.quality, item.name, slot.label());
+        if let Ok(replaced) = equip_gear_piece(item, equipment, health) {
+            if let Some(replaced) = replaced {
+                inventory.items.push(replaced);
+            }
+            worn_reports.push(label);
+        }
+    }
+    worn_reports
 }
 
 pub fn equip_inventory_item(
@@ -1228,6 +1397,7 @@ pub fn equipment_as_inventory_item(
         legendary_power: equipment.legendary_power,
         temper_level: equipment.temper_level,
         socketed_gem: equipment.socketed_gem,
+        slot: GearSlot::Weapon,
     }
 }
 
@@ -1470,6 +1640,7 @@ fn gear_affinity(name: &str) -> Option<ReliquarySet> {
 pub fn total_damage_bonus(damage_bonus: &DamageBonus, equipment: &Equipment, charm: &Charm) -> f32 {
     damage_bonus.0
         + charm.damage_bonus
+        + equipment.worn_damage_bonus()
         + reliquary_resonance(equipment, charm)
             .map(|resonance| resonance.damage_bonus)
             .unwrap_or_default()
@@ -1478,6 +1649,7 @@ pub fn total_damage_bonus(damage_bonus: &DamageBonus, equipment: &Equipment, cha
 pub fn total_crit_chance(equipment: &Equipment, charm: &Charm) -> f32 {
     (equipment.crit_chance
         + charm.crit_chance
+        + equipment.worn_crit_bonus()
         + reliquary_resonance(equipment, charm)
             .map(|resonance| resonance.crit_bonus)
             .unwrap_or_default())
@@ -1752,7 +1924,7 @@ pub fn active_elixir_armor(buff: &ElixirBuff) -> f32 {
 }
 
 pub fn total_armor(equipment: &Equipment, elixir: &ElixirBuff) -> f32 {
-    equipment.armor_bonus + active_elixir_armor(elixir)
+    equipment.armor_bonus + equipment.worn_armor_bonus() + active_elixir_armor(elixir)
 }
 
 pub fn elixir_damage_multiplier(buff: &ElixirBuff) -> f32 {
@@ -2232,6 +2404,8 @@ impl Plugin for PlayerPlugin {
                     cycle_codex_attunement,
                     cycle_skill_runes,
                     cycle_equipped_weapon,
+                    don_best_gear,
+                    sync_paper_doll_visuals,
                     use_potion,
                     use_elixir,
                 )
@@ -2346,6 +2520,7 @@ fn spawn_player(
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                worn: Equipment::empty_worn(),
             },
             Inventory {
                 items: vec![InventoryItem {
@@ -2358,6 +2533,7 @@ fn spawn_player(
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 }],
                 capacity: 12,
             },
@@ -3127,6 +3303,127 @@ fn cycle_equipped_weapon(
     if equipment.legendary_power != LegendaryPower::None {
         combat_events.write(CombatEvent {
             text: format!("Legendary power: {}", equipment.legendary_power.label()),
+        });
+    }
+}
+
+/// Original material color of a tinted hero part, captured before the first
+/// paper-doll tint so removing gear restores the bare look.
+#[derive(Component)]
+struct DollPartBaseColor(Color);
+
+/// Hero.glb node names mapped to the paper-doll slot that colors them.
+const DOLL_PART_SLOTS: [(&str, GearSlot); 7] = [
+    ("helm", GearSlot::Helm),
+    ("visor", GearSlot::Helm),
+    ("tabard", GearSlot::Chest),
+    ("left pauldron", GearSlot::Gloves),
+    ("right pauldron", GearSlot::Gloves),
+    ("left boot", GearSlot::Boots),
+    ("right boot", GearSlot::Boots),
+];
+
+fn doll_part_slot(name: &str) -> Option<GearSlot> {
+    DOLL_PART_SLOTS
+        .iter()
+        .find(|(part, _)| *part == name)
+        .map(|(_, slot)| *slot)
+}
+
+fn armor_quality_tint(quality: &str) -> Color {
+    match quality {
+        "primal" => Color::srgb(0.85, 0.16, 0.12),
+        "ancient" => Color::srgb(0.78, 0.28, 0.70),
+        "legendary" => Color::srgb(0.86, 0.50, 0.16),
+        "rare" => Color::srgb(0.30, 0.48, 0.86),
+        "magic" => Color::srgb(0.30, 0.70, 0.76),
+        _ => Color::srgb(0.55, 0.55, 0.56),
+    }
+}
+
+fn sync_paper_doll_visuals(
+    mut commands: Commands,
+    player: Query<(Entity, &Equipment), With<Player>>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut parts: Query<(
+        &mut MeshMaterial3d<StandardMaterial>,
+        Option<&DollPartBaseColor>,
+    )>,
+) {
+    let Ok((root, equipment)) = player.single() else {
+        return;
+    };
+    for named in children.iter_descendants(root) {
+        let Ok(name) = names.get(named) else {
+            continue;
+        };
+        let Some(slot) = doll_part_slot(name.as_str()) else {
+            continue;
+        };
+        let worn_quality = equipment.worn_piece(slot).map(|item| item.quality.clone());
+        // The material may sit on the named node or on a primitive child.
+        let mut targets = vec![named];
+        targets.extend(children.iter_descendants(named));
+        for target in targets {
+            let Ok((mut material_ref, base)) = parts.get_mut(target) else {
+                continue;
+            };
+            // Give the part its own material once, so tinting the helm never
+            // recolors other meshes sharing the glTF material (e.g. the sword).
+            let base_color = match base {
+                Some(base) => base.0,
+                None => {
+                    let Some(unique) = materials.get(&material_ref.0).cloned() else {
+                        continue;
+                    };
+                    let base_color = unique.base_color;
+                    material_ref.0 = materials.add(unique);
+                    commands
+                        .entity(target)
+                        .insert(DollPartBaseColor(base_color));
+                    base_color
+                }
+            };
+            let desired = match worn_quality.as_deref() {
+                Some(quality) => base_color.mix(&armor_quality_tint(quality), 0.55),
+                None => base_color,
+            };
+            let already = materials
+                .get(&material_ref.0)
+                .is_some_and(|material| material.base_color == desired);
+            if already {
+                continue;
+            }
+            if let Some(mut material) = materials.get_mut(&material_ref.0) {
+                material.base_color = desired;
+            }
+        }
+    }
+}
+
+fn don_best_gear(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut combat_events: MessageWriter<CombatEvent>,
+    mut player: Query<(&mut Inventory, &mut Equipment, &mut Health), With<Player>>,
+) {
+    if !keyboard.just_pressed(KeyCode::Semicolon) {
+        return;
+    }
+    let Ok((mut inventory, mut equipment, mut health)) = player.single_mut() else {
+        return;
+    };
+    let worn = don_best_gear_from_inventory(&mut inventory, &mut equipment, &mut health);
+    if worn.is_empty() {
+        combat_events.write(CombatEvent {
+            text: "Gear check: every paper-doll slot already wears its best piece".to_string(),
+        });
+        return;
+    }
+    for label in worn {
+        combat_events.write(CombatEvent {
+            text: format!("Donned {label}"),
         });
     }
 }
@@ -5505,6 +5802,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         }));
         assert!(inventory.add(InventoryItem {
             name: "Moonforged Cleaver".to_string(),
@@ -5516,6 +5814,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         }));
         assert!(!inventory.add(InventoryItem {
             name: "Overflow".to_string(),
@@ -5527,6 +5826,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         }));
         assert!(inventory.summary().contains("Moonforged Cleaver"));
     }
@@ -5545,6 +5845,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "B".to_string(),
@@ -5556,6 +5857,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 4,
@@ -5578,6 +5880,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 2,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let mut damage_bonus = DamageBonus(2.0);
         let mut equipment = Equipment {
@@ -5589,6 +5892,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut health = Health {
             current: 50.0,
@@ -5617,6 +5921,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let upgrade = InventoryItem {
             name: "Stormglass Reaver".to_string(),
@@ -5631,6 +5936,7 @@ mod tests {
                 kind: GemKind::Emerald,
                 rank: 3,
             }),
+            slot: GearSlot::Weapon,
         };
 
         let summary = manual_equip_summary(&upgrade, &current_damage, &current);
@@ -5657,6 +5963,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 1,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let sidegrade = InventoryItem {
             name: "Frost Wake".to_string(),
@@ -5668,6 +5975,7 @@ mod tests {
             legendary_power: LegendaryPower::Frostbrand,
             temper_level: 1,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let downgrade = InventoryItem {
             name: "Bent Fang".to_string(),
@@ -5679,6 +5987,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
 
         let sidegrade_summary = manual_equip_summary(&sidegrade, &current_damage, &current);
@@ -5706,6 +6015,7 @@ mod tests {
                 kind: GemKind::Emerald,
                 rank: 2,
             }),
+            slot: GearSlot::Weapon,
         };
         let mut inventory = Inventory {
             items: vec![saved_weapon.clone()],
@@ -5721,6 +6031,7 @@ mod tests {
             legendary_power: saved_weapon.legendary_power,
             temper_level: saved_weapon.temper_level,
             socketed_gem: saved_weapon.socketed_gem,
+            worn: Equipment::empty_worn(),
         };
         let saved_charm = Charm {
             name: "Stormglass Charm".to_string(),
@@ -5758,6 +6069,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let mut swap_health = Health {
             current: 80.0,
@@ -5814,6 +6126,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let loadout = ArmoryLoadout {
             weapon,
@@ -5851,6 +6164,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 4,
         };
@@ -5863,6 +6177,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(8.0);
         let mut health = Health {
@@ -5946,6 +6261,7 @@ mod tests {
                     kind: GemKind::Topaz,
                     rank: 2,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 4,
         };
@@ -5961,6 +6277,7 @@ mod tests {
                 kind: GemKind::Topaz,
                 rank: 2,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(8.0);
         let mut health = Health {
@@ -6103,6 +6420,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
 
         assert_eq!(
@@ -6156,6 +6474,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let charm = Charm {
             name: "Stormglass Charm".to_string(),
@@ -6181,6 +6500,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut charm = Charm {
             name: "Gilded Fang Charm".to_string(),
@@ -6236,6 +6556,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let charm = Charm {
             name: "Stormglass Charm".to_string(),
@@ -6274,6 +6595,7 @@ mod tests {
             legendary_power: LegendaryPower::Soulreaver,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let charm = Charm {
             name: "Stormglass Charm".to_string(),
@@ -7210,6 +7532,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut health = Health {
             current: 70.0,
@@ -7264,6 +7587,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut health = Health {
             current: 70.0,
@@ -7329,6 +7653,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut health = Health {
             current: 70.0,
@@ -7435,6 +7760,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
 
         apply_ember_paragon_rank(1, &mut health, &mut damage, &mut equipment);
@@ -7596,5 +7922,144 @@ mod tests {
 
         assert!((gained - 6.5).abs() < 0.001);
         assert!((surge_seconds_remaining(&buff) - 15.0).abs() < 0.001);
+    }
+
+    fn gear_item(
+        name: &str,
+        slot: GearSlot,
+        quality: &str,
+        armor: f32,
+        health: f32,
+    ) -> InventoryItem {
+        InventoryItem {
+            name: name.to_string(),
+            quality: quality.to_string(),
+            damage_bonus: 0.0,
+            crit_chance: 0.0,
+            health_bonus: health,
+            armor_bonus: armor,
+            legendary_power: LegendaryPower::None,
+            temper_level: 0,
+            socketed_gem: None,
+            slot,
+        }
+    }
+
+    fn bare_equipment() -> Equipment {
+        Equipment {
+            weapon_name: "Initiate Blade".to_string(),
+            quality: "common".to_string(),
+            crit_chance: 0.03,
+            health_bonus: 0.0,
+            armor_bonus: 0.0,
+            legendary_power: LegendaryPower::None,
+            temper_level: 0,
+            socketed_gem: None,
+            worn: Equipment::empty_worn(),
+        }
+    }
+
+    #[test]
+    fn armor_slots_map_to_stable_worn_indexes() {
+        for (index, slot) in ARMOR_SLOTS.iter().enumerate() {
+            assert_eq!(slot.armor_index(), Some(index));
+            assert!(!slot.is_weapon());
+        }
+        assert_eq!(GearSlot::Weapon.armor_index(), None);
+        assert!(GearSlot::Weapon.is_weapon());
+    }
+
+    #[test]
+    fn equip_gear_piece_applies_health_and_returns_replaced() {
+        let mut equipment = bare_equipment();
+        let mut health = Health {
+            current: 100.0,
+            max: 100.0,
+        };
+
+        let first = gear_item("Ashen Helm", GearSlot::Helm, "rare", 6.0, 20.0);
+        assert_eq!(
+            equip_gear_piece(first, &mut equipment, &mut health),
+            Ok(None)
+        );
+        assert_eq!(health.max, 120.0);
+        assert_eq!(equipment.worn_armor_bonus(), 6.0);
+        assert_eq!(equipment.worn_health_bonus(), 20.0);
+
+        let second = gear_item("Reliquary Crown", GearSlot::Helm, "legendary", 10.0, 30.0);
+        let replaced = equip_gear_piece(second, &mut equipment, &mut health)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replaced.name, "Ashen Helm");
+        assert_eq!(health.max, 130.0);
+        assert_eq!(
+            equipment.worn_piece(GearSlot::Helm).unwrap().name,
+            "Reliquary Crown"
+        );
+
+        let weapon = gear_item("Iron Fang", GearSlot::Weapon, "common", 0.0, 0.0);
+        assert_eq!(
+            equip_gear_piece(weapon.clone(), &mut equipment, &mut health),
+            Err(weapon)
+        );
+    }
+
+    #[test]
+    fn don_best_gear_prefers_stronger_pieces_and_returns_replaced_to_bag() {
+        let mut equipment = bare_equipment();
+        let mut health = Health {
+            current: 80.0,
+            max: 100.0,
+        };
+        let mut inventory = Inventory {
+            items: vec![
+                gear_item("Iron Fang", GearSlot::Weapon, "common", 0.0, 0.0),
+                gear_item("Rustplate", GearSlot::Chest, "common", 4.0, 8.0),
+                gear_item("Wardplate", GearSlot::Chest, "legendary", 18.0, 40.0),
+                gear_item("Emberband", GearSlot::Ring, "rare", 2.0, 10.0),
+            ],
+            capacity: 12,
+        };
+
+        let worn = don_best_gear_from_inventory(&mut inventory, &mut equipment, &mut health);
+
+        assert_eq!(worn.len(), 2);
+        assert_eq!(
+            equipment.worn_piece(GearSlot::Chest).unwrap().name,
+            "Wardplate"
+        );
+        assert_eq!(
+            equipment.worn_piece(GearSlot::Ring).unwrap().name,
+            "Emberband"
+        );
+        // Weaker chest piece and the weapon stay in the bag.
+        assert!(inventory.items.iter().any(|item| item.name == "Rustplate"));
+        assert!(inventory.items.iter().any(|item| item.name == "Iron Fang"));
+        assert_eq!(inventory.items.len(), 2);
+
+        // Running again finds nothing better.
+        let again = don_best_gear_from_inventory(&mut inventory, &mut equipment, &mut health);
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn weapon_cycling_skips_armor_pieces() {
+        let inventory = Inventory {
+            items: vec![
+                gear_item("Blade A", GearSlot::Weapon, "common", 0.0, 0.0),
+                gear_item("Helm", GearSlot::Helm, "rare", 5.0, 10.0),
+                gear_item("Blade B", GearSlot::Weapon, "rare", 0.0, 0.0),
+            ],
+            capacity: 12,
+        };
+        assert_eq!(inventory_swap_index(&inventory, "Blade A", 1), Some(2));
+        assert_eq!(inventory_swap_index(&inventory, "Blade B", 1), Some(0));
+        assert_eq!(inventory_swap_index(&inventory, "Blade A", -1), Some(2));
+
+        let armor_only = Inventory {
+            items: vec![gear_item("Helm", GearSlot::Helm, "rare", 5.0, 10.0)],
+            capacity: 12,
+        };
+        assert_eq!(inventory_swap_index(&armor_only, "Helm", 1), None);
     }
 }

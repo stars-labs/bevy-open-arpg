@@ -12,12 +12,13 @@ use crate::{
     grant_champion_pack_reward, not_paused,
     ordeal::ChapterModifier,
     player::{
-        Charm, DamageBonus, ElixirBelt, Equipment, FortuneBuff, Fury, GemKind, GloryBuff, Health,
-        Inventory, InventoryItem, LegendaryCodex, LegendaryPower, Player, PotionBelt, RelicBuff,
-        SocketedGem, charm_power, equip_inventory_item, fortune_gold_reward,
-        fortune_magic_find_active, gear_quality_is_ancient_or_better,
-        gear_quality_is_legendary_or_better, gem_label, grant_glory, grant_reliquary_momentum,
-        is_themed_reliquary_resonance, potion_cooldown_secs_for_capacity, socket_or_upgrade_gem,
+        Charm, DamageBonus, ElixirBelt, Equipment, FortuneBuff, Fury, GearSlot, GemKind, GloryBuff,
+        Health, Inventory, InventoryItem, LegendaryCodex, LegendaryPower, Player, PotionBelt,
+        RelicBuff, SocketedGem, charm_power, equip_gear_piece, equip_inventory_item,
+        fortune_gold_reward, fortune_magic_find_active, gear_piece_power,
+        gear_quality_is_ancient_or_better, gear_quality_is_legendary_or_better, gem_label,
+        grant_glory, grant_reliquary_momentum, is_themed_reliquary_resonance,
+        potion_cooldown_secs_for_capacity, socket_or_upgrade_gem,
     },
     register_champion_pack_kill, register_valor_kill, valor_gold_reward, valor_xp_reward,
 };
@@ -41,6 +42,7 @@ pub struct LootDrop {
     pub elixirs: u32,
     pub quality: String,
     pub label: String,
+    pub slot: GearSlot,
 }
 
 #[derive(Component)]
@@ -1671,6 +1673,7 @@ fn inventory_item_from_weapon(weapon: &crate::data::LootEntry) -> InventoryItem 
         legendary_power: weapon.legendary_power,
         temper_level: 0,
         socketed_gem: None,
+        slot: weapon.slot,
     }
 }
 
@@ -3087,6 +3090,7 @@ fn loot_drop_from_weapon(gold: u32, weapon: &crate::data::LootEntry) -> LootDrop
         elixirs: elixirs_for_quality(&weapon.quality),
         quality: weapon.quality.clone(),
         label: format!("{} {}", weapon.quality, weapon.name),
+        slot: weapon.slot,
     }
 }
 
@@ -4186,7 +4190,12 @@ fn claim_loot_drop(claim: &mut LootClaimState, fortune: &FortuneBuff, drop: &Loo
         legendary_power: drop.legendary_power,
         temper_level: drop.temper_level,
         socketed_gem: drop.socketed_gem,
+        slot: drop.slot,
     };
+    if !drop.slot.is_weapon() {
+        claim_armor_drop(claim, drop, item, gold);
+        return;
+    }
     match claim_codex_drop_power(
         claim.codex,
         claim.stats,
@@ -4267,6 +4276,83 @@ fn claim_loot_drop(claim: &mut LootClaimState, fortune: &FortuneBuff, drop: &Loo
         ),
     });
     info!("Picked up {} (+{} damage)", drop.label, drop.damage_bonus);
+}
+
+fn claim_armor_drop(claim: &mut LootClaimState, drop: &LootDrop, item: InventoryItem, gold: u32) {
+    let slot_label = item.slot.label();
+    let candidate_power = gear_piece_power(&item);
+    let current_power = claim
+        .equipment
+        .worn_piece(item.slot)
+        .map(gear_piece_power)
+        .unwrap_or(f32::MIN);
+    let auto_equipped = candidate_power >= current_power;
+    let mut stored = false;
+    let mut replaced_label = None;
+    if auto_equipped {
+        if let Ok(Some(replaced)) = equip_gear_piece(item, claim.equipment, claim.health) {
+            replaced_label = Some(replaced.name.clone());
+            stored = claim.inventory.add(replaced);
+        }
+    } else {
+        stored = claim.inventory.add(item);
+    }
+    claim.combat_events.write(CombatEvent {
+        text: match (&replaced_label, auto_equipped) {
+            (Some(replaced), _) if stored => {
+                format!(
+                    "Donned {} ({slot_label}); {replaced} moved to bag",
+                    drop.label
+                )
+            }
+            (Some(replaced), _) => {
+                format!(
+                    "Donned {} ({slot_label}); {replaced} lost (bag full)",
+                    drop.label
+                )
+            }
+            (None, true) => format!("Donned {} ({slot_label})", drop.label),
+            (None, false) if stored => {
+                format!("Bagged {} (weaker than worn {slot_label})", drop.label)
+            }
+            (None, false) => format!("Left {} behind (bag full)", drop.label),
+        },
+    });
+    if let Some(gem) = drop.bonus_gem {
+        let socketed = socket_or_upgrade_gem(
+            gem,
+            claim.damage_bonus,
+            claim.equipment,
+            claim.inventory,
+            claim.health,
+        );
+        register_gem_adept_kind(claim.stats, socketed.kind);
+        claim.combat_events.write(CombatEvent {
+            text: format!("Socketed {}", socketed.label()),
+        });
+    }
+    if let Some(drop_charm) = &drop.bonus_charm {
+        let equipped = equip_charm_if_better(claim.charm, drop_charm);
+        claim.combat_events.write(CombatEvent {
+            text: if equipped {
+                format!("Equipped {}", claim.charm.summary())
+            } else {
+                format!("Kept current charm over {}", drop_charm.summary())
+            },
+        });
+    }
+    claim.potions.current = (claim.potions.current + drop.potions).min(claim.potions.max);
+    claim.elixirs.current = (claim.elixirs.current + drop.elixirs).min(claim.elixirs.max);
+    claim.combat_events.write(CombatEvent {
+        text: format!(
+            "Picked up {}{} and {} gold{}",
+            drop.label,
+            gem_label(drop.bonus_gem),
+            gold,
+            if drop.elixirs > 0 { " + elixir" } else { "" },
+        ),
+    });
+    info!("Picked up {} ({} slot)", drop.label, slot_label);
 }
 
 fn register_gem_adept_kind(stats: &mut RunStats, kind: GemKind) {
@@ -4470,6 +4556,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Stormglass Reaver".to_string(),
@@ -4481,6 +4568,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::Stormbrand,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         }
@@ -4507,6 +4595,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Moonforged Cleaver".to_string(),
@@ -4518,6 +4607,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4663,6 +4753,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Moonforged Cleaver".to_string(),
@@ -4674,6 +4765,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4698,6 +4790,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Moonforged Cleaver".to_string(),
@@ -4709,6 +4802,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4733,6 +4827,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Moonforged Cleaver".to_string(),
@@ -4744,6 +4839,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4768,6 +4864,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Ember-Saint Relic Blade".to_string(),
@@ -4779,6 +4876,7 @@ mod tests {
                     armor_bonus: 18.0,
                     legendary_power: LegendaryPower::Emberbrand,
                     potions: 2,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4804,6 +4902,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Ancient Ashen Reliquary Reaver".to_string(),
@@ -4815,6 +4914,7 @@ mod tests {
                     armor_bonus: 28.0,
                     legendary_power: LegendaryPower::Stormbrand,
                     potions: 3,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4840,6 +4940,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Ancient Aegis-Saint Reliquary Bulwark".to_string(),
@@ -4851,6 +4952,7 @@ mod tests {
                     armor_bonus: 38.0,
                     legendary_power: LegendaryPower::Aegisbrand,
                     potions: 3,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4876,6 +4978,7 @@ mod tests {
                     armor_bonus: 2.0,
                     legendary_power: LegendaryPower::None,
                     potions: 0,
+                    slot: GearSlot::Weapon,
                 },
                 LootEntry {
                     name: "Moonforged Cleaver".to_string(),
@@ -4887,6 +4990,7 @@ mod tests {
                     armor_bonus: 8.0,
                     legendary_power: LegendaryPower::None,
                     potions: 1,
+                    slot: GearSlot::Weapon,
                 },
             ],
         };
@@ -4911,6 +5015,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "common Rusted Fang".to_string(),
@@ -4922,6 +5027,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -4935,6 +5041,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut potions = PotionBelt {
             current: 1,
@@ -5005,6 +5112,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "legendary Spare Relic".to_string(),
@@ -5016,6 +5124,7 @@ mod tests {
                     legendary_power: LegendaryPower::Emberbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -5029,6 +5138,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut health = Health {
@@ -5094,6 +5204,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Ancient Aegis-Saint Reliquary Bulwark".to_string(),
@@ -5105,6 +5216,7 @@ mod tests {
                     legendary_power: LegendaryPower::Aegisbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -5118,6 +5230,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
 
         let salvage = salvage_spare_inventory(&mut inventory, &equipment);
@@ -5272,6 +5385,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5284,6 +5398,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats {
             gold: MERCHANT_ENCHANT_GOLD_COST,
@@ -5371,6 +5486,7 @@ mod tests {
                 legendary_power: LegendaryPower::Stormbrand,
                 temper_level: 1,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5383,6 +5499,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 1,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats {
             gold: MERCHANT_ENCHANT_GOLD_COST,
@@ -5423,6 +5540,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5435,6 +5553,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats {
             gold: MERCHANT_ENCHANT_GOLD_COST,
@@ -5486,6 +5605,7 @@ mod tests {
                 legendary_power: LegendaryPower::Emberbrand,
                 temper_level: 3,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5498,6 +5618,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 3,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats {
             gold: MERCHANT_ENCHANT_GOLD_COST * 2,
@@ -5544,6 +5665,7 @@ mod tests {
                 legendary_power: LegendaryPower::Emberbrand,
                 temper_level: 3,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5556,6 +5678,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 3,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats {
             gold: MERCHANT_ENCHANT_GOLD_COST,
@@ -5599,6 +5722,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -5611,6 +5735,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut health = Health {
@@ -5675,6 +5800,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -5687,6 +5813,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut health = Health {
@@ -5754,6 +5881,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -5766,6 +5894,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut gold = 90;
@@ -5799,6 +5928,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 1,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut gold = temper_cost(equipment.temper_level) - 1;
@@ -5829,6 +5959,7 @@ mod tests {
                     kind: GemKind::Ruby,
                     rank: 1,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -5844,6 +5975,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 1,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(15.0);
         let mut health = Health {
@@ -5883,6 +6015,7 @@ mod tests {
                 legendary_power: LegendaryPower::Emberbrand,
                 temper_level: 0,
                 socketed_gem: Some(ascendant_ruby),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -5895,6 +6028,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 0,
             socketed_gem: Some(ascendant_ruby),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(40.0);
         let mut health = Health {
@@ -5942,6 +6076,7 @@ mod tests {
                     kind: GemKind::Topaz,
                     rank: 4,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -5957,6 +6092,7 @@ mod tests {
                 kind: GemKind::Topaz,
                 rank: 4,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(15.0);
         let mut health = Health {
@@ -6009,6 +6145,7 @@ mod tests {
                     kind: GemKind::Ruby,
                     rank: 4,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6024,6 +6161,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 4,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut health = Health {
@@ -6096,6 +6234,7 @@ mod tests {
                     kind: GemKind::Ruby,
                     rank: 3,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6111,6 +6250,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 3,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(22.0);
         let mut health = Health {
@@ -6160,6 +6300,7 @@ mod tests {
                     kind: GemKind::Amethyst,
                     rank: 2,
                 }),
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6175,6 +6316,7 @@ mod tests {
                 kind: GemKind::Amethyst,
                 rank: 2,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(18.0);
         let mut health = Health {
@@ -6242,6 +6384,7 @@ mod tests {
                 legendary_power: LegendaryPower::Emberbrand,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6254,6 +6397,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(30.0);
         let mut health = Health {
@@ -6308,6 +6452,7 @@ mod tests {
                 legendary_power: LegendaryPower::Stormbrand,
                 temper_level: 1,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6320,6 +6465,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 1,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(22.0);
         let mut health = Health {
@@ -6372,6 +6518,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats::default();
 
@@ -6428,6 +6575,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let inventory = Inventory {
             items: vec![
@@ -6441,6 +6589,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Spare Fang".to_string(),
@@ -6452,6 +6601,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -6560,6 +6710,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 4,
             }),
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats::default();
 
@@ -6596,6 +6747,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let inventory = Inventory {
             items: vec![
@@ -6609,6 +6761,7 @@ mod tests {
                     legendary_power: equipment.legendary_power,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Moonforged Cleaver".to_string(),
@@ -6620,6 +6773,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Aegis-Saint Reliquary Guard".to_string(),
@@ -6634,6 +6788,7 @@ mod tests {
                         kind: GemKind::Ruby,
                         rank: 2,
                     }),
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -6658,6 +6813,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut inventory = Inventory {
             items: vec![
@@ -6671,6 +6827,7 @@ mod tests {
                     legendary_power: equipment.legendary_power,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Spare Moon Fang".to_string(),
@@ -6682,6 +6839,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Spare Ember Fang".to_string(),
@@ -6693,6 +6851,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Spare Saint Fang".to_string(),
@@ -6704,6 +6863,7 @@ mod tests {
                     legendary_power: LegendaryPower::Aegisbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Spare Ancient Fang".to_string(),
@@ -6715,6 +6875,7 @@ mod tests {
                     legendary_power: LegendaryPower::Emberbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -6751,6 +6912,7 @@ mod tests {
             legendary_power: LegendaryPower::Emberbrand,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut stats = RunStats::default();
         let mut inventory = Inventory {
@@ -6764,6 +6926,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -6795,6 +6958,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 2,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: MAX_INVENTORY_CAPACITY,
         };
@@ -6807,6 +6971,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(12.0);
         let mut health = Health {
@@ -6912,6 +7077,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let mut damage_bonus = DamageBonus(4.0);
         let mut health = Health {
@@ -7172,6 +7338,7 @@ mod tests {
             elixirs: 1,
             quality: "legendary".to_string(),
             label: "legendary Storm Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         let text = loot_label_text(&drop);
@@ -7211,6 +7378,7 @@ mod tests {
             elixirs: 0,
             quality: "common".to_string(),
             label: "common Iron Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         assert_eq!(loot_label_reward_summary(&drop), "");
@@ -7245,6 +7413,7 @@ mod tests {
             elixirs: 0,
             quality: "legendary".to_string(),
             label: "legendary Storm Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         let text = loot_label_text_with_compare(&drop, equipped, true);
@@ -7292,6 +7461,7 @@ mod tests {
             elixirs: 0,
             quality: "rare".to_string(),
             label: "rare Mirror Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
         let weaker = LootDrop {
             gold: 0,
@@ -7308,6 +7478,7 @@ mod tests {
             elixirs: 0,
             quality: "common".to_string(),
             label: "common Bent Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         assert!(loot_ground_compare_summary(&sidegrade, equipped, true).contains("SIDEGRADE"));
@@ -7346,6 +7517,7 @@ mod tests {
             elixirs: 1,
             quality: "legendary".to_string(),
             label: "Ember-Saint Relic Blade".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         let ready = loot_proximity_info(&drop, LOOT_PICKUP_RADIUS - 0.1, equipped, true, false);
@@ -7399,6 +7571,7 @@ mod tests {
             elixirs: 0,
             quality: "common".to_string(),
             label: "Cracked Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
         let upgrade = LootDrop {
             gold: 18,
@@ -7415,6 +7588,7 @@ mod tests {
             elixirs: 1,
             quality: "legendary".to_string(),
             label: "Ember-Saint Relic Blade".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         let (focused, distance) = focused_loot_drop_from_iter(
@@ -7466,6 +7640,7 @@ mod tests {
             elixirs: 0,
             quality: "rare".to_string(),
             label: "Socketed Moonforged Cleaver".to_string(),
+            slot: GearSlot::Weapon,
         };
         let weak = LootDrop {
             gold: 2,
@@ -7482,6 +7657,7 @@ mod tests {
             elixirs: 0,
             quality: "common".to_string(),
             label: "Bent Fang".to_string(),
+            slot: GearSlot::Weapon,
         };
 
         assert_eq!(
@@ -7599,6 +7775,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         };
         let damage_bonus = DamageBonus(12.0);
 
@@ -7668,6 +7845,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 2,
             }),
+            slot: GearSlot::Weapon,
         };
         let primal_item = InventoryItem {
             name: "Primal Ashen Reliquary Reaver".to_string(),
@@ -7682,6 +7860,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 2,
             }),
+            slot: GearSlot::Weapon,
         };
 
         assert!(item_power(ancient) > item_power(legendary));

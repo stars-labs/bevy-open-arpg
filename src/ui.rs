@@ -40,7 +40,7 @@ use crate::{
     player::{
         Armory, Barrier, Burning, CHAPTER_LEVEL_CAP, ChapterBoon, ChapterBoonChoice, Charm,
         ConduitBuff, DamageBonus, DashRune, DeathWard, DeathWardReport, ElixirBelt, ElixirBuff,
-        EmberParagon, Equipment, Evade, FortuneBuff, Fury, GloryBuff, Health, Inventory,
+        EmberParagon, Equipment, Evade, FortuneBuff, Fury, GearSlot, GloryBuff, Health, Inventory,
         InventoryItem, Jailed, LegendaryCodex, LegendaryPower, NovaRune, PYLON_REAPER_KILLS,
         Player, PlayerLevel, PotionBelt, RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet,
         RuptureRune, SkillCooldowns, SkillRunes, SocketedGem, SurgeBuff, Talents, TownPortal,
@@ -267,6 +267,10 @@ enum GearSlotText {
     Codex,
     Armory,
 }
+
+/// One paper-doll gear box in the inventory panel (weapon + armor slots).
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct PaperDollSlot(GearSlot);
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 struct InventorySlotText(usize);
@@ -2074,6 +2078,10 @@ impl Plugin for HudPlugin {
                     update_combat_streak_banner,
                 )
                     .run_if(in_state(GameState::InGame)),
+            )
+            .add_systems(
+                Update,
+                update_paper_doll_slots.run_if(in_state(GameState::InGame)),
             )
             .add_systems(OnExit(GameState::InGame), despawn_hud)
             .add_systems(OnEnter(GameState::GameOver), spawn_game_over)
@@ -6191,6 +6199,52 @@ fn spawn_hud(mut commands: Commands) {
                                 ..default()
                             },))
                                 .with_children(|gear| {
+                                    // Paper doll: helm on top, amulet/chest/ring
+                                    // across the torso row, weapon/gloves at the
+                                    // hands, boots at the feet.
+                                    let doll_rows: [&[GearSlot]; 4] = [
+                                        &[GearSlot::Helm],
+                                        &[GearSlot::Amulet, GearSlot::Chest, GearSlot::Ring],
+                                        &[GearSlot::Weapon, GearSlot::Gloves],
+                                        &[GearSlot::Boots],
+                                    ];
+                                    for row in doll_rows {
+                                        gear.spawn((Node {
+                                            width: Val::Percent(100.0),
+                                            display: Display::Flex,
+                                            justify_content: JustifyContent::Center,
+                                            column_gap: Val::Px(6.0),
+                                            ..default()
+                                        },))
+                                            .with_children(|doll_row| {
+                                                for slot in row {
+                                                    doll_row.spawn((
+                                                        Node {
+                                                            width: Val::Px(76.0),
+                                                            height: Val::Px(64.0),
+                                                            padding: UiRect::all(Val::Px(5.0)),
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
+                                                            ..default()
+                                                        },
+                                                        BorderColor::all(Color::srgba(
+                                                            0.45, 0.40, 0.32, 0.55,
+                                                        )),
+                                                        BackgroundColor(Color::srgba(
+                                                            0.030, 0.026, 0.022, 0.90,
+                                                        )),
+                                                        Text::new(""),
+                                                        TextFont {
+                                                            font_size: FontSize::Px(10.0),
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::srgb(0.82, 0.75, 0.62)),
+                                                        PaperDollSlot(*slot),
+                                                    ));
+                                                }
+                                            });
+                                    }
                                     for slot in [
                                         GearSlotText::Weapon,
                                         GearSlotText::Charm,
@@ -9945,7 +9999,7 @@ fn build_panel_text(inputs: BuildPanelInputs) -> String {
          Loadout {} | Skills LMB/RMB/Q/E/Y/Shift | Bag [/] U\n\
          Next {}\n\
          Core L{} XP {}/{} | HP {:.0}/{:.0} | Fury {:.0}/{:.0}\n\
-         Damage +{:.0} | Crit {:.0}% | Armor {:.0} | x{:.2} dmg x{:.2} cd\n\
+         Damage +{:.0} | Crit {:.0}% | Armor {:.0} | Worn +{:.0} tough +{:.0} hp | x{:.2} dmg x{:.2} cd\n\
          Talents {} pts | Wrath {} Vigor {} Focus {} | {}\n\
          Runes {} | {} | {}\n\
          Rotation {}\n\
@@ -9972,7 +10026,9 @@ fn build_panel_text(inputs: BuildPanelInputs) -> String {
         inputs.fury.max,
         damage,
         crit,
-        inputs.equipment.armor_bonus,
+        inputs.equipment.armor_bonus + inputs.equipment.worn_armor_bonus(),
+        inputs.equipment.worn_armor_bonus(),
+        inputs.equipment.worn_health_bonus(),
         inputs.talents.damage_multiplier(),
         inputs.talents.cooldown_multiplier(),
         inputs.talents.points,
@@ -10536,7 +10592,7 @@ fn inventory_panel_header(
         ""
     };
     format!(
-        "INVENTORY | I close | [/] equip weapon | U salvage {} | B codex | O/P armory\n\
+        "INVENTORY | I close | [/] equip weapon | ; don best gear | U salvage {} | B codex | O/P armory\n\
          Bag {}/{}{} | Action {} | {}\n\
          Gold {} Shards {} Essence {} Echo {} | {} | Elixir V {} G {}/{}",
         salvageable,
@@ -10834,6 +10890,63 @@ fn update_gear_slots(
     }
 }
 
+fn update_paper_doll_slots(
+    inventory_open: Res<InventoryOpen>,
+    player: Query<(&Equipment, &DamageBonus), With<Player>>,
+    mut slots: Query<(
+        &PaperDollSlot,
+        &mut Text,
+        &mut TextColor,
+        &mut BorderColor,
+        &mut BackgroundColor,
+    )>,
+) {
+    let Ok((equipment, damage_bonus)) = player.single() else {
+        return;
+    };
+    for (slot, mut text, mut text_color, mut border, mut background) in &mut slots {
+        if !inventory_open.open {
+            **text = String::new();
+            *border = BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.0));
+            background.0 = Color::srgba(0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        let title = slot.0.label().to_uppercase();
+        if slot.0.is_weapon() {
+            **text = format!(
+                "{title}\n{}\n+{:.0} dmg {:.0}%{}",
+                compact_label(&equipment.weapon_name, 13),
+                damage_bonus.0,
+                equipment.crit_chance * 100.0,
+                temper_label(equipment.temper_level),
+            );
+            *border = BorderColor::all(quality_color(&equipment.quality));
+            background.0 = quality_background(&equipment.quality);
+            text_color.0 = Color::srgb(0.88, 0.82, 0.70);
+            continue;
+        }
+        match equipment.worn_piece(slot.0) {
+            Some(item) => {
+                **text = format!(
+                    "{title}\n{}\n+{:.0} tough +{:.0} hp",
+                    compact_label(&item.name, 13),
+                    item.armor_bonus,
+                    item.health_bonus,
+                );
+                *border = BorderColor::all(quality_color(&item.quality));
+                background.0 = quality_background(&item.quality);
+                text_color.0 = Color::srgb(0.88, 0.82, 0.70);
+            }
+            None => {
+                **text = format!("{title}\n—");
+                *border = BorderColor::all(Color::srgba(0.45, 0.40, 0.32, 0.55));
+                background.0 = Color::srgba(0.030, 0.026, 0.022, 0.90);
+                text_color.0 = Color::srgba(0.62, 0.56, 0.46, 0.80);
+            }
+        }
+    }
+}
+
 fn update_inventory_slots(
     inventory_slots: &mut InventorySlotTextQuery,
     open: bool,
@@ -11028,6 +11141,7 @@ fn equipped_power_score(equipment: &Equipment, damage_bonus: &DamageBonus) -> f3
         legendary_power: equipment.legendary_power,
         temper_level: equipment.temper_level,
         socketed_gem: equipment.socketed_gem,
+        slot: GearSlot::Weapon,
     };
     inventory_item_power_score(&item)
 }
@@ -13458,6 +13572,7 @@ mod tests {
             legendary_power: crate::player::LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            worn: Equipment::empty_worn(),
         }
     }
 
@@ -13859,6 +13974,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Stormcall Edge".to_string(),
@@ -13870,6 +13986,7 @@ mod tests {
                     legendary_power: LegendaryPower::Stormbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 2,
@@ -13947,6 +14064,7 @@ mod tests {
                 legendary_power: LegendaryPower::None,
                 temper_level: 0,
                 socketed_gem: None,
+                slot: GearSlot::Weapon,
             }],
             capacity: 12,
         };
@@ -14147,6 +14265,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let weak = InventoryItem {
             name: "Cracked Fang".to_string(),
@@ -14158,6 +14277,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let full_inventory = Inventory {
             items: vec![weak.clone(), upgrade.clone()],
@@ -14348,6 +14468,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let inventory = Inventory {
             items: vec![upgrade],
@@ -15482,6 +15603,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let upgrade = InventoryItem {
             name: "Ember-Saint Reaver".to_string(),
@@ -15496,6 +15618,7 @@ mod tests {
                 kind: crate::player::GemKind::Ruby,
                 rank: 2,
             }),
+            slot: GearSlot::Weapon,
         };
         let stash = InventoryItem {
             name: "Bent Fang".to_string(),
@@ -15507,6 +15630,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
 
         let equipped_label = inventory_slot_label(&equipped, &equipment, &damage_bonus);
@@ -15552,6 +15676,7 @@ mod tests {
             legendary_power: LegendaryPower::Soulreaver,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let socket_piece = InventoryItem {
             name: "Ruby Socket Reaver".to_string(),
@@ -15566,6 +15691,7 @@ mod tests {
                 kind: crate::player::GemKind::Ruby,
                 rank: 3,
             }),
+            slot: GearSlot::Weapon,
         };
         let temper_piece = InventoryItem {
             name: "Tempered Sideblade".to_string(),
@@ -15577,6 +15703,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 2,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let salvage_piece = InventoryItem {
             name: "Bent Scrap Fang".to_string(),
@@ -15588,6 +15715,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
 
         assert!(inventory_slot_label(&codex_piece, &equipment, &damage_bonus).contains("B codex"));
@@ -16010,6 +16138,7 @@ mod tests {
                     legendary_power: equipment.legendary_power,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Moonforged Cleaver".to_string(),
@@ -16021,6 +16150,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,
@@ -16119,6 +16249,7 @@ mod tests {
             legendary_power: LegendaryPower::Stormbrand,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let weak = InventoryItem {
             name: "Cracked Fang".to_string(),
@@ -16130,6 +16261,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let upgrade_inventory = Inventory {
             items: vec![weak.clone(), upgrade.clone()],
@@ -16163,6 +16295,7 @@ mod tests {
             legendary_power: LegendaryPower::None,
             temper_level: 0,
             socketed_gem: None,
+            slot: GearSlot::Weapon,
         };
         let build_inventory = Inventory {
             items: vec![sidegrade],
@@ -16186,6 +16319,7 @@ mod tests {
                 kind: crate::player::GemKind::Ruby,
                 rank: 2,
             }),
+            slot: GearSlot::Weapon,
         };
         let socket_inventory = Inventory {
             items: vec![socket_piece],
@@ -16232,6 +16366,7 @@ mod tests {
                     legendary_power: LegendaryPower::None,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
                 InventoryItem {
                     name: "Stormcall Edge".to_string(),
@@ -16243,6 +16378,7 @@ mod tests {
                     legendary_power: LegendaryPower::Stormbrand,
                     temper_level: 0,
                     socketed_gem: None,
+                    slot: GearSlot::Weapon,
                 },
             ],
             capacity: 12,

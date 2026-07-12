@@ -114,6 +114,7 @@ fn readme_controls_cover_core_runtime_shortcuts() {
         "`H`",
         "`U`",
         "`T`",
+        "`;`",
         "`I`",
         "`K`",
         "`J`",

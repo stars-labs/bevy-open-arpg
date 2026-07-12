@@ -8,7 +8,7 @@ use crate::{
     lore::LoreJournal,
     not_paused,
     player::{
-        DamageBonus, Equipment, Health, Inventory, InventoryItem, LegendaryCodex, Player,
+        DamageBonus, Equipment, GearSlot, Health, Inventory, InventoryItem, LegendaryCodex, Player,
         equip_inventory_item, gear_quality_is_legendary_or_better,
     },
     primal_ember_cache_reward,
@@ -713,6 +713,7 @@ fn primal_cache_item(loot_table: &LootTable) -> Option<InventoryItem> {
         legendary_power: weapon.legendary_power,
         temper_level: 0,
         socketed_gem: None,
+        slot: GearSlot::Weapon,
     })
 }
 
@@ -1123,6 +1124,7 @@ mod tests {
             armor_bonus: 0.0,
             legendary_power,
             potions: 0,
+            slot: GearSlot::Weapon,
         }
     }
 }

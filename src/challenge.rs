@@ -2030,6 +2030,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 2,
             }),
+            worn: Equipment::empty_worn(),
         };
 
         assert!(!gem_resonance_complete(&equipment));
@@ -2056,6 +2057,7 @@ mod tests {
                 kind: GemKind::Ruby,
                 rank: 4,
             }),
+            worn: Equipment::empty_worn(),
         };
 
         assert!(!master_gemcutter_complete(&equipment));

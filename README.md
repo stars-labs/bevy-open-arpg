@@ -110,6 +110,7 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `U`: salvage spare inventory gear into gold, ember shards, affix essence, and salvage-cache progress
 - `T`: town portal to the quartermaster, then back to the saved return point
 - `[` / `]`: cycle equipped weapon from inventory
+- `;`: don the strongest bagged piece for every paper-doll armor slot (helm, chest, gloves, boots, amulet, ring)
 - `Space`: interact with chapter objectives and the quartermaster
 - `I`: open inventory
 - `K`: open build and talent panel
