@@ -40,7 +40,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "custom_cursor",
     "dds",
     "dfg_lut",
-    "experimental_pbr_pcss",
     "exr",
     "ff",
     "gamepad",
@@ -49,12 +48,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "ico",
     "jpeg",
     "ktx2",
-    "pbr_anisotropy_texture",
-    "pbr_clustered_decals",
-    "pbr_light_textures",
-    "pbr_multi_layer_material_textures",
-    "pbr_specular_textures",
-    "pbr_transmission_textures",
     "pnm",
     "qoi",
     "reflect_documentation",
@@ -101,6 +94,19 @@ native = [
     "bevy/basis-universal",
     "bevy/compressed_image_saver",
     "bevy/raw_vulkan_init",
+    # PCSS soft shadows sample the blue-noise texture inside non-uniform
+    # control flow, which WGSL rejects ("textureSample must only be called
+    # from uniform control flow") — native-only until upstream fixes it.
+    "bevy/experimental_pbr_pcss",
+    # Each extra StandardMaterial texture adds a fragment-stage sampler; with
+    # all six the PBR pipeline needs 24 samplers while WebGPU caps
+    # maxSamplersPerShaderStage at 16, so these are native-only.
+    "bevy/pbr_anisotropy_texture",
+    "bevy/pbr_clustered_decals",
+    "bevy/pbr_light_textures",
+    "bevy/pbr_multi_layer_material_textures",
+    "bevy/pbr_specular_textures",
+    "bevy/pbr_transmission_textures",
 ]
 dev_tools = [
     "bevy/bevy_camera_controller",

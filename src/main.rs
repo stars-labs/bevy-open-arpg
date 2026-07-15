@@ -1276,16 +1276,19 @@ fn setup_camera_and_light(
                 end: 38.0,
             },
         },
-        VolumetricFog {
-            ambient_color: Color::srgb(0.34, 0.18, 0.12),
-            ambient_intensity: 0.025,
-            jitter: 0.35,
-            step_count: 48,
-        },
         open_arpg_depth_of_field(),
         open_arpg_vignette(),
         open_arpg_chromatic_aberration(),
     ));
+    // Volumetric fog renders a solid black frame on WebGPU (bisected via
+    // headless Chrome); the web build keeps distance fog only.
+    #[cfg(not(target_arch = "wasm32"))]
+    camera.insert(VolumetricFog {
+        ambient_color: Color::srgb(0.34, 0.18, 0.12),
+        ambient_intensity: 0.025,
+        jitter: 0.35,
+        step_count: 48,
+    });
     #[cfg(feature = "dev_tools")]
     if free_camera.enabled {
         camera.insert(open_arpg_free_camera());
@@ -1296,6 +1299,9 @@ fn setup_camera_and_light(
             illuminance: 9_000.0,
             shadow_maps_enabled: true,
             contact_shadows_enabled: true,
+            // PCSS is native-only (its WGSL breaks on WebGPU); the field only
+            // exists when bevy/experimental_pbr_pcss is enabled via `native`.
+            #[cfg(feature = "native")]
             soft_shadow_size: Some(1.85),
             ..default()
         },
@@ -1312,6 +1318,7 @@ fn setup_camera_and_light(
             color: Color::srgb(1.0, 0.42, 0.16),
             shadow_maps_enabled: true,
             contact_shadows_enabled: true,
+            #[cfg(feature = "native")]
             soft_shadows_enabled: true,
             ..default()
         },
@@ -1426,7 +1433,19 @@ fn open_arpg_free_camera() -> FreeCamera {
 }
 
 fn setup_ui_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, IsDefaultUiCamera, Name::new("Ui Camera")));
+    commands.spawn((
+        Camera2d,
+        // Both cameras target the primary window; without an explicit order the
+        // pass order is ambiguous and the 3d scene can draw over the HUD
+        // (observed on WebGPU). The UI camera must composite last.
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        IsDefaultUiCamera,
+        Name::new("Ui Camera"),
+    ));
 }
 
 fn gamepad_just_pressed(gamepads: &Query<&Gamepad>, buttons: &[GamepadButton]) -> bool {
