@@ -781,12 +781,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     ));
     app.add_systems(
         Startup,
-        (
-            apply_loaded_user_settings,
-            setup_camera_and_light,
-            setup_ui_camera,
-        )
-            .chain(),
+        (apply_loaded_user_settings, setup_camera_and_light).chain(),
     )
     .add_systems(Update, toggle_audio)
     .add_systems(Update, toggle_debug_visuals)
@@ -1246,6 +1241,9 @@ fn setup_camera_and_light(
     let mut camera = commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(-9.0, 12.0, 13.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // UI composites on this camera directly; a second Camera2d overlay
+        // left a stale menu frame in its pooled view target on WebGPU.
+        IsDefaultUiCamera,
         Name::new("Isometric Camera"),
     ));
     camera.insert((
@@ -1430,22 +1428,6 @@ fn open_arpg_free_camera() -> FreeCamera {
         run_speed: 28.0,
         ..default()
     }
-}
-
-fn setup_ui_camera(mut commands: Commands) {
-    commands.spawn((
-        Camera2d,
-        // Both cameras target the primary window; without an explicit order the
-        // pass order is ambiguous and the 3d scene can draw over the HUD
-        // (observed on WebGPU). The UI camera must composite last.
-        Camera {
-            order: 1,
-            clear_color: ClearColorConfig::None,
-            ..default()
-        },
-        IsDefaultUiCamera,
-        Name::new("Ui Camera"),
-    ));
 }
 
 fn gamepad_just_pressed(gamepads: &Query<&Gamepad>, buttons: &[GamepadButton]) -> bool {
