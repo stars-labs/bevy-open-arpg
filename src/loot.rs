@@ -1663,13 +1663,15 @@ fn gamble_mystery_weapon(
 }
 
 fn inventory_item_from_weapon(weapon: &crate::data::LootEntry) -> InventoryItem {
+    let mut rng = rand::rng();
+    let affixes = roll_gear_affixes(&weapon.name, &weapon.quality, &mut rng);
     InventoryItem {
-        name: format!("{} {}", weapon.quality, weapon.name),
+        name: format!("{} {}", weapon.quality, affixes.name),
         quality: weapon.quality.clone(),
-        damage_bonus: weapon.damage_bonus,
-        crit_chance: weapon.crit_chance,
-        health_bonus: weapon.health_bonus,
-        armor_bonus: weapon.armor_bonus,
+        damage_bonus: weapon.damage_bonus + affixes.damage,
+        crit_chance: weapon.crit_chance + affixes.crit,
+        health_bonus: weapon.health_bonus + affixes.health,
+        armor_bonus: weapon.armor_bonus + affixes.armor,
         legendary_power: weapon.legendary_power,
         temper_level: 0,
         socketed_gem: None,
@@ -3074,13 +3076,136 @@ fn spawn_death_remains(
     ));
 }
 
+/// One rollable prefix or suffix; magnitudes are multiplied by the quality
+/// tier before landing on an item.
+struct GearAffix {
+    name: &'static str,
+    damage: f32,
+    crit: f32,
+    health: f32,
+    armor: f32,
+}
+
+#[rustfmt::skip]
+const GEAR_PREFIXES: [GearAffix; 6] = [
+    GearAffix { name: "Savage",  damage: 3.0, crit: 0.0,   health: 0.0, armor: 0.0 },
+    GearAffix { name: "Keen",    damage: 0.0, crit: 0.012, health: 0.0, armor: 0.0 },
+    GearAffix { name: "Brutal",  damage: 2.0, crit: 0.008, health: 0.0, armor: 0.0 },
+    GearAffix { name: "Warded",  damage: 0.0, crit: 0.0,   health: 0.0, armor: 2.5 },
+    GearAffix { name: "Vital",   damage: 0.0, crit: 0.0,   health: 6.0, armor: 0.0 },
+    GearAffix { name: "Tempest", damage: 1.5, crit: 0.0,   health: 0.0, armor: 1.5 },
+];
+
+#[rustfmt::skip]
+const GEAR_SUFFIXES: [GearAffix; 6] = [
+    GearAffix { name: "of the Bear",     damage: 0.0, crit: 0.0,   health: 8.0, armor: 0.0 },
+    GearAffix { name: "of the Bulwark",  damage: 0.0, crit: 0.0,   health: 0.0, armor: 3.5 },
+    GearAffix { name: "of Embers",       damage: 2.5, crit: 0.0,   health: 0.0, armor: 0.0 },
+    GearAffix { name: "of the Hawk",     damage: 0.0, crit: 0.015, health: 0.0, armor: 0.0 },
+    GearAffix { name: "of the Colossus", damage: 0.0, crit: 0.0,   health: 5.0, armor: 2.0 },
+    GearAffix { name: "of the Leech",    damage: 1.0, crit: 0.0,   health: 4.0, armor: 0.0 },
+];
+
+fn affix_quality_multiplier(quality: &str) -> f32 {
+    match quality {
+        "primal" => 4.2,
+        "ancient" => 3.3,
+        "legendary" => 2.5,
+        "set" => 2.0,
+        "rare" => 1.7,
+        "magic" => 1.3,
+        _ => 1.0,
+    }
+}
+
+/// (prefix, suffix) roll chances per quality; higher tiers always roll both.
+fn affix_slots_for_quality(quality: &str, rng: &mut impl Rng) -> (bool, bool) {
+    match quality {
+        "primal" | "ancient" => (true, true),
+        "legendary" | "set" => {
+            if rng.random_bool(0.6) {
+                (true, true)
+            } else if rng.random_bool(0.5) {
+                (true, false)
+            } else {
+                (false, true)
+            }
+        }
+        "rare" | "magic" => {
+            let second = rng.random_bool(0.45);
+            if rng.random_bool(0.5) {
+                (true, second)
+            } else {
+                (second, true)
+            }
+        }
+        _ => {
+            if rng.random_bool(0.30) {
+                if rng.random_bool(0.5) {
+                    (true, false)
+                } else {
+                    (false, true)
+                }
+            } else {
+                (false, false)
+            }
+        }
+    }
+}
+
+struct RolledAffixes {
+    name: String,
+    damage: f32,
+    crit: f32,
+    health: f32,
+    armor: f32,
+}
+
+/// Roll Diablo-style prefix/suffix affixes: a display name like
+/// "Savage Iron Fang of the Bear" plus quality-scaled bonus stats with a
+/// ±15% variance so two drops of the same base rarely match.
+fn roll_gear_affixes(base_name: &str, quality: &str, rng: &mut impl Rng) -> RolledAffixes {
+    let (want_prefix, want_suffix) = affix_slots_for_quality(quality, rng);
+    let tier = affix_quality_multiplier(quality);
+    let mut rolled = RolledAffixes {
+        name: base_name.to_string(),
+        damage: 0.0,
+        crit: 0.0,
+        health: 0.0,
+        armor: 0.0,
+    };
+    if want_prefix {
+        let prefix = &GEAR_PREFIXES[rng.random_range(0..GEAR_PREFIXES.len())];
+        apply_gear_affix(prefix, tier, rng, &mut rolled);
+        rolled.name = format!("{} {}", prefix.name, rolled.name);
+    }
+    if want_suffix {
+        let suffix = &GEAR_SUFFIXES[rng.random_range(0..GEAR_SUFFIXES.len())];
+        apply_gear_affix(suffix, tier, rng, &mut rolled);
+        rolled.name = format!("{} {}", rolled.name, suffix.name);
+    }
+    rolled.crit = rolled.crit.min(0.12);
+    rolled
+}
+
+fn apply_gear_affix(affix: &GearAffix, tier: f32, rng: &mut impl Rng, rolled: &mut RolledAffixes) {
+    let variance = rng.random_range(0.85..1.15_f32);
+    let scale = tier * variance;
+    rolled.damage += affix.damage * scale;
+    rolled.crit += affix.crit * scale;
+    rolled.health += affix.health * scale;
+    rolled.armor += affix.armor * scale;
+}
+
 fn loot_drop_from_weapon(gold: u32, weapon: &crate::data::LootEntry) -> LootDrop {
+    let mut rng = rand::rng();
+    let affixes = roll_gear_affixes(&weapon.name, &weapon.quality, &mut rng);
     LootDrop {
         gold,
-        damage_bonus: weapon.damage_bonus,
-        crit_chance: weapon.crit_chance,
-        health_bonus: weapon.health_bonus,
-        armor_bonus: weapon.armor_bonus,
+        damage_bonus: weapon.damage_bonus + affixes.damage,
+        crit_chance: weapon.crit_chance + affixes.crit,
+        health_bonus: weapon.health_bonus + affixes.health,
+        armor_bonus: weapon.armor_bonus + affixes.armor,
         legendary_power: weapon.legendary_power,
         temper_level: 0,
         socketed_gem: None,
@@ -3089,7 +3214,7 @@ fn loot_drop_from_weapon(gold: u32, weapon: &crate::data::LootEntry) -> LootDrop
         potions: weapon.potions,
         elixirs: elixirs_for_quality(&weapon.quality),
         quality: weapon.quality.clone(),
-        label: format!("{} {}", weapon.quality, weapon.name),
+        label: format!("{} {}", weapon.quality, affixes.name),
         slot: weapon.slot,
     }
 }
@@ -7105,8 +7230,10 @@ mod tests {
         assert!(gamble.stored);
         assert!(gamble.equipped);
         assert!(gamble.codex_unlocked);
-        assert_eq!(gamble.item.name, "legendary Stormglass Reaver");
-        assert_eq!(equipment.weapon_name, "legendary Stormglass Reaver");
+        // Names carry rolled affixes now; the base name must survive inside.
+        assert!(gamble.item.name.contains("Stormglass Reaver"));
+        assert!(gamble.item.name.starts_with("legendary "));
+        assert_eq!(equipment.weapon_name, gamble.item.name);
         assert_eq!(equipment.legendary_power, LegendaryPower::Stormbrand);
         assert!(codex.unlocked.contains(&LegendaryPower::Stormbrand));
         assert_eq!(codex.attuned, LegendaryPower::Stormbrand);
@@ -7894,5 +8021,77 @@ mod tests {
         };
 
         assert!(item_power(jeweled) > item_power(plain));
+    }
+
+    #[test]
+    fn high_tier_gear_always_rolls_prefix_and_suffix() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for quality in ["primal", "ancient"] {
+            for _ in 0..12 {
+                let rolled = roll_gear_affixes("Sanctum Bulwark", quality, &mut rng);
+                assert_ne!(
+                    rolled.name, "Sanctum Bulwark",
+                    "{quality} must roll affixes"
+                );
+                assert!(rolled.name.contains("Sanctum Bulwark"));
+                let total = rolled.damage + rolled.crit * 100.0 + rolled.health + rolled.armor;
+                assert!(total > 0.0, "{quality} affixes must add stats");
+            }
+        }
+    }
+
+    #[test]
+    fn affix_magnitudes_scale_with_quality_tier() {
+        assert!(affix_quality_multiplier("primal") > affix_quality_multiplier("ancient"));
+        assert!(affix_quality_multiplier("ancient") > affix_quality_multiplier("legendary"));
+        assert!(affix_quality_multiplier("legendary") > affix_quality_multiplier("rare"));
+        assert!(affix_quality_multiplier("rare") > affix_quality_multiplier("common"));
+    }
+
+    #[test]
+    fn common_gear_can_roll_clean_and_crit_stays_capped() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(11);
+        let mut saw_clean = false;
+        let mut saw_affixed = false;
+        for _ in 0..60 {
+            let rolled = roll_gear_affixes("Iron Fang", "common", &mut rng);
+            if rolled.name == "Iron Fang" {
+                saw_clean = true;
+            } else {
+                saw_affixed = true;
+            }
+            assert!(rolled.crit <= 0.12);
+        }
+        assert!(saw_clean, "common drops should often skip affixes");
+        assert!(saw_affixed, "common drops should sometimes roll an affix");
+    }
+
+    #[test]
+    fn affixed_drops_carry_bonus_stats_into_loot_and_inventory() {
+        let entry = LootEntry {
+            name: "Moonforged Cleaver".to_string(),
+            quality: "primal".to_string(),
+            weight: 1,
+            damage_bonus: 9.0,
+            crit_chance: 0.08,
+            health_bonus: 10.0,
+            armor_bonus: 8.0,
+            legendary_power: LegendaryPower::None,
+            potions: 1,
+            slot: GearSlot::Weapon,
+        };
+
+        let drop = loot_drop_from_weapon(25, &entry);
+        let stat_gain = (drop.damage_bonus - entry.damage_bonus)
+            + (drop.health_bonus - entry.health_bonus)
+            + (drop.armor_bonus - entry.armor_bonus)
+            + (drop.crit_chance - entry.crit_chance) * 100.0;
+        assert!(stat_gain > 0.0, "primal drops always gain affix stats");
+        assert!(drop.label.contains("Moonforged Cleaver"));
+        assert_ne!(drop.label, "primal Moonforged Cleaver");
+
+        let item = inventory_item_from_weapon(&entry);
+        assert!(item.name.contains("Moonforged Cleaver"));
+        assert_ne!(item.name, "primal Moonforged Cleaver");
     }
 }

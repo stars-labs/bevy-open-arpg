@@ -613,6 +613,9 @@ fn spawn_enemies(
     difficulty: Res<DifficultySettings>,
     modifier: Res<ChapterModifier>,
 ) {
+    // Keep the guard wave ahead of the player spawn (0, 0, 4): an ARPG opener
+    // should give a few seconds to read the room before first contact, not
+    // spawn a marksman on top of the player.
     let spawns = [
         ("skeleton", Vec3::new(-6.0, 0.0, -2.5), vec![]),
         (
@@ -620,8 +623,8 @@ fn spawn_enemies(
             Vec3::new(-3.0, 0.0, -5.5),
             vec![EnemyAffix::Frenzied],
         ),
-        ("ashen_marksman", Vec3::new(2.0, 0.0, 4.6), vec![]),
-        ("skeleton", Vec3::new(4.2, 0.0, 1.8), vec![]),
+        ("ashen_marksman", Vec3::new(3.2, 0.0, -7.0), vec![]),
+        ("skeleton", Vec3::new(7.0, 0.0, -2.0), vec![]),
     ];
 
     for (id, position, affixes) in spawns {

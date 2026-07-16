@@ -91,6 +91,10 @@ struct HitStopState {
 #[derive(Resource, Default)]
 struct GameAudio {
     sender: Option<Sender<SoundCue>>,
+    // The web build has no mixer thread; cues queue here and a per-frame
+    // system plays them through bevy_audio (Web Audio API).
+    #[cfg(target_arch = "wasm32")]
+    web_queue: std::sync::Mutex<Vec<SoundCue>>,
 }
 
 #[derive(Resource)]
@@ -436,6 +440,8 @@ pub struct FeedbackPlugin;
 
 impl Plugin for FeedbackPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(Update, play_web_sound_cues);
         app.init_resource::<CombatLog>()
             .init_resource::<CameraShakeState>()
             .init_resource::<HitStopState>()
@@ -570,8 +576,40 @@ fn play_sound_cue(audio: &GameAudio, audio_settings: &AudioSettings, cue: SoundC
     if !audio_settings.enabled {
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    if let Ok(mut queue) = audio.web_queue.lock() {
+        queue.push(cue);
+    }
     if let Some(sender) = &audio.sender {
         let _ = sender.send(cue);
+    }
+}
+
+/// Web mixer: drain queued cues and play them through bevy_audio, which maps
+/// to the browser's Web Audio API. Entities despawn when playback ends.
+#[cfg(target_arch = "wasm32")]
+fn play_web_sound_cues(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    audio: Res<GameAudio>,
+    status: Res<AudioBackendStatus>,
+) {
+    let cues: Vec<SoundCue> = match audio.web_queue.lock() {
+        Ok(mut queue) => queue.drain(..).collect(),
+        Err(_) => return,
+    };
+    if *status != AudioBackendStatus::Ready {
+        return;
+    }
+    for cue in cues {
+        let source: Handle<bevy::audio::AudioSource> =
+            asset_server.load(format!("audio/{}", sound_cue_file(cue)));
+        commands.spawn((
+            bevy::audio::AudioPlayer::new(source),
+            bevy::audio::PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
+                sound_cue_gain(cue).clamp(0.0, 1.4),
+            )),
+        ));
     }
 }
 
@@ -642,7 +680,8 @@ fn try_start_audio_backend(
     *status = if !audio_settings.enabled {
         AudioBackendStatus::Muted
     } else {
-        AudioBackendStatus::NoOutputDevice
+        // bevy_audio drives the Web Audio API; the queue drains every frame.
+        AudioBackendStatus::Ready
     };
     audio.sender = None;
 }
@@ -717,7 +756,6 @@ fn play_audio_file(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn sound_cue_file(cue: SoundCue) -> &'static str {
     match cue {
         SoundCue::Hit => "hit.wav",
@@ -753,7 +791,6 @@ fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn sound_cue_gain(cue: SoundCue) -> f32 {
     match cue {
         SoundCue::Hit => 0.48,
