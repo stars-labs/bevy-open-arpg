@@ -1188,6 +1188,20 @@ pub fn equip_gear_piece(
     Ok(old)
 }
 
+/// Take a worn armor piece off its paper-doll slot, removing its health
+/// bonus. Returns the removed piece; the caller decides where it goes.
+pub fn unequip_gear_piece(
+    slot: GearSlot,
+    equipment: &mut Equipment,
+    health: &mut Health,
+) -> Option<InventoryItem> {
+    let index = slot.armor_index()?;
+    equipment.normalize_worn();
+    let removed = equipment.worn[index].take()?;
+    apply_equipment_health_delta(health, removed.health_bonus, 0.0);
+    Some(removed)
+}
+
 /// Equip the strongest bagged piece for every armor slot; replaced pieces go
 /// back into the bag. Returns a description per newly worn piece.
 pub fn don_best_gear_from_inventory(
@@ -3675,8 +3689,13 @@ fn update_click_move_target(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     tuning: Res<PlayerTuning>,
     enemies: ClickMoveEnemyQuery,
+    ui_capture: Res<crate::ui::UiPointerCapture>,
     mut click_move: ResMut<ClickMoveTarget>,
 ) {
+    // Clicks aimed at UI panels must not steer the hero underneath them.
+    if ui_capture.0 {
+        return;
+    }
     if !mouse.pressed(MouseButton::Left) {
         return;
     }

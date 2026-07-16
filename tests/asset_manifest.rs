@@ -6,6 +6,7 @@ fn chapter_runtime_assets_exist() {
         "assets/data/player.ron",
         "assets/data/enemies.ron",
         "assets/data/loot.ron",
+        "assets/audio/ambient_theme.wav",
         "assets/models/hero.glb",
         "assets/models/skeleton.glb",
         "assets/models/cultist.glb",

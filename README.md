@@ -114,7 +114,7 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `[` / `]`: cycle equipped weapon from inventory
 - `;`: don the strongest bagged piece for every paper-doll armor slot (helm, chest, gloves, boots, amulet, ring)
 - `Space`: interact with chapter objectives and the quartermaster
-- `I`: open inventory
+- `I`: open inventory (click a bag slot to equip it; click a worn paper-doll piece to stow it)
 - `K`: open build and talent panel
 - `J`: open lore journal
 - `M`: mute or restore generated combat audio

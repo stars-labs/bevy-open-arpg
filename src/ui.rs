@@ -45,12 +45,12 @@ use crate::{
         Player, PlayerLevel, PotionBelt, RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet,
         RuptureRune, SkillCooldowns, SkillRunes, SocketedGem, SurgeBuff, Talents, TownPortal,
         buff_seconds_remaining, chapter_boon_choice_prompt, conduit_seconds_remaining,
-        elixir_seconds_remaining, evade_cooldown_remaining, evade_seconds_remaining,
-        fortune_seconds_remaining, gem_label, glory_seconds_remaining, inventory_swap_index,
-        legendary_codex_pursuit_summary, potion_seconds_remaining, reliquary_boon_momentum_ready,
-        reliquary_momentum_summary, reliquary_resonance, surge_seconds_remaining, temper_label,
-        themed_reliquary_set, total_armor, total_crit_chance, total_damage_bonus,
-        town_portal_seconds_remaining,
+        elixir_seconds_remaining, equip_gear_piece, equip_inventory_item, evade_cooldown_remaining,
+        evade_seconds_remaining, fortune_seconds_remaining, gem_label, glory_seconds_remaining,
+        inventory_swap_index, legendary_codex_pursuit_summary, potion_seconds_remaining,
+        reliquary_boon_momentum_ready, reliquary_momentum_summary, reliquary_resonance,
+        surge_seconds_remaining, temper_label, themed_reliquary_set, total_armor,
+        total_crit_chance, total_damage_bonus, town_portal_seconds_remaining, unequip_gear_piece,
     },
     rift::{EmberRift, RiftState, rift_summary},
     story::{StoryBeat, StoryLog, story_recap, story_summary},
@@ -58,6 +58,8 @@ use crate::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::ui::UiGlobalTransform;
+use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
@@ -267,6 +269,11 @@ enum GearSlotText {
     Codex,
     Armory,
 }
+
+/// True while the pointer is over (or pressing) an interactive UI node, so
+/// world input (click-to-move/attack) ignores clicks meant for panels.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct UiPointerCapture(pub bool);
 
 /// One paper-doll gear box in the inventory panel (weapon + armor slots).
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
@@ -2079,9 +2086,16 @@ impl Plugin for HudPlugin {
                 )
                     .run_if(in_state(GameState::InGame)),
             )
+            .init_resource::<UiPointerCapture>()
             .add_systems(
                 Update,
-                update_paper_doll_slots.run_if(in_state(GameState::InGame)),
+                (
+                    update_paper_doll_slots,
+                    update_ui_pointer_capture,
+                    handle_inventory_slot_clicks,
+                    handle_paper_doll_clicks,
+                )
+                    .run_if(in_state(GameState::InGame)),
             )
             .add_systems(OnExit(GameState::InGame), despawn_hud)
             .add_systems(OnEnter(GameState::GameOver), spawn_game_over)
@@ -10887,6 +10901,148 @@ fn update_gear_slots(
         } else {
             String::new()
         };
+    }
+}
+
+fn cursor_physical_position(window: &Window) -> Option<Vec2> {
+    window
+        .cursor_position()
+        .map(|cursor| cursor * window.scale_factor())
+}
+
+fn node_under_cursor(
+    node: &ComputedNode,
+    transform: &UiGlobalTransform,
+    cursor_physical: Vec2,
+) -> bool {
+    node.contains_point(*transform, cursor_physical)
+}
+
+fn update_ui_pointer_capture(
+    mut capture: ResMut<UiPointerCapture>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    inventory_open: Res<InventoryOpen>,
+    build_open: Res<BuildOpen>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform, &ViewVisibility), With<InventoryPanel>>,
+    build_panels: Query<(&ComputedNode, &UiGlobalTransform, &ViewVisibility), With<BuildPanel>>,
+) {
+    let mut over_ui = false;
+    if let Ok(window) = windows.single()
+        && let Some(cursor) = cursor_physical_position(window)
+    {
+        if inventory_open.open {
+            over_ui |= panels
+                .iter()
+                .any(|(node, transform, _)| node_under_cursor(node, transform, cursor));
+        }
+        if build_open.open {
+            over_ui |= build_panels
+                .iter()
+                .any(|(node, transform, _)| node_under_cursor(node, transform, cursor));
+        }
+    }
+    if capture.0 != over_ui {
+        capture.0 = over_ui;
+    }
+}
+
+fn handle_inventory_slot_clicks(
+    inventory_open: Res<InventoryOpen>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    slots: Query<(&ComputedNode, &UiGlobalTransform, &InventorySlotText)>,
+    mut combat_events: MessageWriter<CombatEvent>,
+    mut player: Query<
+        (
+            &mut Inventory,
+            &mut Equipment,
+            &mut DamageBonus,
+            &mut Health,
+        ),
+        With<Player>,
+    >,
+) {
+    if !inventory_open.open || !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(cursor) = windows.single().ok().and_then(cursor_physical_position) else {
+        return;
+    };
+    let Ok((mut inventory, mut equipment, mut damage_bonus, mut health)) = player.single_mut()
+    else {
+        return;
+    };
+    for (node, transform, slot) in &slots {
+        if !node_under_cursor(node, transform, cursor) {
+            continue;
+        }
+        // The grid shows the most recent items first.
+        let len = inventory.items.len();
+        if slot.0 >= len {
+            continue;
+        }
+        let index = len - 1 - slot.0;
+        let item = inventory.items[index].clone();
+        if item.slot.is_weapon() {
+            if item.name == equipment.weapon_name {
+                combat_events.write(CombatEvent {
+                    text: format!("Already wielding {}", item.name),
+                });
+                continue;
+            }
+            equip_inventory_item(&item, &mut damage_bonus, &mut equipment, &mut health);
+            combat_events.write(CombatEvent {
+                text: format!("Equipped {}", item.name),
+            });
+        } else {
+            let item = inventory.items.remove(index);
+            let label = item.name.clone();
+            let slot_label = item.slot.label();
+            if let Ok(replaced) = equip_gear_piece(item, &mut equipment, &mut health) {
+                if let Some(replaced) = replaced {
+                    inventory.items.push(replaced);
+                }
+                combat_events.write(CombatEvent {
+                    text: format!("Donned {label} ({slot_label})"),
+                });
+            }
+        }
+    }
+}
+
+fn handle_paper_doll_clicks(
+    inventory_open: Res<InventoryOpen>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    slots: Query<(&ComputedNode, &UiGlobalTransform, &PaperDollSlot)>,
+    mut combat_events: MessageWriter<CombatEvent>,
+    mut player: Query<(&mut Inventory, &mut Equipment, &mut Health), With<Player>>,
+) {
+    if !inventory_open.open || !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(cursor) = windows.single().ok().and_then(cursor_physical_position) else {
+        return;
+    };
+    let Ok((mut inventory, mut equipment, mut health)) = player.single_mut() else {
+        return;
+    };
+    for (node, transform, slot) in &slots {
+        if !node_under_cursor(node, transform, cursor) || slot.0.is_weapon() {
+            continue;
+        }
+        if inventory.items.len() >= inventory.capacity {
+            combat_events.write(CombatEvent {
+                text: "Bag full: salvage before unequipping".to_string(),
+            });
+            continue;
+        }
+        if let Some(removed) = unequip_gear_piece(slot.0, &mut equipment, &mut health) {
+            combat_events.write(CombatEvent {
+                text: format!("Stowed {} ({})", removed.name, slot.0.label()),
+            });
+            inventory.items.push(removed);
+        }
     }
 }
 

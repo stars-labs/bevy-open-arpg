@@ -503,6 +503,7 @@ struct CombatInputs<'w, 's> {
     time: Res<'w, Time>,
     keyboard: Res<'w, ButtonInput<KeyCode>>,
     mouse: Res<'w, ButtonInput<MouseButton>>,
+    ui_capture: Res<'w, crate::ui::UiPointerCapture>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera3d>>,
     tuning: Res<'w, PlayerTuning>,
@@ -608,7 +609,12 @@ fn player_attacks(
     let crit_chance = total_crit_chance(equipment, charm);
     let legendary_powers = LegendaryPowerSet::new(equipment.legendary_power, codex.attuned);
     let vfx = combat_vfx_assets(&inputs.assets);
-    let cursor_ground = cursor_ground_point(&inputs.windows, &inputs.cameras);
+    // A click on a UI panel is panel input, not a strike command.
+    let cursor_ground = if inputs.ui_capture.0 {
+        None
+    } else {
+        cursor_ground_point(&inputs.windows, &inputs.cameras)
+    };
     let cursor_primary_attack_target = cursor_ground_primary_attack_target(
         cursor_ground,
         player_transform.translation,

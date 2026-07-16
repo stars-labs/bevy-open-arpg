@@ -456,8 +456,8 @@ impl Plugin for FeedbackPlugin {
             .add_message::<FloatingCombatTextEvent>()
             .add_message::<ScreenShakeEvent>()
             .add_message::<HitStopEvent>()
-            .add_systems(Startup, setup_audio_backend)
-            .add_systems(Update, maintain_audio_backend)
+            .add_systems(Startup, (setup_audio_backend, start_ambient_music))
+            .add_systems(Update, (maintain_audio_backend, sync_ambient_music_mute))
             .add_systems(
                 Update,
                 (
@@ -582,6 +582,39 @@ fn play_sound_cue(audio: &GameAudio, audio_settings: &AudioSettings, cue: SoundC
     }
     if let Some(sender) = &audio.sender {
         let _ = sender.send(cue);
+    }
+}
+
+/// Looping dark-ambient bed, played through bevy_audio on every platform.
+#[derive(Component)]
+struct AmbientMusic;
+
+const AMBIENT_MUSIC_VOLUME: f32 = 0.35;
+
+fn start_ambient_music(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        bevy::audio::AudioPlayer::new(asset_server.load("audio/ambient_theme.wav")),
+        bevy::audio::PlaybackSettings::LOOP
+            .with_volume(bevy::audio::Volume::Linear(AMBIENT_MUSIC_VOLUME)),
+        AmbientMusic,
+        Name::new("Ambient Theme"),
+    ));
+}
+
+/// Keep the music bed in step with the M mute toggle.
+fn sync_ambient_music_mute(
+    audio_settings: Res<AudioSettings>,
+    mut music: Query<&mut bevy::audio::AudioSink, With<AmbientMusic>>,
+) {
+    for mut sink in &mut music {
+        let muted = sink.is_muted();
+        if audio_settings.enabled == muted {
+            if muted {
+                sink.unmute();
+            } else {
+                sink.mute();
+            }
+        }
     }
 }
 

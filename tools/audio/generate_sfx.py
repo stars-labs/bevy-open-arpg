@@ -86,3 +86,37 @@ write_wav("boss", mix(
 write_wav("quest", chord(0.48, [261.63, 392.0, 523.25, 659.25], 0.34, seed=83))
 write_wav("victory", chord(0.72, [392.0, 493.88, 587.33, 783.99], 0.34, seed=59))
 write_wav("defeat", tone(0.78, 147, 62, 0.34, noise=0.07, seed=61))
+
+
+def ambient_theme(duration=24.0):
+    """Seamless dark-ambient loop: layered minor drones with slow swells.
+
+    Every oscillator and LFO completes an integer number of cycles over the
+    loop, so the end sample flows back into the start without a click.
+    """
+    total = int(duration * RATE)
+    rng = random.Random(97)
+
+    def swell(index, cycles, depth):
+        return 1.0 - depth * 0.5 * (1.0 - math.cos(2.0 * math.pi * cycles * index / total))
+
+    # A minor bed tuned so freq * duration stays integral (55/110/132/165 Hz).
+    layers = [
+        (55.0, 0.20, 2),
+        (110.0, 0.15, 3),
+        (132.0, 0.09, 5),
+        (165.0, 0.07, 7),
+    ]
+    samples = []
+    for i in range(total):
+        t = i / RATE
+        value = 0.0
+        for freq, volume, cycles in layers:
+            value += volume * swell(i, cycles, 0.65) * math.sin(2.0 * math.pi * freq * t)
+        # Faint air bed so the drones never feel sterile.
+        value += 0.012 * rng.uniform(-1.0, 1.0) * swell(i, 4, 0.8)
+        samples.append(value)
+    return samples
+
+
+write_wav("ambient_theme", ambient_theme())
