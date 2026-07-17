@@ -1740,19 +1740,92 @@ pub struct Talents {
     pub focus: u32,
 }
 
+/// Points required in one talent line for its first and second mastery.
+pub const TALENT_TIER_ONE: u32 = 4;
+pub const TALENT_TIER_TWO: u32 = 8;
+/// One-shot max-health grant when Iron Constitution (Vigor II) unlocks.
+pub const IRON_CONSTITUTION_HEALTH: f32 = 45.0;
+
+fn talent_tier(points: u32) -> u32 {
+    if points >= TALENT_TIER_TWO {
+        2
+    } else if points >= TALENT_TIER_ONE {
+        1
+    } else {
+        0
+    }
+}
+
 impl Talents {
+    pub fn wrath_tier(&self) -> u32 {
+        talent_tier(self.wrath)
+    }
+
+    pub fn vigor_tier(&self) -> u32 {
+        talent_tier(self.vigor)
+    }
+
+    pub fn focus_tier(&self) -> u32 {
+        talent_tier(self.focus)
+    }
+
     pub fn damage_multiplier(&self) -> f32 {
-        1.0 + self.wrath as f32 * 0.08
+        let carnage = if self.wrath_tier() >= 2 { 1.10 } else { 1.0 };
+        (1.0 + self.wrath as f32 * 0.08) * carnage
     }
 
     pub fn cooldown_multiplier(&self) -> f32 {
-        (1.0 - self.focus as f32 * 0.06).max(0.7)
+        let flow = if self.focus_tier() >= 1 { 0.92 } else { 1.0 };
+        ((1.0 - self.focus as f32 * 0.06).max(0.7) * flow).max(0.55)
+    }
+
+    /// Bloodrush (Wrath I): flat crit chance on every strike.
+    pub fn crit_bonus(&self) -> f32 {
+        if self.wrath_tier() >= 1 { 0.06 } else { 0.0 }
+    }
+
+    /// Second Wind (Vigor I): potions heal harder.
+    pub fn potion_heal_multiplier(&self) -> f32 {
+        if self.vigor_tier() >= 1 { 1.40 } else { 1.0 }
+    }
+
+    /// Tempest (Focus II): skills spend less fury.
+    pub fn fury_cost_multiplier(&self) -> f32 {
+        if self.focus_tier() >= 2 { 0.85 } else { 1.0 }
+    }
+
+    pub fn mastery_names(line: &str, tier: u32) -> Option<&'static str> {
+        match (line, tier) {
+            ("Wrath", 1) => Some("Bloodrush (+6% crit)"),
+            ("Wrath", 2) => Some("Carnage (+10% total damage)"),
+            ("Vigor", 1) => Some("Second Wind (potions heal +40%)"),
+            ("Vigor", 2) => Some("Iron Constitution (+45 max life)"),
+            ("Focus", 1) => Some("Flow (extra -8% cooldowns)"),
+            ("Focus", 2) => Some("Tempest (skills cost -15% fury)"),
+            _ => None,
+        }
     }
 
     pub fn summary(&self) -> String {
         format!(
             "Talent points: {} | 1 Wrath {} (+dmg) | 2 Vigor {} (+hp) | 3 Focus {} (-cd)",
             self.points, self.wrath, self.vigor, self.focus
+        )
+    }
+
+    /// Mastery progress line for the build panel, e.g.
+    /// "Wrath 5/8 [Bloodrush] | Vigor 2/4 | Focus 8/8 [Flow+Tempest]".
+    pub fn mastery_summary(&self) -> String {
+        let line = |name: &str, points: u32, first: &str, second: &str| match talent_tier(points) {
+            2 => format!("{name} {points} [{first}+{second}]"),
+            1 => format!("{name} {points}/{} [{first}]", TALENT_TIER_TWO),
+            _ => format!("{name} {points}/{}", TALENT_TIER_ONE),
+        };
+        format!(
+            "{} | {} | {}",
+            line("Wrath", self.wrath, "Bloodrush", "Carnage"),
+            line("Vigor", self.vigor, "Second Wind", "Iron Constitution"),
+            line("Focus", self.focus, "Flow", "Tempest"),
         )
     }
 }
@@ -2715,18 +2788,18 @@ fn use_potion(
     gamepads: Query<&Gamepad>,
     mut stats: ResMut<RunStats>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<(&mut Health, &mut PotionBelt), With<Player>>,
+    mut player: Query<(&mut Health, &mut PotionBelt, &Talents), With<Player>>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyF)
         && !gamepad_button_just_pressed(&gamepads, &[GamepadButton::West])
     {
         return;
     }
-    let Ok((mut health, mut potions)) = player.single_mut() else {
+    let Ok((mut health, mut potions, talents)) = player.single_mut() else {
         return;
     };
     let health_before = health.current;
-    match try_drink_potion(&mut health, &mut potions) {
+    match try_drink_potion(&mut health, &mut potions, talents.potion_heal_multiplier()) {
         Some(restored) => {
             stats.potions_used += 1;
             if last_stand_potion_eligible(health_before, health.max) {
@@ -2748,7 +2821,11 @@ fn use_potion(
     }
 }
 
-pub fn try_drink_potion(health: &mut Health, potions: &mut PotionBelt) -> Option<f32> {
+pub fn try_drink_potion(
+    health: &mut Health,
+    potions: &mut PotionBelt,
+    heal_multiplier: f32,
+) -> Option<f32> {
     if potions.current == 0
         || health.current >= health.max
         || potion_seconds_remaining(potions) > 0.0
@@ -2757,7 +2834,8 @@ pub fn try_drink_potion(health: &mut Health, potions: &mut PotionBelt) -> Option
     }
     let before = health.current;
     potions.current -= 1;
-    health.current = (health.current + potions.heal_amount).min(health.max);
+    health.current =
+        (health.current + potions.heal_amount * heal_multiplier.max(0.0)).min(health.max);
     potions.cooldown = Timer::from_seconds(potions.cooldown_secs, TimerMode::Once);
     Some(health.current - before)
 }
@@ -3047,6 +3125,11 @@ fn spend_talent_points(
         return;
     }
 
+    let before = (
+        talents.wrath_tier(),
+        talents.vigor_tier(),
+        talents.focus_tier(),
+    );
     let spent = if keyboard.just_pressed(KeyCode::Digit1) {
         talents.wrath += 1;
         Some("Wrath")
@@ -3067,6 +3150,29 @@ fn spend_talent_points(
         combat_events.write(CombatEvent {
             text: format!("Talent learned: {name}"),
         });
+        let after = (
+            talents.wrath_tier(),
+            talents.vigor_tier(),
+            talents.focus_tier(),
+        );
+        for (line, was, now) in [
+            ("Wrath", before.0, after.0),
+            ("Vigor", before.1, after.1),
+            ("Focus", before.2, after.2),
+        ] {
+            if now > was
+                && let Some(mastery) = Talents::mastery_names(line, now)
+            {
+                combat_events.write(CombatEvent {
+                    text: format!("Mastery unlocked: {mastery}"),
+                });
+                // Iron Constitution grants its life immediately.
+                if line == "Vigor" && now == 2 {
+                    health.max += IRON_CONSTITUTION_HEALTH;
+                    health.current = (health.current + IRON_CONSTITUTION_HEALTH).min(health.max);
+                }
+            }
+        }
     }
 }
 
@@ -7317,17 +7423,17 @@ mod tests {
             cooldown_secs: potion_cooldown_secs_for_capacity(5),
         };
 
-        assert_eq!(try_drink_potion(&mut health, &mut potions), Some(45.0));
+        assert_eq!(try_drink_potion(&mut health, &mut potions, 1.0), Some(45.0));
         assert_eq!(health.current, 85.0);
         assert_eq!(potions.current, 1);
         assert!(potion_seconds_remaining(&potions) > 0.0);
-        assert_eq!(try_drink_potion(&mut health, &mut potions), None);
+        assert_eq!(try_drink_potion(&mut health, &mut potions, 1.0), None);
 
         potions
             .cooldown
             .tick(std::time::Duration::from_secs_f32(potions.cooldown_secs));
 
-        assert_eq!(try_drink_potion(&mut health, &mut potions), Some(15.0));
+        assert_eq!(try_drink_potion(&mut health, &mut potions, 1.0), Some(15.0));
         assert_eq!(health.current, 100.0);
         assert_eq!(potions.current, 0);
     }
@@ -8080,5 +8186,77 @@ mod tests {
             capacity: 12,
         };
         assert_eq!(inventory_swap_index(&armor_only, "Helm", 1), None);
+    }
+
+    #[test]
+    fn talent_masteries_unlock_at_tier_thresholds() {
+        let mut talents = Talents::default();
+        assert_eq!(talents.wrath_tier(), 0);
+        assert_eq!(talents.crit_bonus(), 0.0);
+        assert_eq!(talents.potion_heal_multiplier(), 1.0);
+        assert_eq!(talents.fury_cost_multiplier(), 1.0);
+
+        talents.wrath = TALENT_TIER_ONE;
+        talents.vigor = TALENT_TIER_ONE;
+        talents.focus = TALENT_TIER_ONE;
+        assert_eq!(talents.wrath_tier(), 1);
+        assert!(talents.crit_bonus() > 0.0);
+        assert!(talents.potion_heal_multiplier() > 1.0);
+        // Tempest is a tier-two mastery.
+        assert_eq!(talents.fury_cost_multiplier(), 1.0);
+
+        talents.wrath = TALENT_TIER_TWO;
+        talents.focus = TALENT_TIER_TWO;
+        assert_eq!(talents.wrath_tier(), 2);
+        assert!(talents.fury_cost_multiplier() < 1.0);
+    }
+
+    #[test]
+    fn carnage_and_flow_amplify_line_scaling() {
+        let below = Talents {
+            wrath: TALENT_TIER_TWO - 1,
+            focus: TALENT_TIER_ONE - 1,
+            ..Talents::default()
+        };
+        let above = Talents {
+            wrath: TALENT_TIER_TWO,
+            focus: TALENT_TIER_ONE,
+            ..Talents::default()
+        };
+        // The tier jump must add more than one point's linear scaling.
+        let linear_step = 0.08 * 1.02;
+        assert!(above.damage_multiplier() > below.damage_multiplier() + linear_step);
+        assert!(above.cooldown_multiplier() < below.cooldown_multiplier() - 0.06 * 0.99);
+        assert!(above.cooldown_multiplier() >= 0.55);
+    }
+
+    #[test]
+    fn potions_heal_harder_with_second_wind() {
+        let mut health = Health {
+            current: 10.0,
+            max: 200.0,
+        };
+        let mut potions = PotionBelt {
+            current: 2,
+            max: 5,
+            heal_amount: 50.0,
+            cooldown: Timer::from_seconds(0.0, TimerMode::Once),
+            cooldown_secs: 6.0,
+        };
+        assert_eq!(try_drink_potion(&mut health, &mut potions, 1.4), Some(70.0));
+    }
+
+    #[test]
+    fn mastery_summary_tracks_progress_and_unlocks() {
+        let talents = Talents {
+            wrath: 5,
+            vigor: 2,
+            focus: TALENT_TIER_TWO,
+            ..Talents::default()
+        };
+        let summary = talents.mastery_summary();
+        assert!(summary.contains("Wrath 5/8 [Bloodrush]"));
+        assert!(summary.contains("Vigor 2/4"));
+        assert!(summary.contains("Focus 8 [Flow+Tempest]"));
     }
 }

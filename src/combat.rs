@@ -606,7 +606,7 @@ fn player_attacks(
         * surge_damage_multiplier(surge)
         * talents.damage_multiplier();
     let damage_bonus = total_damage_bonus(bonus, equipment, charm);
-    let crit_chance = total_crit_chance(equipment, charm);
+    let crit_chance = (total_crit_chance(equipment, charm) + talents.crit_bonus()).min(0.60);
     let legendary_powers = LegendaryPowerSet::new(equipment.legendary_power, codex.attuned);
     let vfx = combat_vfx_assets(&inputs.assets);
     // A click on a UI panel is panel input, not a strike command.
@@ -689,7 +689,7 @@ fn player_attacks(
     }
 
     if inputs.input_buffer.dash_requested() && cooldowns.dash.is_finished() {
-        let dash_cost = fury.dash_cost;
+        let dash_cost = fury.dash_cost * talents.fury_cost_multiplier();
         if !fury.spend(dash_cost) {
             inputs.input_buffer.clear_dash();
             if dash_pressed {
@@ -857,7 +857,7 @@ fn player_attacks(
             cursor_ground,
         );
         animation.face_direction(facing);
-        let rupture_cost = fury.rupture_cost;
+        let rupture_cost = fury.rupture_cost * talents.fury_cost_multiplier();
         if !fury.spend(rupture_cost) {
             inputs.input_buffer.clear_rupture();
             if rupture_pressed {
@@ -1005,7 +1005,7 @@ fn player_attacks(
     }
 
     if inputs.input_buffer.nova_requested() && cooldowns.nova.is_finished() {
-        let nova_cost = fury.nova_cost;
+        let nova_cost = fury.nova_cost * talents.fury_cost_multiplier();
         if !fury.spend(nova_cost) {
             inputs.input_buffer.clear_nova();
             if nova_pressed {

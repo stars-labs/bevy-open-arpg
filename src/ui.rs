@@ -10015,6 +10015,7 @@ fn build_panel_text(inputs: BuildPanelInputs) -> String {
          Core L{} XP {}/{} | HP {:.0}/{:.0} | Fury {:.0}/{:.0}\n\
          Damage +{:.0} | Crit {:.0}% | Armor {:.0} | Worn +{:.0} tough +{:.0} hp | x{:.2} dmg x{:.2} cd\n\
          Talents {} pts | Wrath {} Vigor {} Focus {} | {}\n\
+         Mastery {}\n\
          Runes {} | {} | {}\n\
          Rotation {}\n\
          Cooldowns Strike {:.1}s | Rupture {:.1}s | Dash {:.1}s | Nova {:.1}s\n\
@@ -10050,6 +10051,7 @@ fn build_panel_text(inputs: BuildPanelInputs) -> String {
         inputs.talents.vigor,
         inputs.talents.focus,
         next_talent_pick_summary(inputs.talents),
+        inputs.talents.mastery_summary(),
         rune_loadout_summary(inputs.runes),
         rune_synergy_summary(inputs.runes),
         set_combo_payoff_summary(inputs.equipment, inputs.charm),
@@ -15539,7 +15541,8 @@ mod tests {
         assert!(text.contains("Evade Shift READY"));
         assert!(text.contains("Codex 1/5"));
         assert!(text.contains("Stormcall Reliquary"));
-        assert!(text.lines().count() <= 13);
+        assert!(text.contains("Mastery Wrath"));
+        assert!(text.lines().count() <= 14);
         assert!(text.lines().all(|line| line.len() <= 118));
     }
 

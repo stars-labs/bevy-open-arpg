@@ -128,7 +128,7 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `F5`: save slot 1
 - `F6`: copy current run/debug summary to the system clipboard
 - `F9`: load slot 1 in game or continue slot 1 from the main menu
-- `1` / `2` / `3`: spend talent points on Wrath, Vigor, or Focus
+- `1` / `2` / `3`: spend talent points on Wrath, Vigor, or Focus; each line unlocks masteries at 4 and 8 points (Bloodrush/Carnage, Second Wind/Iron Constitution, Flow/Tempest)
 - `4` / `5` / `6`: choose a Reliquary Boon during the boss phase
 - `Tab`: change between unlocked difficulties on the main menu
 - Gamepad D-pad right: change between unlocked difficulties on the main menu
