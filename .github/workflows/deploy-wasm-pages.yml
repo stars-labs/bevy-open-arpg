@@ -53,10 +53,13 @@ jobs:
     name: Build WebAssembly package
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
 
       - name: Setup Rust toolchain
@@ -159,11 +162,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     env:
+      CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref }}
       RELEASE_TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
 
       - name: Setup Rust toolchain

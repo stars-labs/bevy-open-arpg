@@ -47,7 +47,9 @@ require_gh
 case "$1" in
   preview)
     echo "Triggering GitHub preview release (web-latest)..."
-    gh workflow run "$WORKFLOW" -f release_type=preview
+    gh workflow run "$WORKFLOW" \
+      --ref "$(git rev-parse --abbrev-ref HEAD)" \
+      -f release_type=preview
     ;;
 
   tag)
@@ -77,8 +79,16 @@ case "$1" in
       validate_tag "$TAG"
     fi
 
+    if ! git show-ref --verify --quiet "refs/tags/$TAG"; then
+      echo "Fetching tag $TAG from origin..."
+      git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+    fi
+
     echo "Triggering GitHub versioned release for $TAG..."
-    gh workflow run "$WORKFLOW" -f release_type=tag -f release_tag="$TAG"
+    gh workflow run "$WORKFLOW" \
+      --ref "$TAG" \
+      -f release_type=tag \
+      -f release_tag="$TAG"
     ;;
 
   *)
