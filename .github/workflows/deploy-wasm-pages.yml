@@ -142,7 +142,11 @@ jobs:
     name: Build native release bundles
     # Native artifacts are only packaged on tagged releases so normal main pushes
     # stay light and quick while versioned releases remain fully reproducible.
-    if: github.event_name != 'pull_request'
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.release_type == 'tag' &&
+        github.event.inputs.release_tag != '')
     strategy:
       fail-fast: false
       matrix:
