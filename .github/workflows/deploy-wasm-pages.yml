@@ -33,6 +33,10 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  actions: read
+
+env:
+  APP_NAME: bevy-open-arpg
 
 jobs:
   build-web:
@@ -85,14 +89,34 @@ jobs:
       - name: Package web bundle
         run: |
           set -euo pipefail
-          (cd web && zip -r -q ../web-dist.zip .)
-          ls -la web-dist.zip
+          mkdir -p artifacts
+          (cd web && zip -r -q ../artifacts/web-dist.zip .)
+          sha256sum artifacts/web-dist.zip > artifacts/web-dist.zip.sha256
+          ls -la artifacts/web-dist.zip
+          sha256sum artifacts/web-dist.zip
+
+      - name: Build web release manifest
+        run: |
+          set -euo pipefail
+          web_hash="$(cut -d' ' -f1 artifacts/web-dist.zip.sha256)"
+          web_size="$(stat -c %s artifacts/web-dist.zip)"
+          web_sha_hash="$(sha256sum artifacts/web-dist.zip.sha256 | awk '{print $1}')"
+          manifest_size="$(stat -c %s artifacts/web-dist.zip.sha256)"
+          {
+            echo "artifact,sha256,size_bytes"
+            printf 'web-dist.zip,%s,%s\n' "$web_hash" "$web_size"
+            printf 'web-dist.zip.sha256,%s,%s\n' "$web_sha_hash" "$manifest_size"
+            echo "run_ref,${{ github.sha }},0"
+          } > artifacts/web-release-manifest.csv
 
       - name: Upload web bundle (passes the build between jobs)
         uses: actions/upload-artifact@v4
         with:
           name: web-dist-${{ github.sha }}
-          path: web-dist.zip
+          path: |
+            artifacts/web-dist.zip
+            artifacts/web-dist.zip.sha256
+            artifacts/web-release-manifest.csv
           if-no-files-found: error
           retention-days: 7
 
@@ -128,21 +152,26 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
-          BIN_NAME="bevy-open-arpg-${VERSION}-linux-x86_64.tar.gz"
+          BIN_NAME="${{ env.APP_NAME }}-${VERSION}-linux-x86_64.tar.gz"
+          SHA_NAME="${BIN_NAME}.sha256"
           mkdir -p release-package
           cp target/release/bevy-open-arpg release-package/
           cp README.md release-package/
           cp Cargo.toml release-package/
           tar -czf "$BIN_NAME" -C release-package bevy-open-arpg README.md Cargo.toml
+          sha256sum "$BIN_NAME" > "$SHA_NAME"
           rm -rf release-package
           echo "artifact_name=$BIN_NAME" >> "$GITHUB_OUTPUT"
           echo "artifact_path=$PWD/$BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "sha_path=$PWD/$SHA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload native release artifact
         uses: actions/upload-artifact@v4
         with:
           name: bevy-open-arpg-native-${{ github.ref_name }}
-          path: ${{ steps.package.outputs.artifact_path }}
+          path: |
+            ${{ steps.package.outputs.artifact_path }}
+            ${{ steps.package.outputs.sha_path }}
           if-no-files-found: error
           retention-days: 7
 
@@ -161,6 +190,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: web-dist-${{ github.sha }}
+          path: .
 
       - name: Download native bundle on tagged release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -173,13 +203,29 @@ jobs:
         id: assets
         run: |
           set -euo pipefail
-          assets="web-dist.zip"
-          if [ -f "bevy-open-arpg-${{ github.ref_name }}-linux-x86_64.tar.gz" ]; then
-            assets="$assets bevy-open-arpg-${{ github.ref_name }}-linux-x86_64.tar.gz"
+          manifest_file="release-assets.txt"
+          : > "$manifest_file"
+
+          append() {
+            [ -f "$1" ] && printf '%s\n' "$1" >> "$manifest_file"
+          }
+
+          append "web-dist.zip"
+          append "web-dist.zip.sha256"
+          append "web-release-manifest.csv"
+
+          if [ -f "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz" ]; then
+            append "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz"
+            append "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256"
           fi
+
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$assets" >> "$GITHUB_OUTPUT"
+          cat "$manifest_file" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
+          if [ -s "$manifest_file" ]; then
+            echo "Release assets:"
+            cat "$manifest_file"
+          fi
 
       - name: Determine release tag
         id: meta
@@ -210,6 +256,7 @@ jobs:
             Download `web-dist.zip` for the full Pages bundle.
             On tag releases, also attach `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
             for a native Linux run bundle.
+            Checksums and build manifest are included as companion files.
           files: ${{ steps.assets.outputs.files }}
           generate_release_notes: true
         env:

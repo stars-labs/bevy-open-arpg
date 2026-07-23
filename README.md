@@ -42,6 +42,11 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 
 `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
 
+- Every web release also ships:
+  - `web-dist.zip.sha256`
+  - `web-release-manifest.csv`
+  - `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256` (tagged builds only)
+
 The tarball contains:
 
 - `bevy-open-arpg` (native binary)
