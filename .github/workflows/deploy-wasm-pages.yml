@@ -61,7 +61,7 @@ jobs:
       CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || (github.event.inputs.checkout_ref != '' && github.event.inputs.checkout_ref) || github.ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
@@ -80,7 +80,7 @@ jobs:
           cache-on-failure: false
 
       - name: Cache wasm tool binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/wasm-bindgen
@@ -128,7 +128,7 @@ jobs:
           } > artifacts/web-release-manifest.csv
 
       - name: Upload web bundle (passes the build between jobs)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist-${{ github.sha }}
           path: |
@@ -173,7 +173,7 @@ jobs:
       RELEASE_TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
@@ -268,7 +268,7 @@ jobs:
           PACKAGE_TYPE: ${{ matrix.package_type }}
 
       - name: Upload native release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bevy-open-arpg-native-${{ env.RELEASE_TAG_NAME }}-${{ matrix.platform }}-${{ github.sha }}
           path: |
@@ -293,7 +293,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -360,14 +360,14 @@ jobs:
           fi
 
       - name: Download web bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: web-dist-${{ github.sha }}
           path: .
 
       - name: Download native bundle on tagged release
         if: steps.meta.outputs.is_tag_release == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: bevy-open-arpg-native-${{ steps.meta.outputs.tag }}-*
           path: .
@@ -489,7 +489,7 @@ jobs:
           cat "$checksum_manifest"
 
       - name: Publish release with the web bundle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: bevy-open-arpg ${{ steps.meta.outputs.tag }}
@@ -532,13 +532,13 @@ jobs:
           find web-dist -maxdepth 1 -type f \( -name '.gitkeep' -o -name '.nojekyll' \) -delete || true
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages bundle
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: web-dist
 
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
