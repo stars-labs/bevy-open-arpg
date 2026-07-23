@@ -333,11 +333,13 @@ jobs:
         id: assets
         run: |
           set -euo pipefail
-          manifest_file="release-assets.txt"
-          : > "$manifest_file"
+          asset_list="release-assets.txt"
+          release_body="release-body.md"
+          : > "$asset_list"
+          : > "$release_body"
 
           append() {
-            [ -f "$1" ] && printf '%s\n' "$1" >> "$manifest_file"
+            [ -f "$1" ] && printf '%s\n' "$1" >> "$asset_list"
           }
 
           append "web-dist.zip"
@@ -349,13 +351,63 @@ jobs:
             done
           fi
 
-          echo "files<<EOF" >> "$GITHUB_OUTPUT"
-          cat "$manifest_file" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          if [ -s "$manifest_file" ]; then
-            echo "Release assets:"
-            cat "$manifest_file"
+          # Emit a stable checksum/size manifest for every attached artifact.
+          # This mirrors the Bevy release metadata pattern for end-to-end reproducibility.
+          checksum_manifest="release-asset-manifest.csv"
+          printf 'artifact,sha256,size_bytes\n' > "$checksum_manifest"
+          while IFS= read -r asset; do
+            [ -n "$asset" ] || continue
+            if [ ! -f "$asset" ]; then
+              echo "warning: release asset missing from workspace: ${asset}" >&2
+              continue
+            fi
+            asset_sha="$(sha256sum "$asset" | awk '{print $1}')"
+            asset_size="$(stat -c %s "$asset")"
+            printf '%s,%s,%s\n' "$asset" "$asset_sha" "$asset_size" >> "$checksum_manifest"
+          done < "$asset_list"
+
+          release_type="${{ steps.meta.outputs.is_tag_release }}"
+          if [[ "$release_type" == "true" ]]; then
+            release_kind="versioned release"
+          else
+            release_kind="web preview (rolling)"
           fi
+
+          {
+            echo "## bevy-open-arpg ${{ steps.meta.outputs.tag }}"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- release type: $release_kind"
+            echo "- web bundle: \`web-dist.zip\`"
+            if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
+              echo "- native bundles: \`linux-x86_64\`, \`windows-x86_64\`, \`macos-x86_64\`"
+            fi
+            echo
+            echo "## Release Artifacts"
+            echo
+            echo "| Artifact | SHA-256 | Size (bytes) |"
+            echo "| --- | ---: | ---: |"
+
+            while IFS=, read -r artifact hash size; do
+              [ -n "$artifact" ] || continue
+              if [[ "$artifact" == "artifact" ]]; then
+                continue
+              fi
+              printf "| %s | %s | %s |\n" "$artifact" "$hash" "$size"
+            done < "$checksum_manifest"
+          } > "$release_body"
+
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          cat "$asset_list" >> "$GITHUB_OUTPUT"
+          echo "$checksum_manifest" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "body_path=$release_body" >> "$GITHUB_OUTPUT"
+          if [ -s "$asset_list" ]; then
+            echo "Release assets:"
+            cat "$asset_list"
+          fi
+          echo "Release checksums:"
+          cat "$checksum_manifest"
 
       - name: Publish release with the web bundle
         uses: softprops/action-gh-release@v2
@@ -367,13 +419,8 @@ jobs:
           overwrite_files: true
           # Move the rolling tag to the current commit on main pushes.
           target_commitish: ${{ github.sha }}
-          body: |
-            WebGPU wasm build for commit ${{ github.sha }}.
-            Download `web-dist.zip` for the full Pages bundle.
-            On tag releases, also attach native `bevy-open-arpg-<tag>-{linux|windows|macos}-x86_64`
-            run bundles.
-            Checksums and build manifest are included as companion files.
           files: ${{ steps.assets.outputs.files }}
+          body_path: ${{ steps.assets.outputs.body_path }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

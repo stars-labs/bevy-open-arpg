@@ -60,16 +60,20 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 - On versioned releases (`v*`), the workflow also builds and attaches native release
   bundles for:
 
-- `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
-- `bevy-open-arpg-<tag>-windows-x86_64.zip`
-- `bevy-open-arpg-<tag>-macos-x86_64.tar.gz`
+  - `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
+  - `bevy-open-arpg-<tag>-windows-x86_64.zip`
+  - `bevy-open-arpg-<tag>-macos-x86_64.tar.gz`
 
 - Every web release also ships:
+  - `web-dist.zip`
   - `web-dist.zip.sha256`
   - `web-release-manifest.csv`
-- `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256`
-- `bevy-open-arpg-<tag>-windows-x86_64.zip.sha256`
-- `bevy-open-arpg-<tag>-macos-x86_64.tar.gz.sha256`
+  - `release-asset-manifest.csv` (sha256+size summary for every release attachment, including web-native artifacts on tagged releases)
+  - `release-body.md` (auto-generated release notes used for GitHub release description)
+  - native package checksums on tagged releases:
+    - `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256`
+    - `bevy-open-arpg-<tag>-windows-x86_64.zip.sha256`
+    - `bevy-open-arpg-<tag>-macos-x86_64.tar.gz.sha256`
 
 The tarball contains:
 
