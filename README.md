@@ -43,12 +43,14 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 
 ```bash
 ./scripts/release_github.sh preview
+./scripts/release_github.sh preview v1.2.3
 ./scripts/release_github.sh tag --push v0.1.0
 ```
 
 （脚本依赖 GitHub CLI，需先执行 `gh auth login`）
 
 `preview` triggers the rolling `web-latest` pre-release.  
+`preview <ref>` runs the preview from a specific branch/tag/commit ref.  
 `tag --push vX.Y.Z` creates/pushes `vX.Y.Z`, then triggers a versioned release and native artifacts.
 
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.

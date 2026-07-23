@@ -30,11 +30,22 @@ require_gh() {
   fi
 }
 
+require_clean_tree_for_tag_creation() {
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Refusing to create a tag while the working tree has uncommitted changes." >&2
+    echo "Commit or stash your changes first, or run with an existing tag." >&2
+    exit 11
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 Usage:
   ./scripts/release_github.sh preview
-    Trigger the rolling web-only preview release (`web-latest`).
+    Trigger the rolling web-only preview release (`web-latest`) from current ref.
+
+  ./scripts/release_github.sh preview <ref>
+    Trigger the rolling web-only preview release (`web-latest`) from a branch/tag/commit.
 
   ./scripts/release_github.sh tag <vX.Y.Z>
     Trigger a versioned release and native artifact build for the provided tag.
@@ -64,8 +75,8 @@ require_gh
 
 case "$1" in
   preview)
-    CURRENT_REF="$(current_ref)"
-    echo "Triggering GitHub preview release (web-latest)..."
+    CURRENT_REF="${2:-$(current_ref)}"
+    echo "Triggering GitHub preview release (web-latest) from ${CURRENT_REF}..."
     gh workflow run "$WORKFLOW" \
       --ref "$CURRENT_REF" \
       -f checkout_ref="$CURRENT_REF" \
@@ -87,6 +98,7 @@ case "$1" in
       fi
       TAG="$3"
       validate_tag "$TAG"
+      require_clean_tree_for_tag_creation
       if ! git rev-parse "$TAG" >/dev/null 2>&1; then
         echo "Creating tag $TAG..."
         git tag -a "$TAG" -m "Release $TAG"
