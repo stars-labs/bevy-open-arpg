@@ -438,7 +438,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: Web build ${{ steps.meta.outputs.tag }}
+          name: bevy-open-arpg ${{ steps.meta.outputs.tag }}
           prerelease: ${{ steps.meta.outputs.prerelease }}
           make_latest: ${{ steps.meta.outputs.make_latest }}
           overwrite_files: true
