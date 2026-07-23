@@ -1,5 +1,10 @@
 # Bevy Open ARPG
 
+[![Build](https://github.com/stars-labs/bevy-open-arpg/actions/workflows/ci.yml/badge.svg)](https://github.com/stars-labs/bevy-open-arpg/actions/workflows/ci.yml)
+[![Release](https://github.com/stars-labs/bevy-open-arpg/actions/workflows/deploy-wasm-pages.yml/badge.svg)](https://github.com/stars-labs/bevy-open-arpg/actions/workflows/deploy-wasm-pages.yml)
+[![GitHub release](https://img.shields.io/github/v/release/stars-labs/bevy-open-arpg)](https://github.com/stars-labs/bevy-open-arpg/releases/latest)
+[![GitHub Pages](https://img.shields.io/badge/pages-live-brightgreen)](https://stars-labs.github.io/bevy-open-arpg/)
+
 Original dark-fantasy ARPG prototype built with Bevy.
 
 ## Running
