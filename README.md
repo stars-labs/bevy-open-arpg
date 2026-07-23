@@ -39,7 +39,17 @@ WebGPU also can't run some of the native render stack, so these are `native`-onl
 
 ## GitHub Publishing
 
-The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`).
+The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`) and a release helper script:
+
+```bash
+./scripts/release_github.sh preview
+./scripts/release_github.sh tag --push v0.1.0
+```
+
+（脚本依赖 GitHub CLI，需先执行 `gh auth login`）
+
+`preview` triggers the rolling `web-latest` pre-release.  
+`tag --push vX.Y.Z` creates/pushes `vX.Y.Z`, then triggers a versioned release and native artifacts.
 
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
 - Pushing a tag (`v*`) publishes a versioned release and deploys the same assets to Pages.
