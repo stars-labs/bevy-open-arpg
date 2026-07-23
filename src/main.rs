@@ -914,14 +914,97 @@ fn open_arpg_audio_enabled_from_env() -> Option<bool> {
 }
 
 fn open_arpg_display_is_present() -> bool {
-    // The browser canvas is always available on web; the X11/Wayland env probe
-    // only applies to native desktop runs.
+    // The browser canvas is always available on web; native display checks are
+    // required only for desktop runs.
     if cfg!(target_arch = "wasm32") {
         return true;
     }
-    env_value_present(std::env::var("DISPLAY").ok().as_deref())
-        || env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref())
-        || env_value_present(std::env::var("WAYLAND_SOCKET").ok().as_deref())
+
+    let display_present = env_value_present(std::env::var("DISPLAY").ok().as_deref());
+    let wayland_display_present =
+        env_value_present(std::env::var("WAYLAND_DISPLAY").ok().as_deref());
+    let wayland_socket_present = env_value_present(std::env::var("WAYLAND_SOCKET").ok().as_deref());
+
+    display_present
+        || wayland_display_present
+        || wayland_socket_present
+        || open_arpg_has_x11_socket_server()
+        || open_arpg_has_wayland_socket_server()
+}
+
+fn open_arpg_has_x11_socket_server() -> bool {
+    has_socket_with_prefix(std::path::Path::new("/tmp/.X11-unix"), "X")
+}
+
+fn open_arpg_has_wayland_socket_server() -> bool {
+    if let Some(display) = std::env::var("WAYLAND_DISPLAY")
+        .ok()
+        .map(|value| value.trim().to_string())
+    {
+        if !display.is_empty() {
+            let maybe_path = std::path::Path::new(&display);
+            if maybe_path.is_absolute() && maybe_path.exists() {
+                return true;
+            }
+
+            if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR") {
+                if xdg_runtime.join(&display).exists() {
+                    return true;
+                }
+            }
+
+            if let Some(uid_runtime) = uid_runtime_path()
+                && uid_runtime.join(&display).exists()
+            {
+                return true;
+            }
+        }
+    }
+
+    if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR") {
+        if has_socket_with_prefix(&xdg_runtime, "wayland-") {
+            return true;
+        }
+    }
+
+    if let Some(uid_runtime) = uid_runtime_path() {
+        if has_socket_with_prefix(&uid_runtime, "wayland-") {
+            return true;
+        }
+    }
+
+    has_socket_with_prefix(std::path::Path::new("/tmp"), "wayland-")
+}
+
+fn uid_runtime_path() -> Option<std::path::PathBuf> {
+    std::env::var("UID")
+        .ok()
+        .filter(|uid| !uid.trim().is_empty())
+        .map(|uid| {
+            let base = format!("/run/user/{uid}");
+            std::path::PathBuf::from(base)
+        })
+}
+
+fn env_value_present_path(name: &str) -> Option<std::path::PathBuf> {
+    let Some(value) = std::env::var(name).ok() else {
+        return None;
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.into())
+}
+
+fn has_socket_with_prefix(dir: &std::path::Path, prefix: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+
+    entries
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
 }
 
 fn parse_open_arpg_cli_args<I, S>(args: I) -> OpenArpgCliArgs
