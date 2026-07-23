@@ -15,6 +15,8 @@
 - Addressed previous release metadata gaps and tightened `vX.Y.Z` tag validation for release automation.
 
 ## Unreleased
+- GitHub release workflow behavior refined for Bevy-like preview handling:
+  - `generate_release_notes` now runs only for versioned tag releases, avoiding noisy/redundant generation on `web-latest` preview runs.
 - GitHub release pipeline hardened for publish parity with Bevy-style flow:
   - tag creation can proceed without GPG keys by falling back to unsigned tags.
   - release-trigger workflow concurrency is now scoped by workflow/ref to prevent unrelated runs from canceling each other.
