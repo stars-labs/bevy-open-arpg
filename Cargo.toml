@@ -126,6 +126,8 @@ native = [
     "bevy/pbr_transmission_textures",
 ]
 dev_tools = [
+    "bevy/debug",
+    "bevy/bevy_dev_tools",
     "bevy/bevy_camera_controller",
     "bevy/bevy_debug_stepping",
     "bevy/debug_glam_assert",
