@@ -50,7 +50,14 @@ WebGPU also can't run some of the native render stack, so these are `native`-onl
 
 ## GitHub Publishing
 
-The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`) and a release helper script:
+The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`) and a release helper script.
+A full step-by-step version is in `docs/releasing.md`.
+
+发布流程详见：
+
+- [docs/releasing.md](./docs/releasing.md)
+
+A common quick reference:
 
 ```bash
 ./scripts/release_github.sh preview
