@@ -141,9 +141,7 @@ jobs:
     name: Build native release bundles
     # Native artifacts are only packaged on tagged releases so normal main pushes
     # stay light and quick while versioned releases remain fully reproducible.
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && startsWith(github.event.inputs.release_tag, 'v'))
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -169,29 +167,51 @@ jobs:
       CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || (github.event.inputs.checkout_ref != '' && github.event.inputs.checkout_ref) || github.ref }}
       RELEASE_TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref_name }}
     steps:
+      - name: Decide whether native release artifacts are required
+        id: native_plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          should_build="false"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.event.inputs.release_type }}" == "tag" && "${{ github.event.inputs.release_tag }}" == v* ]]; then
+              should_build="true"
+            fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/v* ]]; then
+            should_build="true"
+          fi
+
+          echo "should_build=${should_build}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: steps.native_plan.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
 
       - name: Setup Rust toolchain
+        if: steps.native_plan.outputs.should_build == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
+        if: steps.native_plan.outputs.should_build == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           cache-targets: true
           cache-on-failure: false
 
       - name: Build native release binary
+        if: steps.native_plan.outputs.should_build == 'true'
         run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Package native release artifact
         id: package
+        if: steps.native_plan.outputs.should_build == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -265,6 +285,7 @@ jobs:
 
       - name: Upload native release artifact
         uses: actions/upload-artifact@v4
+        if: steps.native_plan.outputs.should_build == 'true'
         with:
           name: bevy-open-arpg-native-${{ env.RELEASE_TAG_NAME }}-${{ matrix.platform }}-${{ github.sha }}
           path: |
