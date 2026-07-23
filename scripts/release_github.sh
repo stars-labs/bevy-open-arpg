@@ -5,6 +5,24 @@ set -euo pipefail
 WORKFLOW="deploy-wasm-pages.yml"
 RELEASE_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
 
+current_ref() {
+  local ref
+  ref="$(git branch --show-current || true)"
+  if [ -n "$ref" ]; then
+    printf '%s\n' "$ref"
+  else
+    git rev-parse HEAD
+  fi
+}
+
+ensure_remote_tag() {
+  local tag=$1
+  if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "Pushing tag $tag to origin..."
+    git push origin "$tag"
+  fi
+}
+
 require_gh() {
   if ! command -v gh >/dev/null 2>&1; then
     echo "Error: GitHub CLI is required. Install from https://cli.github.com/ and run 'gh auth login' first." >&2
@@ -46,9 +64,11 @@ require_gh
 
 case "$1" in
   preview)
+    CURRENT_REF="$(current_ref)"
     echo "Triggering GitHub preview release (web-latest)..."
     gh workflow run "$WORKFLOW" \
-      --ref "$(git rev-parse --abbrev-ref HEAD)" \
+      --ref "$CURRENT_REF" \
+      -f checkout_ref="$CURRENT_REF" \
       -f release_type=preview
     ;;
 
@@ -74,9 +94,11 @@ case "$1" in
       else
         echo "Tag $TAG already exists locally; continuing without re-creating."
       fi
+      ensure_remote_tag "$TAG"
     else
       TAG="$2"
       validate_tag "$TAG"
+      ensure_remote_tag "$TAG"
     fi
 
     if ! git show-ref --verify --quiet "refs/tags/$TAG"; then
