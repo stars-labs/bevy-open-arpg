@@ -283,7 +283,8 @@ jobs:
     # Keep release publishing alive for preview builds when native is intentionally skipped,
     # but still fail closed for native release requests if native builds fail.
     if: github.event_name != 'pull_request' &&
-      (needs['build-native'].result == 'success' || needs['build-native'].result == 'skipped')
+      needs['build-native'].result != 'failure' &&
+      needs['build-native'].result != 'cancelled'
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
