@@ -940,37 +940,36 @@ fn open_arpg_has_wayland_socket_server() -> bool {
     if let Some(display) = std::env::var("WAYLAND_DISPLAY")
         .ok()
         .map(|value| value.trim().to_string())
+        && !display.is_empty()
     {
-        if !display.is_empty() {
-            let maybe_path = std::path::Path::new(&display);
-            if maybe_path.is_absolute() && maybe_path.exists() {
-                return true;
-            }
-
-            if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR") {
-                if xdg_runtime.join(&display).exists() {
-                    return true;
-                }
-            }
-
-            if let Some(uid_runtime) = uid_runtime_path()
-                && uid_runtime.join(&display).exists()
-            {
-                return true;
-            }
+        let maybe_path = std::path::Path::new(&display);
+        if maybe_path.is_absolute() && maybe_path.exists() {
+            return true;
         }
-    }
 
-    if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR") {
-        if has_socket_with_prefix(&xdg_runtime, "wayland-") {
+        if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR")
+            && xdg_runtime.join(&display).exists()
+        {
+            return true;
+        }
+
+        if let Some(uid_runtime) = uid_runtime_path()
+            && uid_runtime.join(&display).exists()
+        {
             return true;
         }
     }
 
-    if let Some(uid_runtime) = uid_runtime_path() {
-        if has_socket_with_prefix(&uid_runtime, "wayland-") {
-            return true;
-        }
+    if let Some(xdg_runtime) = env_value_present_path("XDG_RUNTIME_DIR")
+        && has_socket_with_prefix(&xdg_runtime, "wayland-")
+    {
+        return true;
+    }
+
+    if let Some(uid_runtime) = uid_runtime_path()
+        && has_socket_with_prefix(&uid_runtime, "wayland-")
+    {
+        return true;
     }
 
     has_socket_with_prefix(std::path::Path::new("/tmp"), "wayland-")
@@ -987,9 +986,7 @@ fn uid_runtime_path() -> Option<std::path::PathBuf> {
 }
 
 fn env_value_present_path(name: &str) -> Option<std::path::PathBuf> {
-    let Some(value) = std::env::var(name).ok() else {
-        return None;
-    };
+    let value = std::env::var(name).ok()?;
     let value = value.trim();
     if value.is_empty() {
         return None;
