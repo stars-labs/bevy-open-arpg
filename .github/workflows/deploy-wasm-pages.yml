@@ -374,14 +374,29 @@ jobs:
           : > "$release_body"
 
           append() {
-            [ -f "$1" ] && printf '%s\n' "$1" >> "$asset_list"
+            if [ ! -f "$1" ]; then
+              echo "error: required release asset missing: ${1}" >&2
+              exit 1
+            fi
+            printf '%s\n' "$1" >> "$asset_list"
           }
 
           append "web-dist.zip"
           append "web-dist.zip.sha256"
           append "web-release-manifest.csv"
           if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
-            for f in "${{ env.APP_NAME }}-${{ steps.meta.outputs.tag }}"-*; do
+            shopt -s nullglob
+            tag_release_artifacts=(
+              "${{ env.APP_NAME }}-${{ steps.meta.outputs.tag }}"-*
+            )
+            shopt -u nullglob
+
+            if (( ${#tag_release_artifacts[@]} == 0 )); then
+              echo "error: no tagged release artifacts found for ${{ steps.meta.outputs.tag }}" >&2
+              exit 1
+            fi
+
+            for f in "${tag_release_artifacts[@]}"; do
               append "$f"
             done
           fi
@@ -393,13 +408,18 @@ jobs:
           while IFS= read -r asset; do
             [ -n "$asset" ] || continue
             if [ ! -f "$asset" ]; then
-              echo "warning: release asset missing from workspace: ${asset}" >&2
-              continue
+              echo "error: release asset missing from workspace: ${asset}" >&2
+              exit 1
             fi
             asset_sha="$(sha256sum "$asset" | awk '{print $1}')"
             asset_size="$(stat -c %s "$asset")"
             printf '%s,%s,%s\n' "$asset" "$asset_sha" "$asset_size" >> "$checksum_manifest"
           done < "$asset_list"
+
+          manifest_sha="$(sha256sum "$checksum_manifest" | awk '{print $1}')"
+          manifest_size="$(stat -c %s "$checksum_manifest")"
+          printf '%s,%s,%s\n' "$checksum_manifest" "$manifest_sha" "$manifest_size" >> "$checksum_manifest"
+          append "$checksum_manifest"
 
           if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
             required_native=(
@@ -428,6 +448,7 @@ jobs:
             echo "- commit: \`${GITHUB_SHA}\`"
             echo "- release type: $release_kind"
             echo "- web bundle: \`web-dist.zip\`"
+            echo "- checksums: \`release-asset-manifest.csv\`"
             if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
               echo "- native bundles: \`linux-x86_64\`, \`windows-x86_64\`, \`macos-x86_64\`"
             fi
@@ -500,6 +521,9 @@ jobs:
           ls -la web-dist
           # Keep the page root clean for deploy-pages.
           find web-dist -maxdepth 1 -type f \( -name '.gitkeep' -o -name '.nojekyll' \) -delete || true
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages bundle
         uses: actions/upload-pages-artifact@v3

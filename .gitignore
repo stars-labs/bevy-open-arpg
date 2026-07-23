@@ -11,3 +11,6 @@ saves/
 # Web build outputs (scripts/build_web.sh)
 /web/pkg/
 /web/assets/
+
+# Runtime/dev tooling traces (diagnostic or profiling outputs)
+trace-*.json
