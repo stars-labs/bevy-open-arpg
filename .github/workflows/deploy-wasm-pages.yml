@@ -6,7 +6,7 @@ name: Build, Release, and Deploy WebGPU
 #
 # Triggers:
 #   - push to main         -> rolling "web-latest" prerelease + deploy to Pages
-#   - push tag v*          -> versioned release (that tag) + deploy to Pages
+#   - push tag v*          -> versioned web + linux release + deploy to Pages
 #   - pull_request         -> build only (no release, no deploy)
 
 on:
@@ -96,11 +96,63 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-native:
+    name: Build native Linux release bundle
+    # Native artifacts are only packaged on tagged releases so normal main pushes
+    # stay light and quick while versioned releases remain fully reproducible.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
+
+      - name: Build native release binary
+        run: cargo build --locked --release
+
+      - name: Package linux release artifact
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          BIN_NAME="bevy-open-arpg-${VERSION}-linux-x86_64.tar.gz"
+          mkdir -p release-package
+          cp target/release/bevy-open-arpg release-package/
+          cp README.md release-package/
+          cp Cargo.toml release-package/
+          tar -czf "$BIN_NAME" -C release-package bevy-open-arpg README.md Cargo.toml
+          rm -rf release-package
+          echo "artifact_name=$BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_path=$PWD/$BIN_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bevy-open-arpg-native-${{ github.ref_name }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+
   release-web:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build-web
+    needs:
+      - build-web
+      - build-native
     if: github.event_name != 'pull_request'
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -109,6 +161,25 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: web-dist-${{ github.sha }}
+
+      - name: Download native bundle on tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/download-artifact@v4
+        with:
+          name: bevy-open-arpg-native-${{ github.ref_name }}
+          path: .
+
+      - name: Build release asset list
+        id: assets
+        run: |
+          set -euo pipefail
+          assets="web-dist.zip"
+          if [ -f "bevy-open-arpg-${{ github.ref_name }}-linux-x86_64.tar.gz" ]; then
+            assets="$assets bevy-open-arpg-${{ github.ref_name }}-linux-x86_64.tar.gz"
+          fi
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$assets" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Determine release tag
         id: meta
@@ -137,7 +208,10 @@ jobs:
           body: |
             WebGPU wasm build for commit ${{ github.sha }}.
             Download `web-dist.zip` for the full Pages bundle.
-          files: web-dist.zip
+            On tag releases, also attach `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
+            for a native Linux run bundle.
+          files: ${{ steps.assets.outputs.files }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

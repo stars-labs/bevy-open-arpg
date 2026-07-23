@@ -32,6 +32,31 @@ WebGPU also can't run some of the native render stack, so these are `native`-onl
 
 `.github/workflows/deploy-wasm-pages.yml` builds the bundle on every push and PR, publishes it as the rolling `web-latest` GitHub Release (or a `v*` tag release), and deploys that exact release artifact to GitHub Pages from the `gh-pages` branch.
 
+## GitHub Publishing
+
+The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`):
+
+- Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
+- Pushing a tag (`v*`) publishes a versioned release and deploys the same assets to Pages.
+- On tagged releases, the same workflow also builds and attaches a Linux release tarball:
+
+`bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
+
+The tarball contains:
+
+- `bevy-open-arpg` (native binary)
+- `README.md`
+- `Cargo.toml`
+
+Create a release by tagging and pushing:
+
+```bash
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+For ad-hoc test releases use GitHub Actions manual dispatch and optionally set `release_tag`.
+
 The default build is audited against Bevy's cargo feature list. It uses Bevy 0.19's `3d`, `ui`, `scene`, `picking`, and `audio-all-formats` feature collections, plus explicit animation/morph support (`bevy_animation`, `gltf_animation`, `morph`, `morph_animation`), UI widget/focus support (`bevy_ui_widgets`, `bevy_input_focus`), mesh/UI picking backends, native platform basics (`accesskit_unix`, `bevy_clipboard`, `default_font`, `multi_threaded`, `webgl2`), asset processor support, broad local image/texture import (`basis-universal`, `bmp`, `dds`, `exr`, `ff`, `gif`, `ico`, `jpeg`, `ktx2`, `pnm`, `qoi`, `tga`, `tiff`, `webp`, `zlib`, `zstd_rust`), PBR material texture support, area-light/DFG/SMAA/tonemapping/blue-noise LUTs, PCSS soft shadows, native Vulkan initialization, shader formats, system font discovery, system clipboard integration, settings/remote support, reflected settings documentation, reflected function helpers, UI debug metadata, and explicit native X11/Wayland/window input/accessibility support. The runtime uses those features for Blender-authored animated glTF/PBR scenes and morph-capable monsters, generated 2D concept/menu art, HDR bloom, SMAA, atmosphere/environment lighting, screen-space ambient occlusion, depth of field, subtle chromatic aberration, dark-fantasy vignette, distance and volumetric fog, rectangular area lights, contact and soft shadows, mesh/UI picking, UI, audio cue decoding, compressed texture readiness, gamepad input, Linux AccessKit accessibility integration, persisted settings, Bevy Remote/tooling schema introspection, and copying a run/debug summary to the OS clipboard. Startup and F6 clipboard diagnostics report this as grouped `profiles`, `animation`, `ui`, `assets`, `render`, `post_process`, `picking`, `platform`, `tools`, `omitted`, `deferred`, and `dev_tools` capability lines.
 
 Not every Bevy feature is useful for this desktop ARPG. Remote HTTP/HTTPS asset loading, experimental Solari/DLSS/meshlet rendering, Tracy tracing, hotpatching, and C-backed `zstd_c` are left out of the default build because they add security surface, external SDK/tooling assumptions, or instability without improving the normal playable path. `bevy_feathers`, `clipboard_image`, and `pan_camera` are also left out until there is a concrete in-game screen, image clipboard workflow, or 2D map camera that uses them.
