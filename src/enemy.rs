@@ -771,10 +771,10 @@ fn spawn_sanctum_wave(
 ) {
     for _ in wave_events.read() {
         for (id, position, affixes) in [
-            ("ashen_marksman", Vec3::new(4.0, 0.0, -4.0), vec![]),
+            ("ashen_marksman", Vec3::new(-4.0, 0.0, -15.0), vec![]),
             (
                 "seal_warden",
-                Vec3::new(7.0, 0.0, -1.0),
+                Vec3::new(0.0, 0.0, -19.0),
                 vec![
                     EnemyAffix::Vampiric,
                     EnemyAffix::Shielded,
@@ -787,7 +787,7 @@ fn spawn_sanctum_wave(
             ),
             (
                 "reliquary_brute",
-                Vec3::new(8.0, 0.0, 3.8),
+                Vec3::new(4.5, 0.0, -15.5),
                 vec![EnemyAffix::Molten],
             ),
         ] {
@@ -1112,7 +1112,7 @@ fn spawn_boss(
         let Some(tuning) = catalog.get("keeper") else {
             continue;
         };
-        let boss_position = Vec3::new(6.5, 0.0, 4.8);
+        let boss_position = Vec3::new(0.0, 0.0, -20.0);
         commands.spawn((
             WorldAssetRoot(assets.boss_summon_portal.clone()),
             Transform::from_translation(boss_position).with_scale(Vec3::splat(1.18)),

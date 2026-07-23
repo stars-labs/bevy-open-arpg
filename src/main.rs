@@ -741,7 +741,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     }
     #[cfg(feature = "dev_tools")]
     {
-        app.add_plugins(DebugPickingPlugin::default())
+        app.add_plugins(DebugPickingPlugin)
             .insert_resource(DebugPickingMode::Disabled)
             .add_systems(PreUpdate, cycle_debug_picking);
     }

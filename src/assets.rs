@@ -1,5 +1,8 @@
 use crate::GameState;
+use bevy::asset::LoadState;
 use bevy::prelude::*;
+use bevy::time::{Timer, TimerMode};
+use bevy::world_serialization::WorldAsset;
 
 #[derive(Resource)]
 pub struct GameAssets {
@@ -61,6 +64,58 @@ pub struct GameAssets {
     pub affix_ward_aura: Handle<WorldAsset>,
 }
 
+#[derive(Resource, Default)]
+pub struct AssetLoadingProgress {
+    timer: Timer,
+    checks: u64,
+    pub timed_out: bool,
+}
+
+impl AssetLoadingProgress {
+    fn tick(&mut self, delta: std::time::Duration) {
+        self.timer.tick(delta);
+        self.checks += 1;
+    }
+
+    pub fn elapsed_secs(&self) -> f32 {
+        self.timer.elapsed_secs()
+    }
+
+    pub fn finished(&self) -> bool {
+        self.timer.is_finished()
+    }
+
+    pub fn checks(&self) -> u64 {
+        self.checks
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AssetLoadSummary {
+    pub total: usize,
+    pub loaded: usize,
+    pub loading: usize,
+    pub failed: usize,
+    pub not_loaded: usize,
+}
+
+impl AssetLoadSummary {
+    pub fn percent_ready(&self) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.loaded as f32 / self.total as f32) * 100.0
+    }
+
+    pub fn settled(&self) -> bool {
+        self.loaded + self.failed == self.total
+    }
+
+    pub fn ready(&self) -> bool {
+        self.loaded == self.total && self.failed == 0
+    }
+}
+
 pub struct GameAssetsPlugin;
 
 impl Plugin for GameAssetsPlugin {
@@ -70,7 +125,14 @@ impl Plugin for GameAssetsPlugin {
     }
 }
 
+const LOADING_TIMEOUT_SECONDS: f32 = 45.0;
+
 fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(AssetLoadingProgress {
+        timer: Timer::from_seconds(LOADING_TIMEOUT_SECONDS, TimerMode::Once),
+        checks: 0,
+        timed_out: false,
+    });
     commands.insert_resource(GameAssets {
         hero: asset_server.load("models/hero.glb#Scene0"),
         skeleton: asset_server.load("models/skeleton.glb#Scene0"),
@@ -134,19 +196,175 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
 fn finish_loading(
     assets: Option<Res<GameAssets>>,
     asset_server: Res<AssetServer>,
+    time: Res<Time>,
+    mut loading_progress: ResMut<AssetLoadingProgress>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let Some(assets) = assets else {
         return;
     };
-    if !game_assets_ready(&asset_server, &assets) {
+
+    loading_progress.tick(time.delta());
+    let summary = game_assets_load_summary(&asset_server, &assets);
+
+    if summary.ready() {
+        info!("asset loading complete, entering MainMenu");
+        next_state.set(GameState::MainMenu);
         return;
     }
-    info!("asset loading complete, entering MainMenu");
-    next_state.set(GameState::MainMenu);
+
+    if summary.settled() {
+        warn!(
+            "asset loading settled but incomplete ({} failed / {} total). Entering MainMenu anyway.",
+            summary.failed, summary.total
+        );
+        next_state.set(GameState::MainMenu);
+        return;
+    }
+
+    if loading_progress.finished() {
+        loading_progress.timed_out = true;
+        warn!(
+            "asset loading timeout after {:.1}s ({} loaded, {} loading, {} failed). Entering MainMenu to avoid permanent splash.",
+            loading_progress.elapsed_secs(),
+            summary.loaded,
+            summary.loading + summary.not_loaded,
+            summary.failed
+        );
+        next_state.set(GameState::MainMenu);
+        return;
+    }
+    let pending = summary.loading + summary.not_loaded;
+    if pending <= 3 || loading_progress.checks.is_multiple_of(60) {
+        debug!(
+            "loading assets: {:.1}% ready={} loading={} failed={} checks={}",
+            summary.percent_ready(),
+            summary.loaded,
+            pending,
+            summary.failed,
+            loading_progress.checks
+        );
+    }
 }
 
-fn game_assets_ready(asset_server: &AssetServer, assets: &GameAssets) -> bool {
+fn collect_game_asset_handles(assets: &GameAssets) -> Vec<Handle<WorldAsset>> {
+    vec![
+        assets.hero.clone(),
+        assets.skeleton.clone(),
+        assets.cultist.clone(),
+        assets.butcher.clone(),
+        assets.sword.clone(),
+        assets.chest.clone(),
+        assets.altar.clone(),
+        assets.quartermaster.clone(),
+        assets.fortune_shrine.clone(),
+        assets.storm_shrine.clone(),
+        assets.healing_well.clone(),
+        assets.cursed_shrine.clone(),
+        assets.blood_obelisk.clone(),
+        assets.reliquary_vault.clone(),
+        assets.ember_rift_prop.clone(),
+        assets.ashen_pylon.clone(),
+        assets.lore_page.clone(),
+        assets.breakable_urn.clone(),
+        assets.breakable_coffer.clone(),
+        assets.slash_arc.clone(),
+        assets.hit_spark.clone(),
+        assets.bone_shatter.clone(),
+        assets.bone_impact.clone(),
+        assets.blood_spray.clone(),
+        assets.execution_burst.clone(),
+        assets.arcane_impact.clone(),
+        assets.holy_impact.clone(),
+        assets.ember_impact.clone(),
+        assets.frost_impact.clone(),
+        assets.void_impact.clone(),
+        assets.frenzy_impact.clone(),
+        assets.vampiric_siphon.clone(),
+        assets.desecrator_burst.clone(),
+        assets.guard_clash.clone(),
+        assets.armor_break.clone(),
+        assets.soul_ward_hit.clone(),
+        assets.hit_bone_rune.clone(),
+        assets.hit_bone_lock.clone(),
+        assets.marrow_flash.clone(),
+        assets.bone_fracture_echo.clone(),
+        assets.elite_affix_break.clone(),
+        assets.shadow_burst.clone(),
+        assets.headshot_burst.clone(),
+        assets.crit_bone_crown.clone(),
+        assets.crit_burst.clone(),
+        assets.stagger_burst.clone(),
+        assets.shadow_trail.clone(),
+        assets.loot_prism.clone(),
+        assets.objective_sigil.clone(),
+        assets.ember_vent.clone(),
+        assets.boss_summon_portal.clone(),
+        assets.affix_ember_aura.clone(),
+        assets.affix_arcane_aura.clone(),
+        assets.affix_frost_aura.clone(),
+        assets.affix_blood_aura.clone(),
+        assets.affix_ward_aura.clone(),
+    ]
+}
+
+fn asset_has_failed(asset_server: &AssetServer, handle: &Handle<WorldAsset>) -> bool {
+    let root_failed = matches!(
+        asset_server.get_load_state(handle),
+        Some(LoadState::Failed(_))
+    );
+    let dep_failed =
+        matches!(asset_server.get_dependency_load_state(handle), Some(state) if state.is_failed());
+    let rec_dep_failed = matches!(
+        asset_server.get_recursive_dependency_load_state(handle),
+        Some(state) if state.is_failed()
+    );
+    root_failed || dep_failed || rec_dep_failed
+}
+
+pub fn game_assets_load_summary(
+    asset_server: &AssetServer,
+    assets: &GameAssets,
+) -> AssetLoadSummary {
+    let handles = collect_game_asset_handles(assets);
+    let mut summary = AssetLoadSummary {
+        total: handles.len(),
+        ..Default::default()
+    };
+
+    for handle in &handles {
+        if asset_server.is_loaded_with_dependencies(handle) {
+            summary.loaded += 1;
+            continue;
+        }
+
+        if asset_has_failed(asset_server, handle) {
+            summary.failed += 1;
+            continue;
+        }
+
+        if matches!(
+            asset_server.get_load_state(handle),
+            Some(state) if state.is_loading()
+        ) || matches!(
+            asset_server.get_dependency_load_state(handle),
+            Some(state) if state.is_loading()
+        ) || matches!(
+            asset_server.get_recursive_dependency_load_state(handle),
+            Some(state) if state.is_loading()
+        ) {
+            summary.loading += 1;
+            continue;
+        }
+
+        summary.not_loaded += 1;
+    }
+
+    summary
+}
+
+#[allow(dead_code)]
+pub fn game_assets_ready(asset_server: &AssetServer, assets: &GameAssets) -> bool {
     let handles = [
         &assets.hero,
         &assets.skeleton,

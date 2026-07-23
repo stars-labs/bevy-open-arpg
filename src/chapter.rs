@@ -280,6 +280,7 @@ fn update_chapter(
     mut resources: ChapterResources,
     mut events: ChapterEvents,
     mut player: ChapterRewardPlayerQuery,
+    mut layout: ResMut<crate::dungeon::DungeonLayout>,
 ) {
     for event in events.enemy_killed.read() {
         resources.progress.enemies_slain += 1;
@@ -313,6 +314,8 @@ fn update_chapter(
     publish_chapter_milestones(&actions.milestones, &mut events.combat_events);
     if actions.spawn_sanctum_wave {
         events.sanctum_spawn.write(SpawnSanctumWave);
+        // The sealed gate parts once the sanctum phase begins.
+        layout.sanctum_gate_open = true;
     }
     if actions.spawn_boss {
         events.boss_spawn.write(SpawnBoss);

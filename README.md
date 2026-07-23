@@ -34,33 +34,49 @@ WebGPU also can't run some of the native render stack, so these are `native`-onl
 
 ## GitHub Publishing
 
-The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`):
+The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.yml`).
 
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
 - Pushing a tag (`v*`) publishes a versioned release and deploys the same assets to Pages.
-- On tagged releases, the same workflow also builds and attaches a Linux release tarball:
+- Manually dispatching the workflow is also supported:
+  - `release_tag=vX.Y.Z` (must start with `v`) creates a versioned release and also builds
+    native bundles.
+  - Empty `release_tag` (default) creates/updates `web-latest` web-only preview.
+- On versioned releases (`v*`), the workflow also builds and attaches native release
+  bundles for:
 
-`bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
+- `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
+- `bevy-open-arpg-<tag>-windows-x86_64.zip`
+- `bevy-open-arpg-<tag>-macos-x86_64.tar.gz`
 
 - Every web release also ships:
   - `web-dist.zip.sha256`
   - `web-release-manifest.csv`
-  - `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256` (tagged builds only)
+- `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256`
+- `bevy-open-arpg-<tag>-windows-x86_64.zip.sha256`
+- `bevy-open-arpg-<tag>-macos-x86_64.tar.gz.sha256`
 
 The tarball contains:
 
-- `bevy-open-arpg` (native binary)
+`bevy-open-arpg` (Linux/macOS native binary)
 - `README.md`
 - `Cargo.toml`
 
-Create a release by tagging and pushing:
+Create a normal version release by tagging and pushing:
 
 ```bash
 git tag -a v0.1.0 -m "Release v0.1.0"
 git push origin v0.1.0
 ```
 
-For ad-hoc test releases use GitHub Actions manual dispatch and optionally set `release_tag`.
+For a quick web-only smoke release, trigger GitHub Actions manual dispatch with no
+`release_tag` (this publishes `web-latest` only).
+
+Or run from CLI:
+
+```bash
+gh workflow run deploy-wasm-pages.yml -f release_tag=v0.1.0
+```
 
 The default build is audited against Bevy's cargo feature list. It uses Bevy 0.19's `3d`, `ui`, `scene`, `picking`, and `audio-all-formats` feature collections, plus explicit animation/morph support (`bevy_animation`, `gltf_animation`, `morph`, `morph_animation`), UI widget/focus support (`bevy_ui_widgets`, `bevy_input_focus`), mesh/UI picking backends, native platform basics (`accesskit_unix`, `bevy_clipboard`, `default_font`, `multi_threaded`, `webgl2`), asset processor support, broad local image/texture import (`basis-universal`, `bmp`, `dds`, `exr`, `ff`, `gif`, `ico`, `jpeg`, `ktx2`, `pnm`, `qoi`, `tga`, `tiff`, `webp`, `zlib`, `zstd_rust`), PBR material texture support, area-light/DFG/SMAA/tonemapping/blue-noise LUTs, PCSS soft shadows, native Vulkan initialization, shader formats, system font discovery, system clipboard integration, settings/remote support, reflected settings documentation, reflected function helpers, UI debug metadata, and explicit native X11/Wayland/window input/accessibility support. The runtime uses those features for Blender-authored animated glTF/PBR scenes and morph-capable monsters, generated 2D concept/menu art, HDR bloom, SMAA, atmosphere/environment lighting, screen-space ambient occlusion, depth of field, subtle chromatic aberration, dark-fantasy vignette, distance and volumetric fog, rectangular area lights, contact and soft shadows, mesh/UI picking, UI, audio cue decoding, compressed texture readiness, gamepad input, Linux AccessKit accessibility integration, persisted settings, Bevy Remote/tooling schema introspection, and copying a run/debug summary to the OS clipboard. Startup and F6 clipboard diagnostics report this as grouped `profiles`, `animation`, `ui`, `assets`, `render`, `post_process`, `picking`, `platform`, `tools`, `omitted`, `deferred`, and `dev_tools` capability lines.
 

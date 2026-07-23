@@ -591,7 +591,14 @@ struct AmbientMusic;
 
 const AMBIENT_MUSIC_VOLUME: f32 = 0.35;
 
-fn start_ambient_music(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn start_ambient_music(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    audio_settings: Res<AudioSettings>,
+) {
+    if !audio_settings.enabled {
+        return;
+    }
     commands.spawn((
         bevy::audio::AudioPlayer::new(asset_server.load("audio/ambient_theme.wav")),
         bevy::audio::PlaybackSettings::LOOP

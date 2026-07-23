@@ -108,6 +108,72 @@ struct DungeonHazard {
     label: &'static str,
 }
 
+/// One slab of the sealed gate between the outer hall and the inner sanctum.
+#[derive(Component)]
+pub struct SanctumGate;
+
+/// Walkable-space state for the two-chamber reliquary.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct DungeonLayout {
+    pub sanctum_gate_open: bool,
+}
+
+/// Clamp a translation to the walkable dungeon: the outer hall, the inner
+/// sanctum, and — once the seal parts — the gate corridor joining them.
+pub fn clamp_dungeon_translation(layout: &DungeonLayout, mut translation: Vec3) -> Vec3 {
+    const OUTER_X: f32 = 11.5;
+    const OUTER_Z_MIN: f32 = -7.5;
+    const OUTER_Z_MAX: f32 = 7.5;
+    const SANCTUM_X: f32 = 9.5;
+    const SANCTUM_Z_MIN: f32 = -23.5;
+    const SANCTUM_Z_MAX: f32 = -10.5;
+    const CORRIDOR_X: f32 = 1.3;
+
+    if translation.z >= OUTER_Z_MIN {
+        translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
+        translation.z = translation.z.clamp(OUTER_Z_MIN, OUTER_Z_MAX);
+    } else if translation.z <= SANCTUM_Z_MAX {
+        if layout.sanctum_gate_open {
+            translation.x = translation.x.clamp(-SANCTUM_X, SANCTUM_X);
+            translation.z = translation.z.clamp(SANCTUM_Z_MIN, SANCTUM_Z_MAX);
+        } else {
+            translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
+            translation.z = OUTER_Z_MIN;
+        }
+    } else if layout.sanctum_gate_open {
+        // Inside the corridor band: stay within the doorway.
+        translation.x = translation.x.clamp(-CORRIDOR_X, CORRIDOR_X);
+    } else {
+        translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
+        translation.z = OUTER_Z_MIN;
+    }
+    translation
+}
+
+/// Removes the gate slabs when the chapter cracks the seal.
+fn open_sanctum_gate(
+    mut commands: Commands,
+    layout: Res<DungeonLayout>,
+    gates: Query<Entity, With<SanctumGate>>,
+    mut combat_events: MessageWriter<CombatEvent>,
+) {
+    if !layout.is_changed() || !layout.sanctum_gate_open {
+        return;
+    }
+    let mut opened = false;
+    for gate in &gates {
+        if let Ok(mut entity_commands) = commands.get_entity(gate) {
+            entity_commands.try_despawn();
+            opened = true;
+        }
+    }
+    if opened {
+        combat_events.write(CombatEvent {
+            text: "The seal parts: the inner sanctum lies open to the north".to_string(),
+        });
+    }
+}
+
 #[derive(Component)]
 struct DungeonLightPulse {
     base_intensity: f32,
@@ -186,9 +252,10 @@ pub struct DungeonPlugin;
 impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ChapterZoneState>()
+            .init_resource::<DungeonLayout>()
             .add_systems(
                 OnEnter(GameState::InGame),
-                (reset_chapter_zone, spawn_dungeon),
+                (reset_chapter_zone, reset_dungeon_layout, spawn_dungeon),
             )
             .add_systems(
                 Update,
@@ -201,11 +268,16 @@ impl Plugin for DungeonPlugin {
                     update_dungeon_light_pulses,
                     tick_dungeon_hazards,
                     reward_destroyed_breakables,
+                    open_sanctum_gate,
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
             .add_systems(OnExit(GameState::InGame), despawn_dungeon);
     }
+}
+
+fn reset_dungeon_layout(mut layout: ResMut<DungeonLayout>) {
+    layout.sanctum_gate_open = false;
 }
 
 fn reset_chapter_zone(mut zone: ResMut<ChapterZoneState>) {
@@ -257,10 +329,24 @@ fn spawn_dungeon(
     });
     commands.spawn((
         Mesh3d(floor_mesh),
-        MeshMaterial3d(floor_mat),
+        MeshMaterial3d(floor_mat.clone()),
         Transform::from_xyz(0.0, -0.13, 0.0),
         DungeonEntity,
-        Name::new("Reliquary Floor"),
+        Name::new("Reliquary Outer Floor"),
+    ));
+    // Inner sanctum chamber to the north, joined through the sealed gate.
+    let sanctum_floor_mesh = meshes.add(Cuboid::new(22.0, 0.25, 16.0));
+    let sanctum_floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.135, 0.10, 0.105),
+        perceptual_roughness: 0.90,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(sanctum_floor_mesh),
+        MeshMaterial3d(sanctum_floor_mat),
+        Transform::from_xyz(0.0, -0.13, -17.0),
+        DungeonEntity,
+        Name::new("Inner Sanctum Floor"),
     ));
 
     let wall_mesh = meshes.add(Cuboid::new(1.0, 2.4, 1.0));
@@ -270,13 +356,16 @@ fn spawn_dungeon(
         ..default()
     });
 
+    // Dividing wall between the halls, with a gate opening at |x| <= 1.
     for x in -13..=13 {
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(x as f32, 1.0, -9.0),
-        );
+        if !(-1..=1).contains(&x) {
+            spawn_wall(
+                &mut commands,
+                &wall_mesh,
+                &wall_mat,
+                Vec3::new(x as f32, 1.0, -9.0),
+            );
+        }
         spawn_wall(
             &mut commands,
             &wall_mesh,
@@ -298,6 +387,49 @@ fn spawn_dungeon(
             Vec3::new(13.0, 1.0, z as f32),
         );
     }
+    // Sanctum shell: side walls and the far northern wall.
+    for z in -24..=-10 {
+        spawn_wall(
+            &mut commands,
+            &wall_mesh,
+            &wall_mat,
+            Vec3::new(-11.0, 1.0, z as f32),
+        );
+        spawn_wall(
+            &mut commands,
+            &wall_mesh,
+            &wall_mat,
+            Vec3::new(11.0, 1.0, z as f32),
+        );
+    }
+    for x in -11..=11 {
+        spawn_wall(
+            &mut commands,
+            &wall_mesh,
+            &wall_mat,
+            Vec3::new(x as f32, 1.0, -25.0),
+        );
+    }
+
+    // The sealed gate itself: ember-lit slabs blocking the doorway until the
+    // outer objectives crack the seal.
+    let gate_mesh = meshes.add(Cuboid::new(1.0, 2.2, 0.9));
+    let gate_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.10, 0.08),
+        emissive: Color::srgb(0.9, 0.22, 0.08).into(),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    for x in -1..=1 {
+        commands.spawn((
+            Mesh3d(gate_mesh.clone()),
+            MeshMaterial3d(gate_mat.clone()),
+            Transform::from_xyz(x as f32, 1.0, -9.0),
+            DungeonEntity,
+            SanctumGate,
+            Name::new("Sanctum Seal Gate"),
+        ));
+    }
 
     for (scene, position, scale, interaction) in [
         (
@@ -308,7 +440,7 @@ fn spawn_dungeon(
         ),
         (
             assets.altar.clone(),
-            Vec3::new(6.5, 0.0, 4.8),
+            Vec3::new(6.0, 0.0, -20.5),
             1.2,
             Some(InteractableKind::Altar),
         ),
@@ -1776,5 +1908,37 @@ mod tests {
 
         assert_eq!(reward.gold, 132);
         assert_eq!(stats.gold, 132);
+    }
+
+    #[test]
+    fn sealed_gate_confines_the_player_to_the_outer_hall() {
+        let closed = DungeonLayout {
+            sanctum_gate_open: false,
+        };
+        // Pushing north against the seal stops at the outer wall.
+        let stopped = clamp_dungeon_translation(&closed, Vec3::new(0.0, 0.0, -12.0));
+        assert_eq!(stopped.z, -7.5);
+        // The corridor band is also blocked while sealed.
+        let corridor = clamp_dungeon_translation(&closed, Vec3::new(0.5, 0.0, -8.4));
+        assert_eq!(corridor.z, -7.5);
+        // Ordinary outer-hall movement is untouched.
+        let free = clamp_dungeon_translation(&closed, Vec3::new(3.0, 0.0, 2.0));
+        assert_eq!(free, Vec3::new(3.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn open_gate_admits_the_sanctum_through_the_doorway() {
+        let open = DungeonLayout {
+            sanctum_gate_open: true,
+        };
+        // The corridor funnels through the doorway gap.
+        let corridor = clamp_dungeon_translation(&open, Vec3::new(4.0, 0.0, -8.4));
+        assert!(corridor.x.abs() <= 1.3);
+        assert_eq!(corridor.z, -8.4);
+        // Sanctum interior is walkable and bounded.
+        let sanctum = clamp_dungeon_translation(&open, Vec3::new(-30.0, 0.0, -40.0));
+        assert_eq!(sanctum, Vec3::new(-9.5, 0.0, -23.5));
+        let mid = clamp_dungeon_translation(&open, Vec3::new(5.0, 0.0, -18.0));
+        assert_eq!(mid, Vec3::new(5.0, 0.0, -18.0));
     }
 }

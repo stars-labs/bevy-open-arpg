@@ -3659,6 +3659,7 @@ fn player_movement(
     gamepads: Query<&Gamepad>,
     time: Res<Time>,
     tuning: Res<PlayerTuning>,
+    layout: Res<crate::dungeon::DungeonLayout>,
     mut click_move: ResMut<ClickMoveTarget>,
     mut query: PlayerMovementQuery,
 ) {
@@ -3702,7 +3703,7 @@ fn player_movement(
         * evade_speed_multiplier(evade)
         * jailed_speed_multiplier(jailed);
     transform.translation += velocity.0 * time.delta_secs();
-    transform.translation = clamp_player_translation(transform.translation);
+    transform.translation = clamp_player_translation(&layout, transform.translation);
 
     if direction.length_squared() > 0.0 {
         let response = player_turn_response(
@@ -3789,11 +3790,13 @@ fn gamepad_button_just_pressed(gamepads: &Query<&Gamepad>, buttons: &[GamepadBut
         .any(|gamepad| buttons.iter().any(|button| gamepad.just_pressed(*button)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_click_move_target(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     tuning: Res<PlayerTuning>,
+    layout: Res<crate::dungeon::DungeonLayout>,
     enemies: ClickMoveEnemyQuery,
     ui_capture: Res<crate::ui::UiPointerCapture>,
     mut click_move: ResMut<ClickMoveTarget>,
@@ -3823,11 +3826,11 @@ fn update_click_move_target(
     let mut point = ray.get_point(distance);
     point.y = 0.0;
     if let Some(enemy_position) = cursor_target_enemy_position(point, &enemies) {
-        click_move.position = Some(clamp_player_translation(enemy_position));
+        click_move.position = Some(clamp_player_translation(&layout, enemy_position));
         click_move.stop_radius = click_attack_stop_radius(tuning.basic_range);
         return;
     }
-    click_move.position = Some(clamp_player_translation(point));
+    click_move.position = Some(clamp_player_translation(&layout, point));
     click_move.stop_radius = CLICK_MOVE_STOP_RADIUS;
 }
 
@@ -3944,10 +3947,8 @@ fn movement_direction(
     }
 }
 
-fn clamp_player_translation(mut translation: Vec3) -> Vec3 {
-    translation.x = translation.x.clamp(-11.5, 11.5);
-    translation.z = translation.z.clamp(-7.5, 7.5);
-    translation
+fn clamp_player_translation(layout: &crate::dungeon::DungeonLayout, translation: Vec3) -> Vec3 {
+    crate::dungeon::clamp_dungeon_translation(layout, translation)
 }
 
 fn animate_player_visuals(
@@ -6831,11 +6832,22 @@ mod tests {
 
     #[test]
     fn click_move_targets_clamp_to_playable_bounds() {
-        let clamped = clamp_player_translation(Vec3::new(40.0, 3.0, -40.0));
-
-        assert_eq!(clamped.x, 11.5);
+        let open_layout = crate::dungeon::DungeonLayout {
+            sanctum_gate_open: true,
+        };
+        // Far north-east lands inside the sanctum bounds once the gate opens.
+        let clamped = clamp_player_translation(&open_layout, Vec3::new(40.0, 3.0, -40.0));
+        assert_eq!(clamped.x, 9.5);
         assert_eq!(clamped.y, 3.0);
-        assert_eq!(clamped.z, -7.5);
+        assert_eq!(clamped.z, -23.5);
+
+        // While sealed, the same click stops at the outer hall's north wall.
+        let sealed = crate::dungeon::DungeonLayout {
+            sanctum_gate_open: false,
+        };
+        let blocked = clamp_player_translation(&sealed, Vec3::new(40.0, 3.0, -40.0));
+        assert_eq!(blocked.x, 11.5);
+        assert_eq!(blocked.z, -7.5);
     }
 
     #[test]

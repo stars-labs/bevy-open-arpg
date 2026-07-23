@@ -6,7 +6,8 @@ name: Build, Release, and Deploy WebGPU
 #
 # Triggers:
 #   - push to main         -> rolling "web-latest" prerelease + deploy to Pages
-#   - push tag v*          -> versioned web + linux release + deploy to Pages
+#   - push tag v*          -> versioned web + native release bundles + deploy to Pages
+#   - workflow_dispatch    -> versioned release if release_tag=v*, otherwise web-latest
 #   - pull_request         -> build only (no release, no deploy)
 
 on:
@@ -121,12 +122,35 @@ jobs:
           retention-days: 7
 
   build-native:
-    name: Build native Linux release bundle
+    name: Build native release bundles
     # Native artifacts are only packaged on tagged releases so normal main pushes
     # stay light and quick while versioned releases remain fully reproducible.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.release_tag, 'v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            binary_ext: ""
+            package_type: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            binary_ext: ".exe"
+            package_type: zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            binary_ext: ""
+            package_type: tar.gz
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 50
+    env:
+      RELEASE_TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -137,6 +161,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
+          target: ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -145,30 +170,85 @@ jobs:
           cache-on-failure: false
 
       - name: Build native release binary
-        run: cargo build --locked --release
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
-      - name: Package linux release artifact
+      - name: Package native release artifact
         id: package
+        shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
-          BIN_NAME="${{ env.APP_NAME }}-${VERSION}-linux-x86_64.tar.gz"
-          SHA_NAME="${BIN_NAME}.sha256"
-          mkdir -p release-package
-          cp target/release/bevy-open-arpg release-package/
-          cp README.md release-package/
-          cp Cargo.toml release-package/
-          tar -czf "$BIN_NAME" -C release-package bevy-open-arpg README.md Cargo.toml
-          sha256sum "$BIN_NAME" > "$SHA_NAME"
-          rm -rf release-package
-          echo "artifact_name=$BIN_NAME" >> "$GITHUB_OUTPUT"
-          echo "artifact_path=$PWD/$BIN_NAME" >> "$GITHUB_OUTPUT"
-          echo "sha_path=$PWD/$SHA_NAME" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import os
+          import shutil
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          APP_NAME = os.environ["APP_NAME"]
+          VERSION = os.environ["VERSION"]
+          PLATFORM = os.environ["PLATFORM"]
+          TARGET = os.environ["TARGET"]
+          BINARY_EXT = os.environ["BINARY_EXT"]
+          PACKAGE_TYPE = os.environ["PACKAGE_TYPE"]
+          output = Path.cwd()
+
+          binary_name = f"{APP_NAME}{BINARY_EXT}"
+          binary_path = Path("target") / TARGET / "release" / binary_name
+          if not binary_path.is_file():
+            raise SystemExit(f"missing native binary: {binary_path}")
+
+          artifact_name = f"{APP_NAME}-{VERSION}-{PLATFORM}.{PACKAGE_TYPE}"
+          artifact_path = output / artifact_name
+          sha_name = artifact_path.with_suffix(artifact_path.suffix + ".sha256")
+          package_dir = Path("release-package")
+          staging_dir = package_dir / f"{APP_NAME}-{PLATFORM}"
+          staging_dir.mkdir(parents=True, exist_ok=True)
+          staging = [binary_path, Path("README.md"), Path("Cargo.toml")]
+
+          for src in staging:
+            if not src.is_file():
+              raise SystemExit(f"missing staging file: {src}")
+            shutil.copy2(src, staging_dir / src.name)
+
+          staging_items = sorted(staging_dir.iterdir())
+          if not staging_items:
+            raise SystemExit("missing staging files")
+
+          if PACKAGE_TYPE == "zip":
+            with zipfile.ZipFile(artifact_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+              for item in staging_items:
+                zf.write(item, arcname=item.name)
+          elif PACKAGE_TYPE == "tar.gz":
+            with tarfile.open(artifact_path, "w:gz") as tf:
+              for item in staging_items:
+                tf.add(item, arcname=item.name)
+          else:
+            raise SystemExit(f"Unsupported package type: {PACKAGE_TYPE}")
+
+          hasher = hashlib.sha256()
+          hasher.update(artifact_path.read_bytes())
+          sha_name.write_text(f"{hasher.hexdigest()}  {artifact_path.name}\n", encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"artifact_name={artifact_name}\n")
+            out.write(f"artifact_path={artifact_path}\n")
+            out.write(f"sha_path={sha_name}\n")
+          PY
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
+          VERSION: ${{ env.RELEASE_TAG_NAME }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          BINARY_EXT: ${{ matrix.binary_ext }}
+          PACKAGE_TYPE: ${{ matrix.package_type }}
 
       - name: Upload native release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bevy-open-arpg-native-${{ github.ref_name }}
+          name: bevy-open-arpg-native-${{ env.RELEASE_TAG_NAME }}-${{ matrix.platform }}-${{ github.sha }}
           path: |
             ${{ steps.package.outputs.artifact_path }}
             ${{ steps.package.outputs.sha_path }}
@@ -182,10 +262,37 @@ jobs:
     needs:
       - build-web
       - build-native
-    if: github.event_name != 'pull_request'
+    # Keep release publishing alive for preview builds when native is intentionally skipped,
+    # but still fail closed for native release requests if native builds fail.
+    if: github.event_name != 'pull_request' && (needs.build-native.result == 'success' || needs.build-native.result == 'skipped')
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
+      - name: Determine release tag
+        id: meta
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ github.event.inputs.release_tag }}" ]]; then
+            if [[ "${{ github.event.inputs.release_tag }}" == v* ]]; then
+              echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              echo "is_tag_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "warning: release_tag must start with 'v' for versioned release. Falling back to web-latest." >&2
+              echo "tag=web-latest" >> "$GITHUB_OUTPUT"
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+              echo "is_tag_release=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "is_tag_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=web-latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "is_tag_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download web bundle
         uses: actions/download-artifact@v4
         with:
@@ -193,11 +300,12 @@ jobs:
           path: .
 
       - name: Download native bundle on tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.meta.outputs.is_tag_release == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: bevy-open-arpg-native-${{ github.ref_name }}
+          pattern: bevy-open-arpg-native-${{ steps.meta.outputs.tag }}-*
           path: .
+          merge-multiple: true
 
       - name: Build release asset list
         id: assets
@@ -213,10 +321,10 @@ jobs:
           append "web-dist.zip"
           append "web-dist.zip.sha256"
           append "web-release-manifest.csv"
-
-          if [ -f "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz" ]; then
-            append "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz"
-            append "${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256"
+          if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
+            for f in "${{ env.APP_NAME }}-${{ steps.meta.outputs.tag }}"-*; do
+              append "$f"
+            done
           fi
 
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
@@ -225,21 +333,6 @@ jobs:
           if [ -s "$manifest_file" ]; then
             echo "Release assets:"
             cat "$manifest_file"
-          fi
-
-      - name: Determine release tag
-        id: meta
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ github.event.inputs.release_tag }}" ]]; then
-            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=web-latest" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish release with the web bundle
@@ -254,8 +347,8 @@ jobs:
           body: |
             WebGPU wasm build for commit ${{ github.sha }}.
             Download `web-dist.zip` for the full Pages bundle.
-            On tag releases, also attach `bevy-open-arpg-<tag>-linux-x86_64.tar.gz`
-            for a native Linux run bundle.
+            On tag releases, also attach native `bevy-open-arpg-<tag>-{linux|windows|macos}-x86_64`
+            run bundles.
             Checksums and build manifest are included as companion files.
           files: ${{ steps.assets.outputs.files }}
           generate_release_notes: true

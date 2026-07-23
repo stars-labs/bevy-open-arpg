@@ -1,3 +1,4 @@
+use crate::assets::{AssetLoadingProgress, GameAssets, game_assets_load_summary};
 use crate::{
     AFFIX_CODEX_TARGET, ASHEN_THREAT_MAX, ASHEN_THREAT_SURGE_TARGET, AudioSettings,
     BOSS_BREAK_TARGET, BuildOpen, CARNAGE_MASTER_STREAK, CHAMPION_PACK_TARGET, CODEX_ADEPT_KILLS,
@@ -69,6 +70,18 @@ const PROFILE_PATH: &str = "saves/profile.ron";
 
 #[derive(Component)]
 struct MenuUi;
+
+#[derive(Component)]
+struct LoadingUi;
+
+#[derive(Component)]
+struct LoadingTitleText;
+
+#[derive(Component)]
+struct LoadingStatusText;
+
+#[derive(Component)]
+struct LoadingDetailText;
 
 #[derive(Component)]
 struct MenuDifficultyText;
@@ -2018,7 +2031,8 @@ const MINIMAP_MAP_TOP: f32 = 34.0;
 const MINIMAP_MAP_BOTTOM: f32 = 20.0;
 const WORLD_MIN_X: f32 = -13.0;
 const WORLD_MAX_X: f32 = 13.0;
-const WORLD_MIN_Z: f32 = -9.0;
+// Covers both chambers: outer hall (z in -9..9) and inner sanctum (to -25).
+const WORLD_MIN_Z: f32 = -25.0;
 const WORLD_MAX_Z: f32 = 9.0;
 const MAIN_MENU_BACKGROUND_IMAGE: &str = "images/generated/bevy-open-arpg-concept.png";
 
@@ -2039,6 +2053,12 @@ impl Plugin for HudPlugin {
                 OnEnter(GameState::MainMenu),
                 (load_chapter_record_profile, spawn_menu).chain(),
             )
+            .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
+            .add_systems(
+                Update,
+                update_loading_screen.run_if(in_state(GameState::Loading)),
+            )
+            .add_systems(OnExit(GameState::Loading), despawn_loading_screen)
             .add_systems(
                 Update,
                 ensure_main_menu_ui.run_if(in_state(GameState::MainMenu)),
@@ -2121,6 +2141,119 @@ fn spawn_menu(
         &audio,
         &audio_backend,
     );
+}
+
+fn spawn_loading_screen(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(12.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.03, 0.95)),
+            LoadingUi,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Shadow Reliquary"),
+                TextFont {
+                    font_size: 44.0.into(),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.96, 0.88, 0.64)),
+                LoadingTitleText,
+            ));
+            parent
+                .spawn((
+                    Node {
+                        min_width: Val::Px(560.0),
+                        max_width: Val::Px(560.0),
+                        margin: UiRect::top(Val::Px(6.0)),
+                        padding: UiRect::all(Val::Px(12.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.24)),
+                    BorderColor::all(Color::srgba(0.8, 0.6, 0.3, 0.65)),
+                    // keep only text-level marker for detail updates
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Preparing game resources..."),
+                        TextFont {
+                            font_size: 14.0.into(),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.88, 0.84, 0.72)),
+                        LoadingStatusText,
+                    ));
+                    panel.spawn((
+                        Text::new("Loading assets..."),
+                        TextFont {
+                            font_size: 12.0.into(),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.76, 0.76, 0.82)),
+                        LoadingDetailText,
+                    ));
+                });
+        });
+}
+
+fn update_loading_screen(
+    asset_server: Res<AssetServer>,
+    assets: Option<Res<GameAssets>>,
+    progress: Res<AssetLoadingProgress>,
+    mut status_query: Query<&mut Text, (With<LoadingStatusText>, Without<LoadingDetailText>)>,
+    mut detail_query: Query<&mut Text, (With<LoadingDetailText>, Without<LoadingStatusText>)>,
+) {
+    let mut status = "Initializing...".to_string();
+    let mut detail = "Waiting for asset pipeline...".to_string();
+
+    if let Some(assets) = assets {
+        let summary = game_assets_load_summary(&asset_server, &assets);
+        let stage = if summary.ready() {
+            "Assets loaded. Entering main menu..."
+        } else if progress.timed_out {
+            "Asset loading timeout; continuing with available resources."
+        } else if summary.settled() {
+            "Some assets failed, continuing with remaining resources."
+        } else if summary.failed > 0 {
+            "Some assets failed, waiting for remaining..."
+        } else {
+            "Loading..."
+        };
+
+        status = stage.to_string();
+        detail = format!(
+            "ready {}/{}  loading {}  failed {}  checks {}  elapsed {:.1}s",
+            summary.loaded,
+            summary.total,
+            summary.loading + summary.not_loaded,
+            summary.failed,
+            progress.checks(),
+            progress.elapsed_secs(),
+        );
+    } else if progress.timed_out {
+        status = "Loading timed out; using fallback assets where available.".to_string();
+    }
+
+    for mut text in &mut status_query {
+        **text = status.clone();
+    }
+    for mut text in &mut detail_query {
+        **text = detail.clone();
+    }
+}
+
+fn despawn_loading_screen(mut commands: Commands, query: Query<Entity, With<LoadingUi>>) {
+    for entity in &query {
+        queue_safe_despawn(commands.reborrow(), entity);
+    }
 }
 
 fn ensure_main_menu_ui(
