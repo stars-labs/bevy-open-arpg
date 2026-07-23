@@ -101,7 +101,7 @@ export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--cfg getrandom_backend=\"wasm_js\"
 # The default feature set includes native-only Bevy integrations (accesskit_unix,
 # basis-universal, raw_vulkan_init) that hard-fail on wasm — hence
 # --no-default-features here; `webgpu` re-adds the web runtime.
-cargo build --release --target wasm32-unknown-unknown --no-default-features --features webgpu
+cargo build --release --locked --target wasm32-unknown-unknown --no-default-features --features webgpu
 
 rm -rf web/pkg web/assets
 mkdir -p web/pkg

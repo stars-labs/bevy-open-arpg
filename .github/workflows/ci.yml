@@ -50,9 +50,7 @@ jobs:
         with:
           cache-targets: true
           cache-on-failure: false
-      - name: Build all crate features once
-        run: cargo check --all-features
-      - name: Build with lockfile integrity
+      - name: Build all crate features once (lockfile checked)
         run: cargo check --locked --all-features
       - name: Clippy strict
         run: cargo clippy --all-features -- -D warnings
