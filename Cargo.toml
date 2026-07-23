@@ -2,6 +2,14 @@
 name = "bevy-open-arpg"
 version = "0.1.0"
 edition = "2024"
+description = "A dark-fantasy open action RPG prototype built with Bevy."
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/stars-labs/bevy-open-arpg"
+repository = "https://github.com/stars-labs/bevy-open-arpg"
+documentation = "https://github.com/stars-labs/bevy-open-arpg/blob/main/README.md"
+keywords = ["bevy", "arpg", "rpg", "roguelite", "game", "gamedev"]
+categories = ["game-engines", "games", "graphics"]
 
 [dependencies]
 bevy = { version = "0.19", default-features = false, features = [

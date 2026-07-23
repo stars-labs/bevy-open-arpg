@@ -13,6 +13,17 @@ Original dark-fantasy ARPG prototype built with Bevy.
 cargo run
 ```
 
+## Contribution and Community
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security policy](.github/SECURITY.md)
+
+Report bugs and enhancement ideas with the issue templates:
+
+- [Bug report](.github/ISSUE_TEMPLATE/bug_report.md)
+- [Feature request](.github/ISSUE_TEMPLATE/feature_request.md)
+
 Development debug metadata, asset file watching, Bevy camera-controller tooling, and dynamic linking are behind an explicit feature so they do not ship in the default build:
 
 ```bash
