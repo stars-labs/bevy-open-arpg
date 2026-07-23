@@ -40,7 +40,7 @@ on:
         default: preview
 
 concurrency:
-  group: bevy-open-arpg-pages-${{ github.repository }}
+  group: bevy-open-arpg-pages-${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:

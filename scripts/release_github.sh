@@ -38,6 +38,32 @@ require_clean_tree_for_tag_creation() {
   fi
 }
 
+create_release_tag() {
+  local tag=$1
+  local msg="Release $tag"
+
+  if git tag --list "${tag}" | grep -qx "${tag}"; then
+    return 0
+  fi
+
+  echo "Creating tag ${tag}..."
+
+  # Prefer signed tags when configured, but gracefully fall back to unsigned
+  # tags when no GPG signing key is available (common in CI/dev boxes).
+  if git tag -a "${tag}" -m "${msg}" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Signed tag creation is unavailable; creating unsigned tag instead." >&2
+  if git tag --no-sign -a "${tag}" -m "${msg}" >/dev/null; then
+    return 0
+  fi
+
+  echo "Error: failed to create tag ${tag} with and without GPG signing." >&2
+  echo "If you do want signed tags, configure user.signingkey and GPG in this environment." >&2
+  exit 14
+}
+
 crate_version() {
   awk -F '"' '/^\[package\]/{in_package=1; next}
        in_package && /^[[:space:]]*version[[:space:]]*=/{print $2; exit}' \
@@ -126,8 +152,7 @@ case "$1" in
       validate_tag "$TAG"
       require_clean_tree_for_tag_creation
       if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-        echo "Creating tag $TAG..."
-        git tag -a "$TAG" -m "Release $TAG"
+        create_release_tag "$TAG"
         git push origin "$TAG"
       else
         echo "Tag $TAG already exists locally; continuing without re-creating."

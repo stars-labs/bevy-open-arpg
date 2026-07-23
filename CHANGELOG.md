@@ -15,4 +15,8 @@
 - Addressed previous release metadata gaps and tightened `vX.Y.Z` tag validation for release automation.
 
 ## Unreleased
+- GitHub release pipeline hardened for publish parity with Bevy-style flow:
+  - tag creation can proceed without GPG keys by falling back to unsigned tags.
+  - release-trigger workflow concurrency is now scoped by workflow/ref to prevent unrelated runs from canceling each other.
+  - publish helper documentation expanded with versioned release and verification workflow.
 - Character/model polish, full combat animation pass, and additional endgame content are planned in future slices.

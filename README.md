@@ -64,6 +64,8 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 `preview <ref>` runs the preview from a specific branch/tag/commit ref.  
 `tag --push vX.Y.Z` creates/pushes `vX.Y.Z`, then triggers a versioned release and native artifacts.
 
+`tag --push` prefers signed tags; when the environment has no usable GPG key, it automatically falls back to an unsigned tag and continues.
+
 Tag releases must match `Cargo.toml` `version`, i.e. `v<version>` (currently `v0.1.0` for `version = "0.1.0"`).
 
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
@@ -105,6 +107,12 @@ git tag -a v0.1.0 -m "Release v0.1.0"
 git push origin v0.1.0
 ```
 
+Recommended one-step tagged release:
+
+```bash
+./scripts/release_github.sh tag --push v0.1.0
+```
+
 For a quick web-only smoke release, trigger GitHub Actions manual dispatch with
 `release_type: preview` (or no inputs), this publishes `web-latest` only.
 
@@ -112,6 +120,14 @@ Or run from CLI:
 
 ```bash
 gh workflow run deploy-wasm-pages.yml -f release_type=tag -f release_tag=v0.1.0
+```
+
+Verify the release after workflow finish:
+
+```bash
+gh release view v0.1.0
+gh run list --workflow deploy-wasm-pages.yml --limit 1 --repo stars-labs/bevy-open-arpg 
+gh run view <run-id> --repo stars-labs/bevy-open-arpg --json url,conclusion,status
 ```
 
 For preview-only CI smoke deploy:
