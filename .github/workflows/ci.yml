@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  merge_group:
   push:
     branches:
       - main
@@ -13,7 +14,7 @@ on:
 
 concurrency:
   group: bevy-open-arpg-ci-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 permissions:
   contents: read
@@ -26,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -41,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -70,6 +75,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -93,6 +100,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:

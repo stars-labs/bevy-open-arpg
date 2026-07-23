@@ -19,9 +19,12 @@
 - GitHub release workflow behavior refined for Bevy-like preview handling:
   - `generate_release_notes` now runs only for versioned tag releases, avoiding noisy/redundant generation on `web-latest` preview runs.
 - GitHub release pipeline hardened for publish parity with Bevy-style flow:
-  - tag creation can proceed without GPG keys by falling back to unsigned tags.
+  - tag creation now prefers GPG-signed annotated tags when available and falls back to normal annotated tags when no signing key is configured.
   - release-trigger workflow concurrency is now scoped by workflow/ref to prevent unrelated runs from canceling each other.
   - release publishing now fails fast when expected `web-latest` or tagged artifacts are missing, mirroring Bevy's strict attachment contract for reproducible releases.
   - added `actions/configure-pages@v5` in the Pages deploy stage to match GitHub's standard publish flow.
   - publish helper documentation expanded with versioned release and verification workflow.
+- Release package contents now include `LICENSE` in native artifacts so legal metadata travels with published binaries.
+- `scripts/build_web.sh` was cleaned up to satisfy shellcheck style checks used in CI.
+- CI release workflow now supports Merge Queue (`merge_group`) validation for PR merge-path checks and only cancels in-progress CI runs for PR/merge-queue events; checkout steps now use `persist-credentials: false` to align with Bevy security defaults.
 - Character/model polish, full combat animation pass, and additional endgame content are planned in future slices.

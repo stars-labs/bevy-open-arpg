@@ -99,6 +99,7 @@ The tarball contains:
 `bevy-open-arpg` (Linux/macOS native binary)
 - `README.md`
 - `Cargo.toml`
+- `LICENSE`
 
 Create a normal version release by tagging and pushing:
 

@@ -13,7 +13,9 @@ sixteen_bit_pngs="$(find assets -name '*.png' -type f -print0 2>/dev/null |
   xargs -0 -r file | grep -i '16-bit' | cut -d: -f1 || true)"
 if [ -n "$sixteen_bit_pngs" ]; then
   echo "ERROR: 16-bit PNG(s) found — WebGPU has no Rgba16Unorm. Downconvert to 8-bit:" >&2
-  echo "$sixteen_bit_pngs" | sed 's/^/  /' >&2
+  while IFS= read -r png_path; do
+    [ -n "$png_path" ] && echo "  $png_path" >&2
+  done <<< "$sixteen_bit_pngs"
   echo "  fix: magick FILE -depth 8 PNG32:FILE" >&2
   exit 1
 fi

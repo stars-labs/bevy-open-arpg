@@ -50,12 +50,12 @@ create_release_tag() {
 
   # Prefer signed tags when configured, but gracefully fall back to unsigned
   # tags when no GPG signing key is available (common in CI/dev boxes).
-  if git tag -a "${tag}" -m "${msg}" 2>/dev/null; then
+  if git tag -s "${tag}" -m "${msg}" 2>/dev/null; then
     return 0
   fi
 
-  echo "Signed tag creation is unavailable; creating unsigned tag instead." >&2
-  if git tag --no-sign -a "${tag}" -m "${msg}" >/dev/null; then
+  echo "Signed tag creation is unavailable; creating unsigned annotated tag instead." >&2
+  if git tag -a "${tag}" -m "${msg}" >/dev/null; then
     return 0
   fi
 

@@ -65,6 +65,7 @@ jobs:
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -190,6 +191,7 @@ jobs:
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         if: steps.native_plan.outputs.should_build == 'true'
@@ -244,7 +246,7 @@ jobs:
           package_dir = Path("release-package")
           staging_dir = package_dir / f"{APP_NAME}-{PLATFORM}"
           staging_dir.mkdir(parents=True, exist_ok=True)
-          staging = [binary_path, Path("README.md"), Path("Cargo.toml")]
+          staging = [binary_path, Path("README.md"), Path("Cargo.toml"), Path("LICENSE")]
 
           for src in staging:
             if not src.is_file():
