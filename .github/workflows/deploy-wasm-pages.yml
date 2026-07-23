@@ -377,6 +377,20 @@ jobs:
             printf '%s,%s,%s\n' "$asset" "$asset_sha" "$asset_size" >> "$checksum_manifest"
           done < "$asset_list"
 
+          if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
+            required_native=(
+              "${APP_NAME}-${{ steps.meta.outputs.tag }}-linux-x86_64.tar.gz"
+              "${APP_NAME}-${{ steps.meta.outputs.tag }}-windows-x86_64.zip"
+              "${APP_NAME}-${{ steps.meta.outputs.tag }}-macos-x86_64.tar.gz"
+            )
+            for native_asset in "${required_native[@]}"; do
+              if [ ! -f "$native_asset" ]; then
+                echo "error: required native artifact missing for tagged release: ${native_asset}" >&2
+                exit 1
+              fi
+            done
+          fi
+
           release_type="${{ steps.meta.outputs.is_tag_release }}"
           if [[ "$release_type" == "true" ]]; then
             release_kind="versioned release"
