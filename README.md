@@ -53,10 +53,13 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 `preview <ref>` runs the preview from a specific branch/tag/commit ref.  
 `tag --push vX.Y.Z` creates/pushes `vX.Y.Z`, then triggers a versioned release and native artifacts.
 
+Tag releases must match `Cargo.toml` `version`, i.e. `v<version>` (currently `v0.1.0` for `version = "0.1.0"`).
+
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
 - Pushing a tag (`v*`) publishes a versioned release and deploys the same assets to Pages.
 - Manually dispatching the workflow is also supported:
-  - `release_type=tag` with `release_tag=vX.Y.Z` (must start with `v`) creates a versioned release
+  - `release_type=tag` with `release_tag=vX.Y.Z` creates a versioned release.
+    It must be an exact release tag (`v0.1.0`) matching `Cargo.toml` version.
     and also builds native bundles.
   - `release_type=preview` (default, no inputs required) creates/updates `web-latest` web-only preview.
   - `checkout_ref` can be passed for preview dispatches to pin the checkout reference (defaults to the workflow ref/branch).

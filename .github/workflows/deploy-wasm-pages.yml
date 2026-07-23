@@ -326,6 +326,30 @@ jobs:
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate release metadata
+        if: steps.meta.outputs.is_tag_release == 'true'
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${{ steps.meta.outputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match vX.Y.Z (for example v0.1.0): ${{ steps.meta.outputs.tag }}" >&2
+            exit 1
+          fi
+
+          crate_version=$(awk -F '"' '/^\[package\]/{in_package=1; next}
+            in_package && /^[[:space:]]*version[[:space:]]*=/{print $2; exit}' Cargo.toml)
+
+          if [ -z "$crate_version" ]; then
+            echo "Unable to parse version from Cargo.toml." >&2
+            exit 1
+          fi
+
+          expected_tag="v${crate_version}"
+          if [ "${{ steps.meta.outputs.tag }}" != "$expected_tag" ]; then
+            echo "Release tag mismatch: got '${{ steps.meta.outputs.tag }}', expected '$expected_tag' from Cargo.toml." >&2
+            exit 1
+          fi
+
       - name: Download web bundle
         uses: actions/download-artifact@v4
         with:

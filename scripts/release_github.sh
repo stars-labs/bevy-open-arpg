@@ -38,6 +38,30 @@ require_clean_tree_for_tag_creation() {
   fi
 }
 
+crate_version() {
+  awk -F '"' '/^\[package\]/{in_package=1; next}
+       in_package && /^[[:space:]]*version[[:space:]]*=/{print $2; exit}' \
+    Cargo.toml
+}
+
+ensure_tag_matches_crate_version() {
+  local tag=$1
+  local expected
+  expected="v$(crate_version)"
+
+  if [ -z "$expected" ] || [ "$expected" = "v" ]; then
+    echo "Unable to parse version from Cargo.toml." >&2
+    exit 13
+  fi
+
+  if [[ "$tag" != "$expected" ]]; then
+    echo "Tag/version mismatch: release tag is '$tag' but Cargo.toml version is '${expected/v/}'." >&2
+    echo "Update Cargo.toml before creating a release tag, or pass an existing tag intentionally." >&2
+    echo "For now, we require strict version alignment for tag releases." >&2
+    exit 13
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -52,6 +76,7 @@ Usage:
 
   ./scripts/release_github.sh tag --push <vX.Y.Z>
     Create the git tag first and push it, then trigger the same versioned release.
+    The tag must match the package version in Cargo.toml (for example v0.1.0).
 
   ./scripts/release_github.sh --help
     Show this help text.
@@ -64,6 +89,7 @@ validate_tag() {
     echo "Error: tag must match vX.Y.Z (for example v0.1.0)." >&2
     exit 3
   fi
+  ensure_tag_matches_crate_version "$tag"
 }
 
 if [[ $# -lt 1 || "$1" == "--help" ]]; then
