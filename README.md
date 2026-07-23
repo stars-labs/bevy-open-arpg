@@ -44,9 +44,9 @@ The repository ships one publish pipeline (`.github/workflows/deploy-wasm-pages.
 - Pushes to `main` publish a rolling **`web-latest`** prerelease and deploy the bundle to Pages.
 - Pushing a tag (`v*`) publishes a versioned release and deploys the same assets to Pages.
 - Manually dispatching the workflow is also supported:
-  - `release_tag=vX.Y.Z` (must start with `v`) creates a versioned release and also builds
-    native bundles.
-  - Empty `release_tag` (default) creates/updates `web-latest` web-only preview.
+  - `release_type=tag` with `release_tag=vX.Y.Z` (must start with `v`) creates a versioned release
+    and also builds native bundles.
+  - `release_type=preview` (default, no inputs required) creates/updates `web-latest` web-only preview.
 - On versioned releases (`v*`), the workflow also builds and attaches native release
   bundles for:
 
@@ -74,13 +74,19 @@ git tag -a v0.1.0 -m "Release v0.1.0"
 git push origin v0.1.0
 ```
 
-For a quick web-only smoke release, trigger GitHub Actions manual dispatch with no
-`release_tag` (this publishes `web-latest` only).
+For a quick web-only smoke release, trigger GitHub Actions manual dispatch with
+`release_type: preview` (or no inputs), this publishes `web-latest` only.
 
 Or run from CLI:
 
 ```bash
-gh workflow run deploy-wasm-pages.yml -f release_tag=v0.1.0
+gh workflow run deploy-wasm-pages.yml -f release_type=tag -f release_tag=v0.1.0
+```
+
+For preview-only CI smoke deploy:
+
+```bash
+gh workflow run deploy-wasm-pages.yml -f release_type=preview
 ```
 
 The default build is audited against Bevy's cargo feature list. It uses Bevy 0.19's `3d`, `ui`, `scene`, `picking`, and `audio-all-formats` feature collections, plus explicit animation/morph support (`bevy_animation`, `gltf_animation`, `morph`, `morph_animation`), UI widget/focus support (`bevy_ui_widgets`, `bevy_input_focus`), mesh/UI picking backends, native platform basics (`accesskit_unix`, `bevy_clipboard`, `default_font`, `multi_threaded`, `webgl2`), asset processor support, broad local image/texture import (`basis-universal`, `bmp`, `dds`, `exr`, `ff`, `gif`, `ico`, `jpeg`, `ktx2`, `pnm`, `qoi`, `tga`, `tiff`, `webp`, `zlib`, `zstd_rust`), PBR material texture support, area-light/DFG/SMAA/tonemapping/blue-noise LUTs, PCSS soft shadows, native Vulkan initialization, shader formats, system font discovery, system clipboard integration, settings/remote support, reflected settings documentation, reflected function helpers, UI debug metadata, and explicit native X11/Wayland/window input/accessibility support. The runtime uses those features for Blender-authored animated glTF/PBR scenes and morph-capable monsters, generated 2D concept/menu art, HDR bloom, SMAA, atmosphere/environment lighting, screen-space ambient occlusion, depth of field, subtle chromatic aberration, dark-fantasy vignette, distance and volumetric fog, rectangular area lights, contact and soft shadows, mesh/UI picking, UI, audio cue decoding, compressed texture readiness, gamepad input, Linux AccessKit accessibility integration, persisted settings, Bevy Remote/tooling schema introspection, and copying a run/debug summary to the OS clipboard. Startup and F6 clipboard diagnostics report this as grouped `profiles`, `animation`, `ui`, `assets`, `render`, `post_process`, `picking`, `platform`, `tools`, `omitted`, `deferred`, and `dev_tools` capability lines.
