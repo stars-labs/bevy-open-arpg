@@ -116,6 +116,7 @@ pub enum AudioBackendStatus {
     #[default]
     Starting,
     Ready,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     NoOutputDevice,
     // Only the native backend spawns the mixer thread that can fail.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

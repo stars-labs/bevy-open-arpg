@@ -8,7 +8,7 @@ use crate::{
     bounty::{BountyProgress, bounty_summary},
     challenge::{ChapterChallenges, challenge_summary},
     chapter::{
-        ChapterPhase, ChapterProgress, InteractableKind, REQUIRED_SEAL_FRAGMENTS,
+        ChapterId, ChapterPhase, ChapterProgress, InteractableKind, REQUIRED_SEAL_FRAGMENTS,
         main_quest_summary, phase_label, seal_fragment_reward_preview,
     },
     chapter_rating,
@@ -17,7 +17,7 @@ use crate::{
     dungeon::{BREAKER_TARGET_BREAKABLES, ChapterZoneState, Interactable},
     enemy::{
         AFFIX_HUNTER_KILLS, BossPhase, BossStagger, CURSED_AMBUSH_KILLS, Enemy, EnemyAffix,
-        Staggered, boss_pressure_summary, boss_stagger_summary,
+        Staggered, boss_pressure_summary_for, boss_stagger_summary,
     },
     escalated_difficulty_after_clear,
     feedback::{AudioBackendStatus, CombatEvent, CombatLog, TargetInfo},
@@ -2318,55 +2318,96 @@ fn spawn_main_menu(
                 },
                 BackgroundColor(main_menu_scrim_color()),
             ));
-            root.spawn((Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(18.0),
-                ..default()
-            },))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Text::new("Bevy Open ARPG"),
-                        TextFont {
-                            font_size: FontSize::Px(56.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.92, 0.82, 0.68)),
-                    ));
-                    parent.spawn((
-                        Text::new(menu_difficulty_line(difficulty.current, records)),
-                        TextFont {
-                            font_size: FontSize::Px(22.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.86, 0.72, 0.28)),
-                        MenuDifficultyText,
-                    ));
-                    parent.spawn((
-                        Text::new(menu_profile_summary(
-                            records,
-                            difficulty.current,
-                            audio_backend.status_label(audio),
-                        )),
-                        TextFont {
-                            font_size: FontSize::Px(19.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.76, 0.70, 0.58)),
-                        MenuProfileText,
-                    ));
-                    parent.spawn((
-                        Text::new("Press Space or Enter to start | F9 continue slot 1"),
-                        TextFont {
-                            font_size: FontSize::Px(24.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.70, 0.68, 0.64)),
-                    ));
-                });
+            root.spawn((
+                Node {
+                    width: Val::Percent(88.0),
+                    max_width: Val::Px(820.0),
+                    padding: UiRect::axes(Val::Px(28.0), Val::Px(24.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(14.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.018, 0.014, 0.016, 0.76)),
+                BorderColor::all(Color::srgba(0.66, 0.48, 0.24, 0.55)),
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Text::new("Bevy Open ARPG"),
+                    TextFont {
+                        font_size: FontSize::Px(48.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.92, 0.82, 0.68)),
+                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    Node {
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+                parent.spawn((
+                    Text::new(menu_difficulty_line(difficulty.current, records)),
+                    TextFont {
+                        font_size: FontSize::Px(18.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.86, 0.72, 0.28)),
+                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    Node {
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                    MenuDifficultyText,
+                ));
+                parent.spawn((
+                    Text::new(menu_profile_summary(
+                        records,
+                        difficulty.current,
+                        audio_backend.status_label(audio),
+                    )),
+                    TextFont {
+                        font_size: FontSize::Px(16.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.76, 0.70, 0.58)),
+                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    Node {
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                    MenuProfileText,
+                ));
+                parent.spawn((
+                    Text::new("SPACE / ENTER  -  BEGIN"),
+                    TextFont {
+                        font_size: FontSize::Px(22.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.94, 0.84, 0.58)),
+                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    Node {
+                        width: Val::Percent(100.0),
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                ));
+                parent.spawn((
+                    Text::new("TAB  Difficulty     F9  Continue     M  Audio"),
+                    TextFont {
+                        font_size: FontSize::Px(13.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.58, 0.57, 0.54)),
+                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    Node {
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+            });
         });
 }
 
@@ -2731,7 +2772,7 @@ fn spawn_victory(mut commands: Commands, resources: VictoryResources) {
             difficulty.current,
         ),
         next_run_plan_summary(&records, difficulty.current),
-        victory_next_difficulty_summary(difficulty.current),
+        victory_campaign_route_summary(&progress, difficulty.current),
     ]);
     commands
         .spawn((
@@ -2750,7 +2791,7 @@ fn spawn_victory(mut commands: Commands, resources: VictoryResources) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("The Ashen Reliquary is cleansed"),
+                Text::new(progress.chapter_id().victory_title()),
                 TextFont {
                     font_size: FontSize::Px(38.0),
                     ..default()
@@ -2765,7 +2806,10 @@ fn spawn_victory(mut commands: Commands, resources: VictoryResources) {
                 spawn_victory_recap_section(parent, section);
             }
             parent.spawn((
-                Text::new(victory_action_prompt(difficulty.current)),
+                Text::new(victory_campaign_action_prompt(
+                    &progress,
+                    difficulty.current,
+                )),
                 TextFont {
                     font_size: FontSize::Px(18.0),
                     ..default()
@@ -2946,6 +2990,30 @@ fn victory_action_prompt(current: Difficulty) -> String {
     }
 }
 
+fn victory_campaign_route_summary(progress: &ChapterProgress, current: Difficulty) -> String {
+    if let Some(next) = progress.chapter_id().next() {
+        format!(
+            "Next: continue to {} on {} | hero, gear, codex and companion carry forward | R replay chapter",
+            next.title(),
+            current.label()
+        )
+    } else {
+        victory_next_difficulty_summary(current)
+    }
+}
+
+fn victory_campaign_action_prompt(progress: &ChapterProgress, current: Difficulty) -> String {
+    if let Some(next) = progress.chapter_id().next() {
+        format!(
+            "Space/Enter continue {} | R replay {}",
+            next.short_title(),
+            progress.chapter_id().short_title()
+        )
+    } else {
+        victory_action_prompt(current)
+    }
+}
+
 fn difficulty_unlock_after_clear_summary(current: Difficulty) -> &'static str {
     match current {
         Difficulty::Normal => "Unlocked Nightmare",
@@ -2958,7 +3026,7 @@ fn difficulty_unlock_after_clear_summary(current: Difficulty) -> &'static str {
 fn menu_difficulty_line(difficulty: Difficulty, records: &ChapterRecords) -> String {
     let modifier = modifier_for_run(difficulty, records.clears(difficulty));
     format!(
-        "Difficulty: {}  |  Ordeal: {}  |  {}  |  Clears: {}  |  Record: {}  |  Tab unlocked",
+        "Difficulty: {}  |  {}  |  {}  |  Clears: {}  |  {}",
         difficulty.label(),
         modifier.label(),
         difficulty_unlock_summary(difficulty, records),
@@ -3037,29 +3105,45 @@ fn menu_profile_summary(
         .highest_cleared_difficulty()
         .map(|difficulty| difficulty.label())
         .unwrap_or("None");
-    let stash = profile_stash_starting_bonus(records);
-    let stash_line = if stash.is_empty() {
-        "Start: no stash grant yet".to_string()
+    let progress = if records.total_clears() == 0 {
+        "New campaign".to_string()
     } else {
         format!(
-            "Start: +{}g +{}s +{}e from shared stash",
+            "{} clears | Highest {highest} | Best {}",
+            records.total_clears(),
+            records.best_rating_label()
+        )
+    };
+    let target = if current_difficulty == Difficulty::Torment
+        && difficulty_unlocked(Difficulty::Torment, records)
+    {
+        Difficulty::Torment
+    } else {
+        next_unlocked_difficulty(current_difficulty, records)
+    };
+    let route = if records.total_clears() == 0 {
+        "Begin Chapter I".to_string()
+    } else if target == current_difficulty {
+        format!("Replay {}", current_difficulty.label())
+    } else {
+        format!("Push {}", target.label())
+    };
+    let stash = profile_stash_starting_bonus(records);
+    let stash = if stash.is_empty() {
+        "No stash boost".to_string()
+    } else {
+        format!(
+            "Start +{}g +{}s +{}e",
             stash.gold, stash.shards, stash.essence
         )
     };
-    let altar_line = reliquary_altar_summary(records);
+    let priority = compact_label(
+        &next_run_priority_summary(records, current_difficulty, target),
+        28,
+    );
     format!(
-        "HERO LOADOUT | {} | clears {} | highest {} | best {} | journey {}\nProfile: stash {}g/{}s/{}e | {} | {audio_status} (M)\n{}\n{}\nControls: Space/Enter start | Tab difficulty | F9 continue | M audio",
+        "{}  |  {progress}  |  {audio_status}\nNext: {route}  |  {priority}  |  {stash}",
         legacy_title(records),
-        records.total_clears(),
-        highest,
-        records.best_rating_label(),
-        records.best_journey_label(),
-        records.stash_gold,
-        records.stash_shards,
-        records.stash_essence,
-        stash_line,
-        compact_label(&altar_line, 92),
-        next_run_plan_summary(records, current_difficulty)
     )
 }
 
@@ -4687,17 +4771,38 @@ fn chapter_next_reward_hint(
 }
 
 fn chapter_next_step(progress: &ChapterProgress) -> String {
+    let chapter = progress.chapter_id();
     match progress.phase {
-        ChapterPhase::Breach => format!("slay guards {}/3", progress.enemies_slain.min(3)),
-        ChapterPhase::Cache => "open sealed cache".to_string(),
-        ChapterPhase::Sanctum => "kill Seal Warden Vhal".to_string(),
+        ChapterPhase::Breach if chapter == ChapterId::AshenReliquary => {
+            format!("slay guards {}/3", progress.enemies_slain.min(3))
+        }
+        ChapterPhase::Breach => {
+            let target = progress.opening_kill_target();
+            format!(
+                "slay {} {}/{}",
+                chapter.guard_name(),
+                progress.enemies_slain.min(target),
+                target
+            )
+        }
+        ChapterPhase::Cache if chapter == ChapterId::AshenReliquary => {
+            "open sealed cache".to_string()
+        }
+        ChapterPhase::Cache => "open Choir reliquary".to_string(),
+        ChapterPhase::Sanctum if chapter == ChapterId::AshenReliquary => {
+            "kill Seal Warden Vhal".to_string()
+        }
+        ChapterPhase::Sanctum => "kill Vesper, Bell Warden".to_string(),
         ChapterPhase::Ritual => format!(
             "restore final seal {}/{}",
             progress.seal_fragments.min(REQUIRED_SEAL_FRAGMENTS),
             REQUIRED_SEAL_FRAGMENTS
         ),
-        ChapterPhase::Boss => "break and kill Malrec".to_string(),
-        ChapterPhase::Victory => "start next difficulty".to_string(),
+        ChapterPhase::Boss => format!("break and kill {}", chapter.boss_short_name()),
+        ChapterPhase::Victory => chapter
+            .next()
+            .map(|next| format!("continue {}", next.short_title()))
+            .unwrap_or_else(|| "start next difficulty".to_string()),
     }
 }
 
@@ -5047,15 +5152,19 @@ fn action_guide_primary(inputs: &ActionGuideInputs) -> String {
     }
     if inputs.surge.charge >= inputs.surge.max_charge && inputs.progress.phase == ChapterPhase::Boss
     {
-        return "Press Y Surge for Malrec burst".to_string();
+        return format!(
+            "Press Y Surge for {} burst",
+            inputs.progress.chapter_id().boss_short_name()
+        );
     }
     if let Some(boss) = action_guide_boss_pressure(inputs.progress, inputs.boss) {
         return boss;
     }
     if inputs.progress.phase == ChapterPhase::Boss && inputs.stats.reliquary_momentum > 0 {
         return format!(
-            "Momentum {}x: spend Q/RMB/E burst on Malrec",
-            inputs.stats.reliquary_momentum.min(RELIQUARY_MOMENTUM_MAX)
+            "Momentum {}x: spend Q/RMB/E burst on {}",
+            inputs.stats.reliquary_momentum.min(RELIQUARY_MOMENTUM_MAX),
+            inputs.progress.chapter_id().boss_short_name()
         );
     }
     if let Some(readiness) = action_guide_boss_readiness(inputs) {
@@ -5096,32 +5205,46 @@ fn action_guide_primary(inputs: &ActionGuideInputs) -> String {
     }
     match inputs.progress.phase {
         ChapterPhase::Breach => {
+            let target = inputs.progress.opening_kill_target();
             format!(
-                "Slay reliquary guards {}/3",
-                inputs.progress.enemies_slain.min(3)
+                "Slay {} {}/{}",
+                inputs.progress.chapter_id().guard_name(),
+                inputs.progress.enemies_slain.min(target),
+                target
             )
         }
-        ChapterPhase::Cache => "Press Space at the sealed cache".to_string(),
+        ChapterPhase::Cache => format!(
+            "Press Space at the {}",
+            inputs.progress.chapter_id().cache_name()
+        ),
         ChapterPhase::Sanctum => format!(
-            "Slay Seal Warden Vhal {}",
+            "Slay {} {}",
+            inputs.progress.chapter_id().warden_name(),
             if inputs.stats.seal_warden_slain {
                 "done"
             } else {
                 "pending"
             }
         ),
-        ChapterPhase::Ritual => "Press Space at the ember altar".to_string(),
+        ChapterPhase::Ritual => format!(
+            "Press Space at the {}",
+            inputs.progress.chapter_id().ritual_name()
+        ),
         ChapterPhase::Boss => {
+            let boss = inputs.progress.chapter_id().boss_short_name();
             if inputs.stats.boss_staggers < BOSS_BREAK_TARGET {
                 format!(
-                    "Break Malrec {}/{}",
-                    inputs.stats.boss_staggers, BOSS_BREAK_TARGET
+                    "Break {} {}/{}",
+                    boss, inputs.stats.boss_staggers, BOSS_BREAK_TARGET
                 )
             } else {
-                "Finish Malrec".to_string()
+                format!("Finish {boss}")
             }
         }
-        ChapterPhase::Victory => "Press Space/Enter for next difficulty".to_string(),
+        ChapterPhase::Victory => match inputs.progress.chapter_id().next() {
+            Some(next) => format!("Press Space/Enter for {}", next.short_title()),
+            None => "Press Space/Enter for next difficulty".to_string(),
+        },
     }
 }
 
@@ -5311,12 +5434,18 @@ fn action_guide_boss_pressure(
     let boss = boss?;
     if boss.staggered_remaining_secs > 0.0 {
         return Some(format!(
-            "Execute window: Y/Q/E burst Malrec {:.0}s",
+            "Execute window: Y/Q/E burst {} {:.0}s",
+            progress.chapter_id().boss_short_name(),
             boss.staggered_remaining_secs.ceil()
         ));
     }
     if boss.enrage_started {
-        return Some("Ashen Enrage: kite vents, burst after slam".to_string());
+        return Some(match progress.chapter_id() {
+            ChapterId::AshenReliquary => "Ashen Enrage: kite vents, burst after slam".to_string(),
+            ChapterId::HollowBastion => {
+                "Hollow Crescendo: kite soul fissures, burst after toll".to_string()
+            }
+        });
     }
     if boss.phase_two_started && boss.enrage_remaining_secs <= 6.0 {
         return Some(format!(
@@ -5673,7 +5802,10 @@ fn chapter_mainline_percent(progress: &ChapterProgress) -> f32 {
         ChapterPhase::Victory => 100.0,
     };
     let phase_fill = match progress.phase {
-        ChapterPhase::Breach => progress.enemies_slain.min(3) as f32 / 3.0,
+        ChapterPhase::Breach => {
+            let target = progress.opening_kill_target().max(1);
+            progress.enemies_slain.min(target) as f32 / target as f32
+        }
         ChapterPhase::Cache => {
             if progress.chest_opened {
                 1.0
@@ -5681,7 +5813,13 @@ fn chapter_mainline_percent(progress: &ChapterProgress) -> f32 {
                 0.0
             }
         }
-        ChapterPhase::Sanctum => progress.enemies_slain.saturating_sub(3).min(2) as f32 / 2.0,
+        ChapterPhase::Sanctum => {
+            progress
+                .enemies_slain
+                .saturating_sub(progress.opening_kill_target())
+                .min(2) as f32
+                / 2.0
+        }
         ChapterPhase::Ritual => {
             progress.seal_fragments.min(REQUIRED_SEAL_FRAGMENTS) as f32
                 / REQUIRED_SEAL_FRAGMENTS as f32
@@ -7022,7 +7160,7 @@ fn update_chapter_banner(
         state.last_phase = Some(progress.phase);
         state.timer = Timer::from_seconds(chapter_banner_duration(progress.phase), TimerMode::Once);
         state.timer.reset();
-        **text = chapter_banner_text(progress.phase).to_string();
+        **text = chapter_banner_text_for(&progress);
         return;
     }
 
@@ -7336,6 +7474,15 @@ fn story_beat_from_event_text(text: &str) -> Option<StoryBeat> {
         StoryBeat::KeeperAwakened,
         StoryBeat::KeeperBloodied,
         StoryBeat::Victory,
+        StoryBeat::HollowArrival,
+        StoryBeat::ChoirCacheRevealed,
+        StoryBeat::ChoirSealRecovered,
+        StoryBeat::BellCryptOpened,
+        StoryBeat::BellWardenSlain,
+        StoryBeat::SoulFontDemand,
+        StoryBeat::MatronAwakened,
+        StoryBeat::MatronBloodied,
+        StoryBeat::BastionVictory,
         StoryBeat::CursedShrine,
         StoryBeat::BloodObelisk,
         StoryBeat::ReliquaryVault,
@@ -7349,11 +7496,18 @@ fn story_beat_from_event_text(text: &str) -> Option<StoryBeat> {
 fn story_beat_speaker(beat: StoryBeat) -> &'static str {
     match beat {
         StoryBeat::KeeperAwakened | StoryBeat::KeeperBloodied => "Malrec, Keeper of Ash",
+        StoryBeat::MatronAwakened | StoryBeat::MatronBloodied => "Nyxara, Hollow Matron",
+        StoryBeat::HollowArrival
+        | StoryBeat::ChoirCacheRevealed
+        | StoryBeat::ChoirSealRecovered
+        | StoryBeat::BellCryptOpened
+        | StoryBeat::BellWardenSlain
+        | StoryBeat::SoulFontDemand => "Steward Edda",
         StoryBeat::CursedShrine | StoryBeat::BloodObelisk | StoryBeat::EmberRift => {
             "Reliquary Whisper"
         }
         StoryBeat::ReliquaryVault | StoryBeat::AshenPylon => "Quartermaster Vey",
-        StoryBeat::Victory => "Steward Edda",
+        StoryBeat::Victory | StoryBeat::BastionVictory => "Steward Edda",
         _ => "Steward Edda",
     }
 }
@@ -7369,6 +7523,15 @@ fn story_beat_action_hint(beat: StoryBeat) -> &'static str {
         StoryBeat::KeeperAwakened => "choose a boon and break Malrec",
         StoryBeat::KeeperBloodied => "save burst for the stagger window",
         StoryBeat::Victory => "claim rewards and plan the next run",
+        StoryBeat::HollowArrival => "break the Hollowbound vanguard",
+        StoryBeat::ChoirCacheRevealed => "open the choir reliquary",
+        StoryBeat::ChoirSealRecovered => "enter the bell crypt",
+        StoryBeat::BellCryptOpened => "silence Vesper and the choir",
+        StoryBeat::BellWardenSlain => "carry the second seal to the soul font",
+        StoryBeat::SoulFontDemand => "shatter the font and wake Nyxara",
+        StoryBeat::MatronAwakened => "choose a boon and break Nyxara",
+        StoryBeat::MatronBloodied => "break her before the crescendo",
+        StoryBeat::BastionVictory => "claim the campaign cache and push difficulty",
         StoryBeat::CursedShrine => "kill all ambushers for the offering",
         StoryBeat::BloodObelisk => "finish the rite before it turns",
         StoryBeat::ReliquaryVault => "loot the vault and spend at town",
@@ -7379,7 +7542,12 @@ fn story_beat_action_hint(beat: StoryBeat) -> &'static str {
 
 fn story_comms_duration(beat: StoryBeat) -> f32 {
     match beat {
-        StoryBeat::KeeperAwakened | StoryBeat::KeeperBloodied | StoryBeat::Victory => 5.2,
+        StoryBeat::KeeperAwakened
+        | StoryBeat::KeeperBloodied
+        | StoryBeat::Victory
+        | StoryBeat::MatronAwakened
+        | StoryBeat::MatronBloodied
+        | StoryBeat::BastionVictory => 5.2,
         StoryBeat::CursedShrine | StoryBeat::BloodObelisk | StoryBeat::EmberRift => 4.6,
         _ => 4.0,
     }
@@ -8217,6 +8385,31 @@ fn chapter_banner_text(phase: ChapterPhase) -> &'static str {
     }
 }
 
+fn chapter_banner_text_for(progress: &ChapterProgress) -> String {
+    if progress.chapter_id() == ChapterId::AshenReliquary {
+        return chapter_banner_text(progress.phase).to_string();
+    }
+    match progress.phase {
+        ChapterPhase::Breach => {
+            "Enter the Hollow Bastion\nNext: break the vanguard | Reward: choir path"
+        }
+        ChapterPhase::Cache => {
+            "Seal Fragment: Choir Reliquary\nNext: open reliquary | Reward: choir seal"
+        }
+        ChapterPhase::Sanctum => "Bell Crypt Ambush\nNext: silence Vesper | Reward: second seal",
+        ChapterPhase::Ritual => {
+            "Final Seal: Soul Font\nNext: shatter font | Reward: essence + matron gate"
+        }
+        ChapterPhase::Boss => {
+            "Nyxara, Hollow Matron, Has Awakened\nNext: break crescendo | Reward: soul sigil cache"
+        }
+        ChapterPhase::Victory => {
+            "The Hollow Bastion Is Silent\nNext: claim cache | Reward: campaign clear"
+        }
+    }
+    .to_string()
+}
+
 fn chapter_banner_duration(phase: ChapterPhase) -> f32 {
     match phase {
         ChapterPhase::Boss | ChapterPhase::Victory => 4.0,
@@ -8315,15 +8508,16 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         .map(|(health, phase, stagger, staggered)| {
             format!(
                 "{} | {}",
-                boss_pressure_summary(health, phase),
+                boss_pressure_summary_for(progress.chapter_id(), health, phase),
                 boss_stagger_summary(stagger, staggered)
             )
         })
         .unwrap_or_else(|_| {
+            let boss = progress.chapter_id().boss_short_name();
             if progress.phase == ChapterPhase::Boss {
-                "Malrec: entering".to_string()
+                format!("{boss}: entering")
             } else {
-                "Malrec: dormant".to_string()
+                format!("{boss}: dormant")
             }
         });
     let boss_action =
@@ -10944,12 +11138,19 @@ fn portal_utility_state(portal: &TownPortal) -> String {
 }
 
 fn main_interact_hint(progress: &ChapterProgress) -> String {
-    match progress.phase {
-        ChapterPhase::Cache => "Cache".to_string(),
-        ChapterPhase::Ritual => "Altar".to_string(),
-        ChapterPhase::Boss => "Boon/Boss".to_string(),
-        ChapterPhase::Victory => "Next Run".to_string(),
-        _ => compact_label(&progress.objective, 10),
+    match (progress.chapter_id(), progress.phase) {
+        (ChapterId::AshenReliquary, ChapterPhase::Cache) => "Cache".to_string(),
+        (ChapterId::HollowBastion, ChapterPhase::Cache) => "Choir".to_string(),
+        (ChapterId::AshenReliquary, ChapterPhase::Ritual) => "Altar".to_string(),
+        (ChapterId::HollowBastion, ChapterPhase::Ritual) => "Soul Font".to_string(),
+        (ChapterId::AshenReliquary, ChapterPhase::Boss) => "Boon/Boss".to_string(),
+        (ChapterId::HollowBastion, ChapterPhase::Boss) => "Boon/Nyxara".to_string(),
+        (_, ChapterPhase::Victory) => progress
+            .chapter_id()
+            .next()
+            .map(|_| "Next Ch.".to_string())
+            .unwrap_or_else(|| "Next Run".to_string()),
+        (_, _) => compact_label(&progress.objective, 10),
     }
 }
 
@@ -11954,7 +12155,7 @@ fn hud_combat_focus_text(
             compact_target_health_line(&target_info.health_line)
         )
     } else if progress.phase == ChapterPhase::Boss {
-        "Malrec".to_string()
+        progress.chapter_id().boss_short_name().to_string()
     } else {
         "nearest threat".to_string()
     };
@@ -12082,14 +12283,49 @@ fn objective_compass_display_from_targets<'a>(
     enemies: impl IntoIterator<Item = ObjectiveCompassEnemyTarget<'a>>,
     interactables: impl IntoIterator<Item = ObjectiveCompassInteractableTarget>,
 ) -> Option<ObjectiveCompassDisplay> {
-    let target = fixed_mainline_compass_target(progress)
+    let interactables = interactables.into_iter().collect::<Vec<_>>();
+    let target = mainline_interactable_compass_target(progress, &interactables)
+        .or_else(|| fixed_mainline_compass_target(progress))
         .or_else(|| mainline_enemy_compass_target(progress, player_position, enemies))
         .or_else(|| boss_fallback_compass_target(progress))
-        .or_else(|| optional_interactable_compass_target(player_position, interactables))?;
+        .or_else(|| {
+            optional_interactable_compass_target(player_position, interactables.iter().copied())
+        })?;
     Some(objective_compass_display_for_target(
         target,
         player_position,
     ))
+}
+
+fn mainline_interactable_compass_target(
+    progress: &ChapterProgress,
+    interactables: &[ObjectiveCompassInteractableTarget],
+) -> Option<ObjectiveCompassTarget> {
+    let kind = match progress.phase {
+        ChapterPhase::Cache if !progress.chest_opened => InteractableKind::Cache,
+        ChapterPhase::Ritual if !progress.altar_activated => InteractableKind::Altar,
+        _ => return None,
+    };
+    interactables
+        .iter()
+        .find(|interactable| {
+            interactable.kind == kind && (!interactable.used || interactable.reusable)
+        })
+        .map(|interactable| ObjectiveCompassTarget {
+            scope: "MAIN",
+            label: mainline_interactable_compass_label(progress.chapter_id(), kind),
+            position: interactable.position,
+        })
+}
+
+fn mainline_interactable_compass_label(chapter: ChapterId, kind: InteractableKind) -> &'static str {
+    match (chapter, kind) {
+        (ChapterId::AshenReliquary, InteractableKind::Cache) => "Cache",
+        (ChapterId::HollowBastion, InteractableKind::Cache) => "Choir",
+        (ChapterId::AshenReliquary, InteractableKind::Altar) => "Altar",
+        (ChapterId::HollowBastion, InteractableKind::Altar) => "Soul Font",
+        (_, _) => "Objective",
+    }
 }
 
 fn objective_compass_display_for_target(
@@ -12115,13 +12351,19 @@ fn fixed_mainline_compass_target(progress: &ChapterProgress) -> Option<Objective
     match progress.phase {
         ChapterPhase::Cache if !progress.chest_opened => Some(ObjectiveCompassTarget {
             scope: "MAIN",
-            label: "Cache",
+            label: mainline_interactable_compass_label(
+                progress.chapter_id(),
+                InteractableKind::Cache,
+            ),
             position: Vec3::new(-8.0, 0.0, -5.5),
         }),
         ChapterPhase::Ritual if !progress.altar_activated => Some(ObjectiveCompassTarget {
             scope: "MAIN",
-            label: "Altar",
-            position: Vec3::new(6.5, 0.0, 4.8),
+            label: mainline_interactable_compass_label(
+                progress.chapter_id(),
+                InteractableKind::Altar,
+            ),
+            position: Vec3::new(6.0, 0.0, -20.5),
         }),
         _ => None,
     }
@@ -12160,10 +12402,19 @@ fn mainline_enemy_compass_label(
     progress: &ChapterProgress,
     enemy_id: &str,
 ) -> Option<&'static str> {
-    match (progress.phase, enemy_id) {
-        (ChapterPhase::Sanctum, "seal_warden") => Some("Warden"),
-        (ChapterPhase::Boss, "keeper") if !progress.boss_slain => Some("Malrec"),
-        _ => None,
+    let chapter = progress.chapter_id();
+    if progress.phase == ChapterPhase::Sanctum && enemy_id == chapter.warden_id() {
+        Some(match chapter {
+            ChapterId::AshenReliquary => "Warden",
+            ChapterId::HollowBastion => "Vesper",
+        })
+    } else if progress.phase == ChapterPhase::Boss
+        && enemy_id == chapter.boss_id()
+        && !progress.boss_slain
+    {
+        Some(chapter.boss_short_name())
+    } else {
+        None
     }
 }
 
@@ -12171,8 +12422,8 @@ fn boss_fallback_compass_target(progress: &ChapterProgress) -> Option<ObjectiveC
     match progress.phase {
         ChapterPhase::Boss if !progress.boss_slain => Some(ObjectiveCompassTarget {
             scope: "MAIN",
-            label: "Malrec",
-            position: Vec3::new(6.5, 0.0, 4.8),
+            label: progress.chapter_id().boss_short_name(),
+            position: Vec3::new(0.0, 0.0, -20.0),
         }),
         _ => None,
     }
@@ -12249,10 +12500,14 @@ fn mainline_navigation_target(progress: &ChapterProgress) -> Option<(&'static st
         ChapterPhase::Cache if !progress.chest_opened => {
             Some(("Cache", Vec3::new(-8.0, 0.0, -5.5)))
         }
-        ChapterPhase::Ritual if !progress.altar_activated => {
-            Some(("Altar", Vec3::new(6.5, 0.0, 4.8)))
-        }
-        ChapterPhase::Boss if !progress.boss_slain => Some(("Malrec", Vec3::new(6.5, 0.0, 4.8))),
+        ChapterPhase::Ritual if !progress.altar_activated => Some((
+            mainline_interactable_compass_label(progress.chapter_id(), InteractableKind::Altar),
+            Vec3::new(6.0, 0.0, -20.5),
+        )),
+        ChapterPhase::Boss if !progress.boss_slain => Some((
+            progress.chapter_id().boss_short_name(),
+            Vec3::new(0.0, 0.0, -20.0),
+        )),
         _ => None,
     }
 }
@@ -12307,8 +12562,15 @@ fn chapter_phase_payoff(progress: &ChapterProgress) -> String {
             "PAYOFF Final seal {}",
             seal_fragment_reward_preview(REQUIRED_SEAL_FRAGMENTS)
         ),
-        ChapterPhase::Boss => "PAYOFF Soul Sigil + chapter cache".to_string(),
-        ChapterPhase::Victory => "PAYOFF Claimed - start next run".to_string(),
+        ChapterPhase::Boss => format!(
+            "PAYOFF {} Soul Sigil + chapter cache",
+            progress.chapter_id().boss_short_name()
+        ),
+        ChapterPhase::Victory => progress
+            .chapter_id()
+            .next()
+            .map(|next| format!("PAYOFF Claimed - continue {}", next.short_title()))
+            .unwrap_or_else(|| "PAYOFF Claimed - start next difficulty".to_string()),
     }
 }
 
@@ -13926,7 +14188,7 @@ mod tests {
         assert!(!text.contains(&progress.title));
         assert!(text.starts_with("Q73%"));
         assert!(text.contains("B>C>S>[R]>K"));
-        assert!(text.contains("Altar 8m SE"));
+        assert!(text.contains("Altar 21m NE"));
         assert!(text.contains("Ritual"));
         assert!(text.contains("2/3"));
         assert!(!text.contains("Claim the final reliquary seal"));
@@ -15086,7 +15348,7 @@ mod tests {
             "Cache 10m NW"
         );
         assert_eq!(
-            chapter_navigation_hint(&altar, &zone, Vec3::new(6.5, 0.0, 4.8)),
+            chapter_navigation_hint(&altar, &zone, Vec3::new(6.0, 0.0, -20.5)),
             "Altar 0m here"
         );
         assert_eq!(
@@ -15118,7 +15380,7 @@ mod tests {
         assert_eq!(cache_display.detail, "MAIN 10m Cache");
         assert!(cache_display.detail.len() <= 16);
 
-        let altar_display = objective_compass_display(&altar, Vec3::new(6.5, 0.0, 4.8)).unwrap();
+        let altar_display = objective_compass_display(&altar, Vec3::new(6.0, 0.0, -20.5)).unwrap();
         assert_eq!(altar_display.direction, "HERE");
         assert_eq!(altar_display.detail, "MAIN 0m Altar");
 
@@ -18108,23 +18370,17 @@ mod tests {
     fn menu_profile_summary_surfaces_next_run_plan() {
         let empty = ChapterRecords::default();
         let summary = menu_profile_summary(&empty, crate::Difficulty::Normal, "audio on");
-        assert!(summary.contains("HERO LOADOUT | Ashen Wanderer"));
-        assert!(summary.contains("clears 0"));
-        assert!(summary.contains("Profile: stash 0g/0s/0e"));
-        assert!(summary.contains("Start: no stash grant yet"));
-        assert!(summary.contains("audio on (M)"));
-        assert!(
-            summary
-                .contains("Controls: Space/Enter start | Tab difficulty | F9 continue | M audio")
-        );
-        assert!(summary.contains("Next Run Plan: replay Normal"));
-        assert!(summary.contains("Priority first clear"));
-        assert!(summary.contains("Ordeal Ashen Echoes"));
-        assert!(summary.contains("altar First Ember"));
-        assert!(summary.contains("Next deed First Reliquary Clear"));
+        assert!(summary.contains("Ashen Wanderer"));
+        assert!(summary.contains("New campaign"));
+        assert!(summary.contains("audio on"));
+        assert!(summary.contains("Next: Begin Chapter I"));
+        assert!(summary.contains("first clear"));
+        assert!(summary.contains("No stash boost"));
+        assert_eq!(summary.lines().count(), 2);
+        assert!(summary.lines().all(|line| line.chars().count() <= 96));
         let no_device_summary =
             menu_profile_summary(&empty, crate::Difficulty::Normal, "audio no device");
-        assert!(no_device_summary.contains("audio no device (M)"));
+        assert!(no_device_summary.contains("audio no device"));
 
         let records = ChapterRecords {
             normal_clears: 1,
@@ -18136,17 +18392,16 @@ mod tests {
             ..default()
         };
         let summary = menu_profile_summary(&records, crate::Difficulty::Normal, "audio muted");
-        assert!(summary.contains("HERO LOADOUT | Reliquary Seeker"));
-        assert!(summary.contains("clears 1"));
-        assert!(summary.contains("highest Normal"));
-        assert!(summary.contains("best A"));
-        assert!(summary.contains("audio muted (M)"));
-        assert!(summary.contains("Next Run Plan: push Nightmare"));
-        assert!(summary.contains("Priority push Nightmare"));
-        assert!(summary.contains("Ordeal Blood Tithe + Glass Relics"));
-        assert!(summary.contains("start +50g +2s +2e"));
-        assert!(summary.contains("Start: +50g +2s +2e from shared stash"));
-        assert!(summary.contains("Nightmare Veteran"));
+        assert!(summary.contains("Reliquary Seeker"));
+        assert!(summary.contains("1 clears"));
+        assert!(summary.contains("Highest Normal"));
+        assert!(summary.contains("Best A"));
+        assert!(summary.contains("audio muted"));
+        assert!(summary.contains("Next: Push Nightmare"));
+        assert!(summary.contains("push Nightmare"));
+        assert!(summary.contains("Start +50g +2s +2e"));
+        assert_eq!(summary.lines().count(), 2);
+        assert!(summary.lines().all(|line| line.chars().count() <= 96));
 
         let torment = ChapterRecords {
             normal_clears: 1,
@@ -18164,13 +18419,11 @@ mod tests {
             ..default()
         };
         let summary = menu_profile_summary(&torment, crate::Difficulty::Torment, "audio on");
-        assert!(summary.contains("HERO LOADOUT | Torment Vanquisher"));
-        assert!(summary.contains("Next Run Plan: replay Torment"));
-        assert!(summary.contains("Priority earn S clear"));
-        assert!(summary.contains("Ordeal Torment Brand + Glass Relics"));
-        assert!(summary.contains("altar Primal Spark"));
-        assert!(summary.contains("Keeper Breaker"));
-        assert_eq!(summary.lines().count(), 5);
+        assert!(summary.contains("Torment Vanquisher"));
+        assert!(summary.contains("Next: Replay Torment"));
+        assert!(summary.contains("earn S clear"));
+        assert_eq!(summary.lines().count(), 2);
+        assert!(summary.lines().all(|line| line.chars().count() <= 96));
     }
 
     #[test]
@@ -19789,7 +20042,7 @@ mod tests {
         assert!(menu_line.contains("Torment Brand + Cinder Veins"));
         assert!(menu_line.contains("Unlocked"));
         assert!(menu_line.contains("Clears: 0"));
-        assert!(menu_line.contains("Record: S in 3:05"));
+        assert!(menu_line.contains("S in 3:05"));
         assert!(profile_summary(&records).contains("0 clears"));
         assert!(profile_summary(&records).contains("best None"));
         assert!(profile_summary(&records).contains("journey None"));

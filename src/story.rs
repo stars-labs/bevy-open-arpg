@@ -1,6 +1,8 @@
 use crate::{
     GameState,
-    chapter::{ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed},
+    chapter::{
+        ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed,
+    },
     enemy::{BossPhase, Enemy, EnemyKilled},
     feedback::CombatEvent,
     not_paused,
@@ -19,6 +21,15 @@ pub enum StoryBeat {
     KeeperAwakened,
     KeeperBloodied,
     Victory,
+    HollowArrival,
+    ChoirCacheRevealed,
+    ChoirSealRecovered,
+    BellCryptOpened,
+    BellWardenSlain,
+    SoulFontDemand,
+    MatronAwakened,
+    MatronBloodied,
+    BastionVictory,
     CursedShrine,
     BloodObelisk,
     ReliquaryVault,
@@ -40,6 +51,15 @@ impl StoryBeat {
             Self::KeeperAwakened => "Keeper Awakened",
             Self::KeeperBloodied => "Keeper Bloodied",
             Self::Victory => "Reliquary Cleansed",
+            Self::HollowArrival => "The Hollow Road",
+            Self::ChoirCacheRevealed => "Choir Reliquary",
+            Self::ChoirSealRecovered => "Choir Seal",
+            Self::BellCryptOpened => "Bell Crypt Opened",
+            Self::BellWardenSlain => "The Last Bell",
+            Self::SoulFontDemand => "Soul Font",
+            Self::MatronAwakened => "Matron Awakened",
+            Self::MatronBloodied => "Matron Bloodied",
+            Self::BastionVictory => "Bastion Silenced",
             Self::CursedShrine => "Cursed Shrine",
             Self::BloodObelisk => "Blood Rite",
             Self::ReliquaryVault => "Resplendent Vault",
@@ -69,6 +89,33 @@ impl StoryBeat {
             }
             Self::KeeperBloodied => "Malrec staggers, but the reliquary shakes with borrowed fire.",
             Self::Victory => "The ash oath breaks. The reliquary is yours, for now.",
+            Self::HollowArrival => {
+                "Malrec's broken seal points north, where a dead bastion still sings."
+            }
+            Self::ChoirCacheRevealed => {
+                "The Hollowbound fall. A choir reliquary answers with a stolen voice."
+            }
+            Self::ChoirSealRecovered => {
+                "The choir seal joins your blade, and the bell crypt shudders open."
+            }
+            Self::BellCryptOpened => {
+                "Vesper tolls the last bell. Every corpse in the crypt turns to listen."
+            }
+            Self::BellWardenSlain => {
+                "Vesper is silenced. The second seal remembers the sound of daylight."
+            }
+            Self::SoulFontDemand => {
+                "Nyxara's soul font holds the final seal. Break the chorus at its source."
+            }
+            Self::MatronAwakened => {
+                "Nyxara rises beneath a crown of voices, carrying the seal in her hollow heart."
+            }
+            Self::MatronBloodied => {
+                "The Matron's chorus fractures. Strike before the Hollow Crescendo peaks."
+            }
+            Self::BastionVictory => {
+                "The last voice fades. Beyond the bastion, something older answers the silence."
+            }
             Self::CursedShrine => {
                 "The shrine drinks blood and buys a cruel bargain from the reliquary dark."
             }
@@ -94,16 +141,23 @@ pub struct StoryLog {
 
 impl Default for StoryLog {
     fn default() -> Self {
-        let mut log = Self {
-            beats: Vec::new(),
-            latest: String::new(),
-        };
-        log.record(StoryBeat::Arrival);
-        log
+        Self::for_chapter(ChapterId::default())
     }
 }
 
 impl StoryLog {
+    pub fn for_chapter(chapter: ChapterId) -> Self {
+        let mut log = Self {
+            beats: Vec::new(),
+            latest: String::new(),
+        };
+        log.record(match chapter {
+            ChapterId::AshenReliquary => StoryBeat::Arrival,
+            ChapterId::HollowBastion => StoryBeat::HollowArrival,
+        });
+        log
+    }
+
     pub fn total_beats(&self) -> usize {
         StoryBeat::TOTAL
     }
@@ -161,8 +215,8 @@ impl Plugin for StoryPlugin {
     }
 }
 
-fn reset_story(mut story: ResMut<StoryLog>) {
-    *story = StoryLog::default();
+fn reset_story(active_chapter: Res<ActiveChapter>, mut story: ResMut<StoryLog>) {
+    *story = StoryLog::for_chapter(active_chapter.0);
 }
 
 fn update_story_log(
@@ -174,15 +228,30 @@ fn update_story_log(
     mut combat_events: MessageWriter<CombatEvent>,
 ) {
     record_progress_beats(&progress, &mut story, &mut combat_events);
-    record_boss_phase_beats(&boss_phases, &mut story, &mut combat_events);
+    let chapter = progress.chapter_id();
+    record_boss_phase_beats(chapter, &boss_phases, &mut story, &mut combat_events);
 
     for interaction in interactions.read() {
         match interaction.kind {
             InteractableKind::Cache => {
-                record_story_beat(StoryBeat::SealRecovered, &mut story, &mut combat_events);
+                record_story_beat(
+                    match chapter {
+                        ChapterId::AshenReliquary => StoryBeat::SealRecovered,
+                        ChapterId::HollowBastion => StoryBeat::ChoirSealRecovered,
+                    },
+                    &mut story,
+                    &mut combat_events,
+                );
             }
             InteractableKind::Altar => {
-                record_story_beat(StoryBeat::KeeperAwakened, &mut story, &mut combat_events);
+                record_story_beat(
+                    match chapter {
+                        ChapterId::AshenReliquary => StoryBeat::KeeperAwakened,
+                        ChapterId::HollowBastion => StoryBeat::MatronAwakened,
+                    },
+                    &mut story,
+                    &mut combat_events,
+                );
             }
             InteractableKind::CursedShrine => {
                 record_story_beat(StoryBeat::CursedShrine, &mut story, &mut combat_events);
@@ -204,32 +273,55 @@ fn update_story_log(
     }
 
     for kill in kills.read() {
-        if kill.enemy_id == "seal_warden" {
-            record_story_beat(StoryBeat::SealWardenSlain, &mut story, &mut combat_events);
+        if kill.enemy_id == chapter.warden_id() {
+            record_story_beat(
+                match chapter {
+                    ChapterId::AshenReliquary => StoryBeat::SealWardenSlain,
+                    ChapterId::HollowBastion => StoryBeat::BellWardenSlain,
+                },
+                &mut story,
+                &mut combat_events,
+            );
         }
-        if kill.enemy_id == "keeper" {
-            record_story_beat(StoryBeat::Victory, &mut story, &mut combat_events);
+        if kill.enemy_id == chapter.boss_id() {
+            record_story_beat(
+                match chapter {
+                    ChapterId::AshenReliquary => StoryBeat::Victory,
+                    ChapterId::HollowBastion => StoryBeat::BastionVictory,
+                },
+                &mut story,
+                &mut combat_events,
+            );
         }
     }
 }
 
 fn record_boss_phase_beats(
+    chapter: ChapterId,
     boss_phases: &Query<(&Enemy, &BossPhase)>,
     story: &mut StoryLog,
     combat_events: &mut MessageWriter<CombatEvent>,
 ) {
     for (enemy, phase) in boss_phases.iter() {
-        if enemy.id != "keeper" {
+        if enemy.id != chapter.boss_id() {
             continue;
         }
-        if let Some(beat) = boss_phase_story_beat(phase.phase_two_started()) {
+        if let Some(beat) = boss_phase_story_beat_for(chapter, phase.phase_two_started()) {
             record_story_beat(beat, story, combat_events);
         }
     }
 }
 
+#[cfg(test)]
 fn boss_phase_story_beat(phase_two_started: bool) -> Option<StoryBeat> {
-    phase_two_started.then_some(StoryBeat::KeeperBloodied)
+    boss_phase_story_beat_for(ChapterId::AshenReliquary, phase_two_started)
+}
+
+fn boss_phase_story_beat_for(chapter: ChapterId, phase_two_started: bool) -> Option<StoryBeat> {
+    phase_two_started.then_some(match chapter {
+        ChapterId::AshenReliquary => StoryBeat::KeeperBloodied,
+        ChapterId::HollowBastion => StoryBeat::MatronBloodied,
+    })
 }
 
 fn record_progress_beats(
@@ -237,13 +329,18 @@ fn record_progress_beats(
     story: &mut StoryLog,
     combat_events: &mut MessageWriter<CombatEvent>,
 ) {
-    let beat = match progress.phase {
-        ChapterPhase::Breach => None,
-        ChapterPhase::Cache => Some(StoryBeat::CacheRevealed),
-        ChapterPhase::Sanctum => Some(StoryBeat::SanctumOpened),
-        ChapterPhase::Ritual => Some(StoryBeat::AltarDemand),
-        ChapterPhase::Boss => Some(StoryBeat::KeeperAwakened),
-        ChapterPhase::Victory => Some(StoryBeat::Victory),
+    let beat = match (progress.chapter_id(), progress.phase) {
+        (_, ChapterPhase::Breach) => None,
+        (ChapterId::AshenReliquary, ChapterPhase::Cache) => Some(StoryBeat::CacheRevealed),
+        (ChapterId::AshenReliquary, ChapterPhase::Sanctum) => Some(StoryBeat::SanctumOpened),
+        (ChapterId::AshenReliquary, ChapterPhase::Ritual) => Some(StoryBeat::AltarDemand),
+        (ChapterId::AshenReliquary, ChapterPhase::Boss) => Some(StoryBeat::KeeperAwakened),
+        (ChapterId::AshenReliquary, ChapterPhase::Victory) => Some(StoryBeat::Victory),
+        (ChapterId::HollowBastion, ChapterPhase::Cache) => Some(StoryBeat::ChoirCacheRevealed),
+        (ChapterId::HollowBastion, ChapterPhase::Sanctum) => Some(StoryBeat::BellCryptOpened),
+        (ChapterId::HollowBastion, ChapterPhase::Ritual) => Some(StoryBeat::SoulFontDemand),
+        (ChapterId::HollowBastion, ChapterPhase::Boss) => Some(StoryBeat::MatronAwakened),
+        (ChapterId::HollowBastion, ChapterPhase::Victory) => Some(StoryBeat::BastionVictory),
     };
     if let Some(beat) = beat {
         record_story_beat(beat, story, combat_events);

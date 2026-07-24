@@ -7,6 +7,15 @@
 
 Original dark-fantasy ARPG prototype built with Bevy.
 
+## Campaign
+
+The playable campaign has two connected chapters:
+
+- **Chapter I: The Ashen Reliquary** culminates in Malrec, Keeper of Ash.
+- **Chapter II: The Hollow Bastion** adds the Hollowbound vanguard, Choir reliquary, Vesper the Bell Warden, the Soul Font, and Nyxara the Hollow Matron.
+
+Continuing from Chapter I carries the hero's level, equipment, inventory, talents, runes, codex, gems, armory, potion upgrades, and companion into Chapter II. Completing Chapter II advances the difficulty and begins the next campaign cycle.
+
 ## Running
 
 ```bash
@@ -46,7 +55,11 @@ The wasm build uses `--no-default-features --features webgpu`: the `native` feat
 
 WebGPU also can't run some of the native render stack, so these are `native`-only and the web build renders without them: PCSS soft shadows (its WGSL samples inside non-uniform control flow), the six extra `pbr_*` material textures (24 fragment samplers vs. WebGPU's 16 per-stage cap), and volumetric fog (produces a solid black frame — bisected via headless Chrome). Distance fog, atmosphere scattering, bloom, SMAA, SSAO, contact shadows, depth of field, vignette, and chromatic aberration all stay on.
 
-`.github/workflows/deploy-wasm-pages.yml` builds the bundle on every push and PR, publishes it as the rolling `web-latest` GitHub Release (or a `v*` tag release), and deploys that exact release artifact to GitHub Pages from the `gh-pages` branch.
+`.github/workflows/deploy-wasm-pages.yml` builds the bundle on every push and PR, publishes it as the rolling `web-latest` GitHub Release (or a `v*` tag release), and deploys that exact release artifact through the protected `github-pages` environment.
+The repository's Pages source is configured for **GitHub Actions** (not the legacy
+`gh-pages` branch), and that environment permits deployments only from `main` and
+`v*` tags. After deployment, CI cache-busts and SHA-256 compares the live HTML,
+JavaScript, compressed WASM, and a Chapter II model against the released ZIP.
 
 ## GitHub Publishing
 
@@ -94,19 +107,32 @@ Tag releases must match `Cargo.toml` `version`, i.e. `v<version>` (currently `v0
   - `web-dist.zip`
   - `web-dist.zip.sha256`
   - `web-release-manifest.csv`
-  - `release-asset-manifest.csv` (sha256+size summary for every release attachment, including web-native artifacts on tagged releases)
-  - `release-body.md` (auto-generated release notes used for GitHub release description)
+  - `release-asset-manifest.csv` (SHA-256 and size summary for every payload attachment, including native artifacts on tagged releases)
+  - `release-asset-manifest.csv.sha256` (detached checksum for the manifest itself)
   - native package checksums on tagged releases:
     - `bevy-open-arpg-<tag>-linux-x86_64.tar.gz.sha256`
     - `bevy-open-arpg-<tag>-windows-x86_64.zip.sha256`
     - `bevy-open-arpg-<tag>-macos-x86_64.tar.gz.sha256`
 
-The tarball contains:
+Each native archive extracts to a platform-named directory containing:
 
-`bevy-open-arpg` (Linux/macOS native binary)
+- `bevy-open-arpg` or `bevy-open-arpg.exe`
+- `assets/` with the runtime models, audio, and tuning data
 - `README.md`
 - `Cargo.toml`
 - `LICENSE`
+
+Release artifacts also receive GitHub build-provenance attestations. After downloading an
+asset, verify both its checksum and provenance:
+
+```bash
+gh release download v0.1.0 --pattern 'web-dist.zip*'
+sha256sum -c web-dist.zip.sha256
+
+gh release download v0.1.0 --pattern 'release-asset-manifest.csv*'
+sha256sum -c release-asset-manifest.csv.sha256
+gh attestation verify web-dist.zip --repo stars-labs/bevy-open-arpg
+```
 
 Create a normal version release by tagging and pushing:
 
@@ -136,6 +162,7 @@ Verify the release after workflow finish:
 gh release view v0.1.0
 gh run list --workflow deploy-wasm-pages.yml --limit 1 --repo stars-labs/bevy-open-arpg 
 gh run view <run-id> --repo stars-labs/bevy-open-arpg --json url,conclusion,status
+gh attestation verify web-dist.zip --repo stars-labs/bevy-open-arpg
 ```
 
 For preview-only CI smoke deploy:
@@ -165,9 +192,12 @@ cargo run -- --asset-mode=processed
 For CI or no-window smoke tests:
 
 ```bash
-BEVY_OPEN_ARPG_HEADLESS_SMOKE=1 BEVY_OPEN_ARPG_AUDIO=0 cargo run
-cargo run -- --headless-smoke --no-audio --smoke-frames=30
+BEVY_OPEN_ARPG_HEADLESS_SMOKE=1 cargo run
+cargo run -- --headless-smoke --smoke-frames=30
+cargo run -- --headless-smoke --smoke-chapter=2 --smoke-frames=120
 ```
+
+Headless mode always disables native audio and render-only debug plugins, regardless of saved preferences. `--smoke-chapter=1|2` enters that chapter and fails the process unless the game reaches `InGame` with exactly one player, making it suitable for CI gameplay startup checks.
 
 On Linux, Bevy Open ARPG defaults Bevy's renderer to a conservative WGPU compatibility profile to avoid driver-specific Vulkan startup stalls. If you need to override it while debugging, set:
 
@@ -340,7 +370,7 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Read the HUD chapter route tracker for Breach, Cache, Sanctum, Ritual, Keeper, and Cleansed progress, including mainline percentage, optional objective completion count, and Ashen Threat pressure.
 - Read the chapter quest log for a compact main quest, bounty, champion pack, Breaker, blood obelisk, and Ember Rift checklist in the HUD, pause guide, and victory recap.
 - Recover three lore pages and review them in the journal; finding every page completes the Lorekeeper challenge.
-- Follow a chapter story log that records arrival, seal recovery, sanctum breach, Seal Warden's fall, altar demand, optional cursed shrine, blood obelisk, vault, Ember Rift, Ashen Pylon echoes, Malrec's awakening, and the final cleanse in the HUD, journal strip, pause guide, save file, and victory recap.
+- Follow a chapter-aware story log that records the Ashen Reliquary mainline through Malrec and the Hollow Bastion mainline through Vesper, the Soul Font, and Nyxara, together with optional cursed shrine, blood obelisk, vault, Ember Rift, and Ashen Pylon beats in the HUD, journal strip, pause guide, save file, and victory recap.
 - Track defeated monster types and kill counts in the bestiary summary; next-goal hints, target panels, and bottom action prompts teach counterplay for shields, rushers, cultist fire, marksmen, Bonebreaker shockwaves, treasure imps, Malrec stagger/enrage, and nemesis affixes, repeated kills unlock small damage bonuses and one-time trophy rewards at 3, 8, and 15 kills for each known enemy type, and recording all eight chapter monster roles completes the Bestiary Scholar challenge.
 - Trade with the reliquary quartermaster to sell spare gear, salvage ember shards and legendary affix essence from high-quality spares, earn quartermaster caches after enough spare gear is broken down, open Malrec Trophy Caches with Soul Sigils, restock potions, upgrade potion and elixir belts, shorten potion cooldowns, expand inventory capacity, reforge stats, polish equipped charms, gamble mystery charms and weapons, awaken legendary weapons into ancient weapons, primal-infuse ancient weapons with Echo Keystones, ancient-augment socketed weapons with affix essence, empower Ascendant socketed gems into Paragon legendary gems with Echo Keystones, and enchant the equipped weapon with a legendary power unlocked in the codex; mystery weapons can also unlock missing codex powers, and upgrading stash, potion belt, and elixir belt completes the Quartermaster Patron challenge.
 - Unlock legendary powers in the codex by finding equipment with those powers, refine duplicate legendary-or-better codex drops into affix essence, attune one unlocked codex power as an extra passive legendary effect, follow its suggested Crimson/Titan/Arcane Boss Boon route, slay enemies with it to complete Codex Adept, then spend gold, ember shards, and affix essence to reuse unlocked powers through quartermaster enchanting; non-legendary weapons become legendary while ancient and primal weapons keep their quality, and repeated clears with every codex power unlocked complete the profile Codex Keeper deed.
@@ -359,6 +389,7 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Cycle skill runes for dash cleanse/reap, rupture expose/hemorrhage, and nova ember/frost variants; landing hits with Reap dash, Hemorrhage rupture, and Frost nova in one run completes Rune Weaver.
 - Chapter mobs now cover distinct combat roles: Ashbone Guards hold the line, Ashbone Stalkers rush and punish greed, Ashen Reliquary Marksmen pressure movement with long-range projectiles, Reliquary Bonebreakers telegraph heavy shockwaves, Cinder Acolytes ignite the player, and dash slash clears burning.
 - Combat, chapter objectives, and interactable sites use Blender-generated hero and enemy silhouettes, named hit bones, shrines, wells, rifts, pylons, lore pages, breakables, slash arcs, hit sparks, bone shatters, bone-impact bursts, blood sprays, execution blood seals, arcane impacts, holy impacts, ember impacts, frost impacts, void impacts, guard-clash sparks, armor-break shards, soul-ward hits, hit-bone runes, hit-bone locks, marrow flashes, fracture echoes, shadow bursts, headshot bursts, critical bone crowns, critical bursts, dash shadow trails, stagger bursts, objective sigils, ember vents, boss summoning seals, pulsing elite affix aura rings with colored threat lights, and high-value loot prisms for readable hit, movement, hazard, mainline, boss-break, exploration, elite-pressure, and death-reward feedback.
+- Regenerate the Hollow Bastion enemy, boss, Soul Font, and soul-fissure GLBs with Blender using `blender --background --python tools/blender/generate_hollow_bastion.py`.
 - Key reliquary sites, shrines, rifts, ember vents, and the boss summoning seal cast colored pulsing point lights so threats and rewards read clearly in the isometric dungeon.
 - Combat events play generated, gain-balanced audio cues for hits, criticals, loot, danger warnings, enemy deaths, victory, and defeat, with boss and clear cues mixed above common hit spam.
 - Hit feedback is placed at named hit-bone contact zones such as head, chest, weapon, left, and right so criticals, skeletons, guarded enemies, arcane elites, jailer/frozen enemies, vampiric or desecrator enemies, cultists, Seal Warden Vhal, and bosses read differently in motion.

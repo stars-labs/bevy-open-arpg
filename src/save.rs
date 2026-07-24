@@ -3,7 +3,7 @@ use crate::{
     bestiary::{Bestiary, BestiaryEntry},
     bounty::BountyProgress,
     challenge::{ChallengeProgress, ChapterChallenges},
-    chapter::{ChapterPhase, ChapterProgress, InteractableKind},
+    chapter::{ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind},
     companion::{CompanionBond, CompanionStance},
     dungeon::{Breakable, Interactable},
     feedback::CombatEvent,
@@ -47,6 +47,13 @@ impl PendingLoadGame {
         self.requested = false;
         requested
     }
+}
+
+pub fn prepare_load_request(pending: &mut PendingLoadGame, active_chapter: &mut ActiveChapter) {
+    if let Ok(save) = read_save(SAVE_PATH) {
+        active_chapter.0 = save.chapter.chapter;
+    }
+    pending.request();
 }
 
 fn default_fury_max() -> f32 {
@@ -346,6 +353,8 @@ struct SaveStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct SaveChapter {
+    #[serde(default)]
+    chapter: ChapterId,
     phase: ChapterPhase,
     objective: String,
     enemies_slain: u32,
@@ -369,6 +378,7 @@ impl Default for SaveChapter {
 impl From<&ChapterProgress> for SaveChapter {
     fn from(progress: &ChapterProgress) -> Self {
         Self {
+            chapter: progress.chapter_id(),
             phase: progress.phase,
             objective: progress.objective.clone(),
             enemies_slain: progress.enemies_slain,
@@ -690,6 +700,7 @@ type LoadResources<'w> = (
     ResMut<'w, DifficultySettings>,
     ResMut<'w, ChapterModifier>,
     ResMut<'w, ChapterProgress>,
+    ResMut<'w, ActiveChapter>,
     ResMut<'w, BountyProgress>,
     ResMut<'w, ChapterChallenges>,
     ResMut<'w, ChapterMastery>,
@@ -830,6 +841,7 @@ fn load_game(
         mut difficulty,
         mut modifier,
         mut chapter,
+        mut active_chapter,
         mut bounty,
         mut challenges,
         mut mastery,
@@ -848,6 +860,7 @@ fn load_game(
                 difficulty: &mut difficulty,
                 modifier: &mut modifier,
                 chapter: &mut chapter,
+                active_chapter: &mut active_chapter,
                 bounty: &mut bounty,
                 challenges: &mut challenges,
                 mastery: &mut mastery,
@@ -1244,6 +1257,7 @@ struct ApplyResources<'a> {
     difficulty: &'a mut DifficultySettings,
     modifier: &'a mut ChapterModifier,
     chapter: &'a mut ChapterProgress,
+    active_chapter: &'a mut ActiveChapter,
     bounty: &'a mut BountyProgress,
     challenges: &'a mut ChapterChallenges,
     mastery: &'a mut ChapterMastery,
@@ -1452,7 +1466,7 @@ fn apply_save(
     resources.difficulty.current = save.difficulty;
     resources.modifier.kind = save.modifier;
     resources.modifier.affix = save.modifier_affix;
-    apply_chapter_save(&save.chapter, resources.chapter);
+    apply_chapter_save(&save.chapter, resources.chapter, resources.active_chapter);
     *resources.bounty = save.bounty.clone();
     resources.challenges.restore(save.challenges.clone());
     *resources.mastery = save.mastery.clone();
@@ -1461,7 +1475,10 @@ fn apply_save(
     resources.bestiary.restore(save.bestiary.clone());
     *resources.obelisk = save.obelisk.clone();
     *resources.rift = save.rift.clone();
-    resources.story.restore(save.story.clone());
+    *resources.story = StoryLog::for_chapter(save.chapter.chapter);
+    if !save.story.is_empty() {
+        resources.story.restore(save.story.clone());
+    }
     apply_interactable_save(&save.interactables, queries.interactables);
     apply_breakable_save(&save.breakables, queries.breakables, queries.commands);
     transform.translation = Vec3::from_array(save.player.position);
@@ -1597,7 +1614,13 @@ fn apply_save(
     Ok(())
 }
 
-fn apply_chapter_save(save: &SaveChapter, chapter: &mut ChapterProgress) {
+fn apply_chapter_save(
+    save: &SaveChapter,
+    chapter: &mut ChapterProgress,
+    active_chapter: &mut ActiveChapter,
+) {
+    active_chapter.0 = save.chapter;
+    chapter.title = save.chapter.title().to_string();
     chapter.phase = save.phase;
     chapter.objective = save.objective.clone();
     chapter.enemies_slain = save.enemies_slain;
@@ -1883,6 +1906,7 @@ mod tests {
             modifier: ChapterModifierKind::BloodTithe,
             modifier_affix: OrdealAffix::AshenHunger,
             chapter: SaveChapter {
+                chapter: ChapterId::AshenReliquary,
                 phase: ChapterPhase::Boss,
                 objective: "Defeat Malrec, Keeper of Ash".to_string(),
                 enemies_slain: 6,
@@ -2469,6 +2493,7 @@ mod tests {
     #[test]
     fn legacy_chapter_saves_infer_reliquary_seal_progress() {
         let boss_save = SaveChapter {
+            chapter: ChapterId::AshenReliquary,
             phase: ChapterPhase::Boss,
             objective: "Defeat Malrec, Keeper of Ash".to_string(),
             enemies_slain: 6,
@@ -2482,13 +2507,15 @@ mod tests {
             interaction_hint: "Malrec has entered the reliquary".to_string(),
         };
         let mut chapter = ChapterProgress::default();
+        let mut active_chapter = ActiveChapter::default();
 
-        apply_chapter_save(&boss_save, &mut chapter);
+        apply_chapter_save(&boss_save, &mut chapter, &mut active_chapter);
 
         assert_eq!(
             chapter.seal_fragments,
             crate::chapter::REQUIRED_SEAL_FRAGMENTS
         );
+        assert_eq!(active_chapter.0, ChapterId::AshenReliquary);
 
         let ritual_save = SaveChapter {
             phase: ChapterPhase::Ritual,
@@ -2497,10 +2524,26 @@ mod tests {
             ..boss_save
         };
         let mut chapter = ChapterProgress::default();
+        let mut active_chapter = ActiveChapter::default();
 
-        apply_chapter_save(&ritual_save, &mut chapter);
+        apply_chapter_save(&ritual_save, &mut chapter, &mut active_chapter);
 
         assert_eq!(chapter.seal_fragments, 3);
+    }
+
+    #[test]
+    fn chapter_save_restores_hollow_bastion_identity() {
+        let source = ChapterProgress::for_chapter(ChapterId::HollowBastion);
+        let save = SaveChapter::from(&source);
+        let mut restored = ChapterProgress::default();
+        let mut active_chapter = ActiveChapter::default();
+
+        apply_chapter_save(&save, &mut restored, &mut active_chapter);
+
+        assert_eq!(save.chapter, ChapterId::HollowBastion);
+        assert_eq!(active_chapter.0, ChapterId::HollowBastion);
+        assert_eq!(restored.title, ChapterId::HollowBastion.title());
+        assert_eq!(restored.objective, source.objective);
     }
 
     #[test]

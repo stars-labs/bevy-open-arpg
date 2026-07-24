@@ -23,7 +23,7 @@ pub const RELIQUARY_BOON_MOMENTUM_THRESHOLD: u32 = 3;
 #[derive(Component)]
 pub struct Player;
 
-#[derive(Component)]
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Health {
     pub current: f32,
     pub max: f32,
@@ -171,6 +171,9 @@ const GAMEPAD_MOVE_DEAD_ZONE: f32 = 0.18;
 #[derive(Component)]
 pub struct PlayerWeaponVisual;
 
+#[derive(Component)]
+struct PlayerVisualRoot;
+
 #[derive(Debug, Clone, Copy, Component, Eq, PartialEq)]
 enum PlayerLimbKind {
     ShoulderMantle,
@@ -234,6 +237,7 @@ pub enum PlayerAttackMotion {
 #[derive(Component)]
 pub struct PlayerAnimation {
     walk_phase: f32,
+    locomotion_blend: f32,
     facing_yaw: f32,
     turn_lean: f32,
     attack_timer: Timer,
@@ -257,6 +261,7 @@ impl Default for PlayerAnimation {
         footstep_timer.set_elapsed(footstep_timer.duration());
         Self {
             walk_phase: 0.0,
+            locomotion_blend: 0.0,
             facing_yaw: 0.0,
             turn_lean: 0.0,
             attack_timer,
@@ -387,7 +392,7 @@ impl RuptureRune {
     }
 }
 
-#[derive(Component, Debug, Default)]
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct SkillRunes {
     pub dash: DashRune,
     pub nova: NovaRune,
@@ -464,7 +469,7 @@ impl ChapterBoon {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct DamageBonus(pub f32);
 
 #[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -527,7 +532,7 @@ impl Fury {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct Equipment {
     pub weapon_name: String,
     pub quality: String,
@@ -980,7 +985,7 @@ pub struct InventoryItem {
     pub slot: GearSlot,
 }
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct Inventory {
     pub items: Vec<InventoryItem>,
     pub capacity: usize,
@@ -1699,7 +1704,7 @@ fn apply_equipment_health_delta(health: &mut Health, old_bonus: f32, new_bonus: 
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct PlayerLevel {
     pub level: u32,
     pub xp: u32,
@@ -1732,7 +1737,7 @@ impl EmberParagon {
     }
 }
 
-#[derive(Component, Debug, Default)]
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct Talents {
     pub points: u32,
     pub wrath: u32,
@@ -2423,6 +2428,97 @@ pub fn socket_or_upgrade_gem(
 
 pub struct PlayerPlugin;
 
+#[derive(Resource, Default)]
+struct CampaignHeroCarryover {
+    hero: Option<CampaignHeroSnapshot>,
+}
+
+#[derive(Clone)]
+struct CampaignHeroSnapshot {
+    max_health: f32,
+    max_barrier: f32,
+    damage: DamageBonus,
+    equipment: Equipment,
+    inventory: Inventory,
+    level: PlayerLevel,
+    paragon: EmberParagon,
+    talents: Talents,
+    codex: LegendaryCodex,
+    charm: Charm,
+    runes: SkillRunes,
+    armory: Armory,
+    potion_max: u32,
+    potion_heal: f32,
+    elixir_max: u32,
+    selected_elixir: ElixirKind,
+    death_ward: DeathWard,
+    companion: CompanionBond,
+}
+
+type CampaignHeroCoreQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Health,
+        &'static Barrier,
+        &'static DamageBonus,
+        &'static Equipment,
+        &'static Inventory,
+        &'static PlayerLevel,
+        &'static EmberParagon,
+        &'static Talents,
+        &'static LegendaryCodex,
+    ),
+    With<Player>,
+>;
+
+type CampaignHeroBuildQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Charm,
+        &'static SkillRunes,
+        &'static Armory,
+        &'static PotionBelt,
+        &'static ElixirBelt,
+        &'static DeathWard,
+        &'static CompanionBond,
+    ),
+    With<Player>,
+>;
+
+type RestoreCampaignHeroCoreQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Health,
+        &'static mut Barrier,
+        &'static mut DamageBonus,
+        &'static mut Equipment,
+        &'static mut Inventory,
+        &'static mut PlayerLevel,
+        &'static mut EmberParagon,
+        &'static mut Talents,
+        &'static mut LegendaryCodex,
+    ),
+    With<Player>,
+>;
+
+type RestoreCampaignHeroBuildQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Charm,
+        &'static mut SkillRunes,
+        &'static mut Armory,
+        &'static mut PotionBelt,
+        &'static mut ElixirBelt,
+        &'static mut DeathWard,
+        &'static mut CompanionBond,
+    ),
+    With<Player>,
+>;
+
 type DeathCheckPlayerQuery<'w, 's> = Query<
     'w,
     's,
@@ -2447,16 +2543,27 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DeathWardReport>()
             .init_resource::<ClickMoveTarget>()
+            .init_resource::<CampaignHeroCarryover>()
             .add_systems(
                 OnEnter(GameState::InGame),
-                (reset_death_report, spawn_player, spawn_click_move_marker),
+                (
+                    reset_death_report,
+                    spawn_player,
+                    restore_campaign_hero,
+                    spawn_click_move_marker,
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
                 (
-                    (update_click_move_target, player_movement).chain(),
-                    update_click_move_marker,
-                    animate_player_visuals,
+                    (
+                        update_click_move_target,
+                        player_movement,
+                        update_click_move_marker,
+                        animate_player_visuals,
+                    )
+                        .chain(),
                     tick_player_motion_trails,
                     tick_cooldowns,
                     tick_relic_buff,
@@ -2512,16 +2619,118 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 OnExit(GameState::InGame),
                 (
+                    capture_campaign_hero,
                     despawn_player,
                     despawn_player_motion_trails,
                     despawn_click_move_marker,
-                ),
+                )
+                    .chain(),
             );
     }
 }
 
 fn reset_death_report(mut report: ResMut<DeathWardReport>) {
     *report = DeathWardReport::default();
+}
+
+fn capture_campaign_hero(
+    core: CampaignHeroCoreQuery,
+    build: CampaignHeroBuildQuery,
+    mut carryover: ResMut<CampaignHeroCarryover>,
+) {
+    let Ok((health, barrier, damage, equipment, inventory, level, paragon, talents, codex)) =
+        core.single()
+    else {
+        return;
+    };
+    let Ok((charm, runes, armory, potions, elixirs, death_ward, companion)) = build.single() else {
+        return;
+    };
+    carryover.hero = Some(CampaignHeroSnapshot {
+        max_health: health.max,
+        max_barrier: barrier.max,
+        damage: *damage,
+        equipment: equipment.clone(),
+        inventory: inventory.clone(),
+        level: level.clone(),
+        paragon: paragon.clone(),
+        talents: *talents,
+        codex: codex.clone(),
+        charm: charm.clone(),
+        runes: *runes,
+        armory: armory.clone(),
+        potion_max: potions.max,
+        potion_heal: potions.heal_amount,
+        elixir_max: elixirs.max,
+        selected_elixir: elixirs.selected,
+        death_ward: *death_ward,
+        companion: companion.clone(),
+    });
+}
+
+fn restore_campaign_hero(
+    carryover: Res<CampaignHeroCarryover>,
+    mut core: RestoreCampaignHeroCoreQuery,
+    mut build: RestoreCampaignHeroBuildQuery,
+) {
+    let Some(hero) = carryover.hero.as_ref() else {
+        return;
+    };
+    let Ok((
+        mut health,
+        mut barrier,
+        mut damage,
+        mut equipment,
+        mut inventory,
+        mut level,
+        mut paragon,
+        mut talents,
+        mut codex,
+    )) = core.single_mut()
+    else {
+        return;
+    };
+    let Ok((
+        mut charm,
+        mut runes,
+        mut armory,
+        mut potions,
+        mut elixirs,
+        mut death_ward,
+        mut companion,
+    )) = build.single_mut()
+    else {
+        return;
+    };
+
+    health.max = hero.max_health.max(1.0);
+    health.current = health.max;
+    barrier.max = hero.max_barrier.max(1.0);
+    barrier.current = 0.0;
+    *damage = hero.damage;
+    *equipment = hero.equipment.clone();
+    *inventory = hero.inventory.clone();
+    *level = hero.level.clone();
+    *paragon = hero.paragon.clone();
+    *talents = hero.talents;
+    *codex = hero.codex.clone();
+    *charm = hero.charm.clone();
+    *runes = hero.runes;
+    *armory = hero.armory.clone();
+    potions.max = hero.potion_max.max(1);
+    potions.current = potions.max;
+    potions.heal_amount = hero.potion_heal.max(1.0);
+    elixirs.max = hero.elixir_max.max(1);
+    elixirs.current = elixirs.max;
+    elixirs.selected = hero.selected_elixir;
+    *death_ward = DeathWard {
+        checkpoint: Vec3::new(0.0, 0.0, 4.0),
+        revives_used: 0,
+        max_revives: hero.death_ward.max_revives,
+        gold_penalty: hero.death_ward.gold_penalty,
+    };
+    *companion = hero.companion.clone();
+    companion.command_cooldown = 0.0;
 }
 
 fn spawn_click_move_marker(mut commands: Commands, assets: Res<GameAssets>) {
@@ -2576,8 +2785,8 @@ fn spawn_player(
 
     commands
         .spawn((
-            WorldAssetRoot(assets.hero.clone()),
             Transform::from_xyz(0.0, 0.0, 4.0).with_scale(Vec3::splat(1.0)),
+            Visibility::Inherited,
             Player,
             Health {
                 current: tuning.max_health,
@@ -2715,71 +2924,80 @@ fn spawn_player(
             Name::new("Reliquary Knight"),
         ))
         .with_children(|parent| {
-            for kind in [
-                PlayerLimbKind::ShoulderMantle,
-                PlayerLimbKind::LeftArm,
-                PlayerLimbKind::RightArm,
-                PlayerLimbKind::LeftLeg,
-                PlayerLimbKind::RightLeg,
-            ] {
-                let material = if matches!(kind, PlayerLimbKind::ShoulderMantle) {
-                    shoulder_material.clone()
-                } else {
-                    limb_material.clone()
-                };
-                let pose =
-                    player_limb_pose(kind, false, false, 0.0, PlayerAttackMotion::Basic, 1.0);
-                parent.spawn((
-                    Mesh3d(limb_mesh.clone()),
-                    MeshMaterial3d(material),
-                    Transform::from_translation(pose.translation)
-                        .with_rotation(pose.rotation)
-                        .with_scale(pose.scale),
-                    pose.visibility,
-                    PlayerLimbVisual { kind },
-                    Name::new(kind.label()),
-                ));
-            }
-            for side in [-1.0, 1.0] {
-                parent.spawn((
-                    WorldAssetRoot(assets.shadow_trail.clone()),
-                    Transform::from_xyz(side * 0.28, 0.035, -0.18)
-                        .with_scale(Vec3::new(0.28, 0.16, 0.20)),
-                    Visibility::Hidden,
-                    PlayerFootVisual { side },
-                    Name::new(if side < 0.0 {
-                        "Left Step Shadow"
-                    } else {
-                        "Right Step Shadow"
-                    }),
-                ));
-            }
-            parent.spawn((
-                WorldAssetRoot(assets.sword.clone()),
-                Transform::from_xyz(0.42, 0.92, 0.22)
-                    .with_rotation(
-                        Quat::from_rotation_x(-0.55)
-                            * Quat::from_rotation_y(0.2)
-                            * Quat::from_rotation_z(-0.85),
-                    )
-                    .with_scale(Vec3::splat(0.72)),
-                PlayerWeaponVisual,
-                Name::new("Equipped Sword"),
-            ));
-            parent.spawn((
-                WorldAssetRoot(assets.slash_arc.clone()),
-                Transform::from_xyz(0.0, 0.74, 0.82).with_scale(Vec3::splat(0.72)),
-                Visibility::Hidden,
-                PlayerAttackArcVisual,
-                Name::new("Player Slash Arc"),
-            ));
-            parent.spawn((
-                WorldAssetRoot(assets.hit_bone_lock.clone()),
-                Transform::from_xyz(0.0, 0.055, 0.42).with_scale(Vec3::splat(0.0)),
-                Visibility::Hidden,
-                PlayerAttackCommitVisual,
-                Name::new("Player Attack Commitment Ring"),
-            ));
+            parent
+                .spawn((
+                    WorldAssetRoot(assets.hero.clone()),
+                    Transform::default(),
+                    PlayerVisualRoot,
+                    Name::new("Reliquary Knight Visual"),
+                ))
+                .with_children(|visual| {
+                    for kind in [
+                        PlayerLimbKind::ShoulderMantle,
+                        PlayerLimbKind::LeftArm,
+                        PlayerLimbKind::RightArm,
+                        PlayerLimbKind::LeftLeg,
+                        PlayerLimbKind::RightLeg,
+                    ] {
+                        let material = if matches!(kind, PlayerLimbKind::ShoulderMantle) {
+                            shoulder_material.clone()
+                        } else {
+                            limb_material.clone()
+                        };
+                        let pose =
+                            player_limb_pose(kind, 0.0, false, 0.0, PlayerAttackMotion::Basic, 1.0);
+                        visual.spawn((
+                            Mesh3d(limb_mesh.clone()),
+                            MeshMaterial3d(material),
+                            Transform::from_translation(pose.translation)
+                                .with_rotation(pose.rotation)
+                                .with_scale(pose.scale),
+                            pose.visibility,
+                            PlayerLimbVisual { kind },
+                            Name::new(kind.label()),
+                        ));
+                    }
+                    for side in [-1.0, 1.0] {
+                        visual.spawn((
+                            WorldAssetRoot(assets.shadow_trail.clone()),
+                            Transform::from_xyz(side * 0.22, 0.025, -0.10)
+                                .with_scale(Vec3::new(0.18, 0.08, 0.28)),
+                            Visibility::Hidden,
+                            PlayerFootVisual { side },
+                            Name::new(if side < 0.0 {
+                                "Left Step Shadow"
+                            } else {
+                                "Right Step Shadow"
+                            }),
+                        ));
+                    }
+                    visual.spawn((
+                        WorldAssetRoot(assets.sword.clone()),
+                        Transform::from_xyz(0.42, 0.92, 0.22)
+                            .with_rotation(
+                                Quat::from_rotation_x(-0.55)
+                                    * Quat::from_rotation_y(0.2)
+                                    * Quat::from_rotation_z(-0.85),
+                            )
+                            .with_scale(Vec3::splat(0.72)),
+                        PlayerWeaponVisual,
+                        Name::new("Equipped Sword"),
+                    ));
+                    visual.spawn((
+                        WorldAssetRoot(assets.slash_arc.clone()),
+                        Transform::from_xyz(0.0, 0.74, 0.82).with_scale(Vec3::splat(0.72)),
+                        Visibility::Hidden,
+                        PlayerAttackArcVisual,
+                        Name::new("Player Slash Arc"),
+                    ));
+                    visual.spawn((
+                        WorldAssetRoot(assets.hit_bone_lock.clone()),
+                        Transform::from_xyz(0.0, 0.055, 0.42).with_scale(Vec3::splat(0.0)),
+                        Visibility::Hidden,
+                        PlayerAttackCommitVisual,
+                        Name::new("Player Attack Commitment Ring"),
+                    ));
+                });
         });
 }
 
@@ -3635,18 +3853,33 @@ type PlayerVisualPlayerQuery<'w, 's> = Query<
     's,
     (
         Entity,
+        &'static Transform,
         &'static Velocity,
         &'static Evade,
         Option<&'static mut PlayerHitReact>,
         &'static mut PlayerAnimation,
-        &'static mut Transform,
     ),
     With<Player>,
+>;
+type PlayerVisualRootQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Transform,
+    (
+        With<PlayerVisualRoot>,
+        Without<Player>,
+        Without<PlayerWeaponVisual>,
+        Without<PlayerLimbVisual>,
+        Without<PlayerFootVisual>,
+        Without<PlayerAttackArcVisual>,
+        Without<PlayerAttackCommitVisual>,
+    ),
 >;
 
 #[derive(SystemParam)]
 struct PlayerVisualQueries<'w, 's> {
     player: PlayerVisualPlayerQuery<'w, 's>,
+    roots: PlayerVisualRootQuery<'w, 's>,
     weapons: Query<'w, 's, &'static mut Transform, (With<PlayerWeaponVisual>, Without<Player>)>,
     limbs: PlayerLimbVisualQuery<'w, 's>,
     feet: PlayerFootVisualQuery<'w, 's>,
@@ -3744,7 +3977,7 @@ fn player_turn_response(
     let yaw_step = delta.clamp(-max_step, max_step);
     PlayerTurnResponse {
         facing_yaw: current_yaw + yaw_step,
-        turn_lean: (yaw_step / delta_secs * 0.045).clamp(-0.46, 0.46),
+        turn_lean: (yaw_step / delta_secs * 0.016).clamp(-0.16, 0.16),
     }
 }
 
@@ -3752,9 +3985,20 @@ fn decay_player_turn_lean(turn_lean: f32, delta_secs: f32) -> f32 {
     if delta_secs <= 0.0 {
         return turn_lean;
     }
-    let decay = (1.0 - delta_secs * 10.0).clamp(0.0, 1.0);
+    let decay = (-10.0 * delta_secs).exp();
     let leaned = turn_lean * decay;
     if leaned.abs() < 0.001 { 0.0 } else { leaned }
+}
+
+fn player_locomotion_blend(current: f32, moving: bool, delta_secs: f32) -> f32 {
+    let current = current.clamp(0.0, 1.0);
+    if delta_secs <= 0.0 {
+        return current;
+    }
+    let target = if moving { 1.0 } else { 0.0 };
+    let response = if moving { 14.0 } else { 10.0 };
+    let alpha = 1.0 - (-response * delta_secs).exp();
+    (current + (target - current) * alpha).clamp(0.0, 1.0)
 }
 
 fn shortest_yaw_delta(current_yaw: f32, target_yaw: f32) -> f32 {
@@ -3957,7 +4201,7 @@ fn animate_player_visuals(
     mut commands: Commands,
     mut visuals: PlayerVisualQueries,
 ) {
-    let Ok((player_entity, velocity, evade, hit_react, mut animation, mut transform)) =
+    let Ok((player_entity, player_transform, velocity, evade, hit_react, mut animation)) =
         visuals.player.single_mut()
     else {
         return;
@@ -3971,10 +4215,11 @@ fn animate_player_visuals(
     let moving = velocity.0.length_squared() > 0.01;
     let speed = velocity.0.length();
     let evading = evade_seconds_remaining(evade) > 0.0;
+    animation.locomotion_blend =
+        player_locomotion_blend(animation.locomotion_blend, moving, time.delta_secs());
     if moving {
-        animation.walk_phase += time.delta_secs() * (9.0 + speed * 0.85);
-    } else {
-        animation.walk_phase *= 0.76;
+        animation.walk_phase = (animation.walk_phase + time.delta_secs() * (7.2 + speed * 0.62))
+            .rem_euclid(std::f32::consts::TAU);
     }
 
     let attack_progress = if animation.attack_timer.is_finished() {
@@ -3982,18 +4227,10 @@ fn animate_player_visuals(
     } else {
         (animation.attack_timer.elapsed_secs() / animation.attack_duration_secs).clamp(0.0, 1.0)
     };
-    let walk_sway = if moving {
-        animation.walk_phase.sin()
-    } else {
-        0.0
-    };
-    let walk_step = if moving {
-        animation.walk_phase.cos()
-    } else {
-        0.0
-    };
+    let walk_sway = animation.walk_phase.sin();
+    let walk_step = animation.walk_phase.cos();
     let mut pose = player_visual_pose_with_hit_react(
-        moving,
+        animation.locomotion_blend,
         evading,
         walk_sway,
         walk_step,
@@ -4004,11 +4241,14 @@ fn animate_player_visuals(
     pose = player_visual_pose_with_turn_lean(pose, animation.turn_lean, evading);
     let attack_arc_pose = player_attack_arc_pose(animation.attack_motion, attack_progress);
 
-    transform.translation.y = pose.body_y;
-    transform.rotation = Quat::from_rotation_y(animation.facing_yaw + pose.body_yaw)
+    let Ok(mut visual_root) = visuals.roots.single_mut() else {
+        return;
+    };
+    visual_root.translation = Vec3::Y * pose.body_y;
+    visual_root.rotation = Quat::from_rotation_y(animation.facing_yaw + pose.body_yaw)
         * Quat::from_rotation_x(pose.body_pitch)
         * Quat::from_rotation_z(pose.body_roll);
-    transform.scale = pose.body_scale;
+    visual_root.scale = pose.body_scale;
 
     if let Some(interval_secs) = motion_trail_interval(speed, evading)
         && animation.motion_trail_timer.is_finished()
@@ -4016,7 +4256,7 @@ fn animate_player_visuals(
         spawn_player_motion_trail(
             &mut commands,
             assets.shadow_trail.clone(),
-            transform.translation,
+            player_transform.translation,
             animation.facing_yaw,
             motion_trail_scale(speed, evading),
         );
@@ -4031,7 +4271,7 @@ fn animate_player_visuals(
         spawn_player_footstep_mark(
             &mut commands,
             assets.shadow_trail.clone(),
-            transform.translation,
+            player_transform.translation,
             animation.facing_yaw,
             animation.next_footstep_side,
             footstep_scale(speed, evading),
@@ -4050,7 +4290,7 @@ fn animate_player_visuals(
         spawn_player_attack_trail(
             &mut commands,
             player_attack_vfx_handle(&assets, player_attack_arc_vfx(animation.attack_motion)),
-            transform.translation,
+            player_transform.translation,
             animation.facing_yaw,
             animation.attack_motion,
             arc_pose,
@@ -4073,7 +4313,7 @@ fn animate_player_visuals(
     for (limb, mut limb_transform, mut visibility) in &mut visuals.limbs {
         let limb_pose = player_limb_pose(
             limb.kind,
-            moving,
+            animation.locomotion_blend,
             evading,
             animation.walk_phase,
             animation.attack_motion,
@@ -4086,7 +4326,12 @@ fn animate_player_visuals(
     }
 
     for (foot, mut foot_transform, mut visibility) in &mut visuals.feet {
-        let foot_pose = player_foot_pose(foot.side, moving, evading, animation.walk_phase);
+        let foot_pose = player_foot_pose(
+            foot.side,
+            animation.locomotion_blend,
+            evading,
+            animation.walk_phase,
+        );
         foot_transform.translation = foot_pose.translation;
         foot_transform.scale = foot_pose.scale;
         *visibility = foot_pose.visibility;
@@ -4144,7 +4389,7 @@ struct PlayerLimbPose {
 
 fn player_limb_pose(
     kind: PlayerLimbKind,
-    moving: bool,
+    locomotion: f32,
     evading: bool,
     walk_phase: f32,
     attack_motion: PlayerAttackMotion,
@@ -4152,14 +4397,10 @@ fn player_limb_pose(
 ) -> PlayerLimbPose {
     let side = kind.side();
     let attacking = attack_progress < 1.0;
-    let locomotion = if moving { 1.0 } else { 0.0 };
+    let locomotion = locomotion.clamp(0.0, 1.0);
     let evade_drive = if evading { 1.0 } else { 0.0 };
-    let stride = if moving {
-        (walk_phase + side * std::f32::consts::FRAC_PI_2).sin()
-    } else {
-        0.0
-    };
-    let counter_stride = if moving { walk_phase.sin() } else { 0.0 };
+    let stride = (walk_phase + side * std::f32::consts::FRAC_PI_2).sin() * locomotion;
+    let counter_stride = walk_phase.sin() * locomotion;
     let (attack_arc, attack_drive) = if attacking {
         player_attack_motion_weights(attack_motion, attack_progress)
     } else {
@@ -4181,11 +4422,11 @@ fn player_limb_pose(
         PlayerLimbKind::ShoulderMantle => {
             let shoulder_twist = attack_arc * profile.body_yaw * 0.75
                 + attack_drive * profile.body_drive_yaw * 0.45
-                + locomotion * counter_stride * 0.14;
+                + counter_stride * 0.045;
             PlayerLimbPose {
                 translation: Vec3::new(0.0, 1.09 + attack_arc * 0.08, 0.03),
                 rotation: Quat::from_rotation_y(shoulder_twist)
-                    * Quat::from_rotation_z(-locomotion * counter_stride * 0.14),
+                    * Quat::from_rotation_z(-counter_stride * 0.045),
                 scale: Vec3::new(1.02 + attack_drive * 0.12, 0.15, 0.34),
                 visibility: Visibility::Visible,
             }
@@ -4195,13 +4436,13 @@ fn player_limb_pose(
                 0.58 + attack_arc * profile.weapon_x * 0.82 - windup * 0.26 + evade_drive * 0.11,
                 0.84 + attack_arc * profile.weapon_y * 0.46 + impact_snap * 0.18,
                 0.26 + attack_drive * profile.weapon_z * 0.76 - windup * 0.46
-                    + locomotion * stride * 0.34
+                    + stride * 0.14
                     + evade_drive * 0.24,
             ),
             rotation: Quat::from_rotation_x(
                 -0.34 - attack_drive * (1.10 + profile.weapon_pitch.abs() * 0.38)
                     + windup * 0.58
-                    + locomotion * stride * 0.54,
+                    + stride * 0.28,
             ) * Quat::from_rotation_y(0.24 + attack_drive * profile.weapon_yaw * 0.66)
                 * Quat::from_rotation_z(-0.42 - attack_arc * 0.46 + impact_snap * 0.62),
             scale: Vec3::new(
@@ -4220,11 +4461,10 @@ fn player_limb_pose(
             translation: Vec3::new(
                 -0.54 - attack_arc * 0.18,
                 0.80 + attack_arc * 0.07,
-                0.06 - attack_drive * 0.22 - locomotion * stride * 0.36 + evade_drive * 0.14,
+                0.06 - attack_drive * 0.22 - stride * 0.15 + evade_drive * 0.14,
             ),
-            rotation: Quat::from_rotation_x(
-                -0.18 + attack_drive * 0.62 - locomotion * stride * 0.78,
-            ) * Quat::from_rotation_y(-0.28 - attack_arc * 0.28)
+            rotation: Quat::from_rotation_x(-0.18 + attack_drive * 0.62 - stride * 0.34)
+                * Quat::from_rotation_y(-0.28 - attack_arc * 0.28)
                 * Quat::from_rotation_z(0.34 + attack_arc * 0.38),
             scale: Vec3::new(0.18, 0.54 + attack_arc * 0.08, 0.16),
             visibility: Visibility::Visible,
@@ -4234,16 +4474,16 @@ fn player_limb_pose(
             let lift = (-stride).max(0.0);
             PlayerLimbPose {
                 translation: Vec3::new(
-                    side * (0.30 + plant * 0.08 + evade_drive * 0.06),
-                    0.42 + lift * 0.28 + evade_drive * 0.04,
-                    -0.05 + stride * 0.96 + evade_drive * 0.20,
+                    side * (0.30 + plant * 0.025 + evade_drive * 0.06),
+                    0.42 + lift * 0.11 + evade_drive * 0.04,
+                    -0.05 + stride * 0.34 + evade_drive * 0.20,
                 ),
-                rotation: Quat::from_rotation_x(stride * 1.48 - evade_drive * 0.24)
-                    * Quat::from_rotation_z(side * (0.08 + plant * 0.28)),
+                rotation: Quat::from_rotation_x(stride * 0.48 - evade_drive * 0.24)
+                    * Quat::from_rotation_z(side * (0.08 + plant * 0.10)),
                 scale: Vec3::new(
                     0.20 + evade_drive * 0.03,
-                    0.66 + lift * 0.26,
-                    0.22 + plant * 0.14,
+                    0.66 + lift * 0.05,
+                    0.22 + plant * 0.04,
                 ),
                 visibility: Visibility::Visible,
             }
@@ -4251,27 +4491,24 @@ fn player_limb_pose(
     }
 }
 
-fn player_foot_pose(side: f32, moving: bool, evading: bool, walk_phase: f32) -> PlayerFootPose {
-    let stride = if moving {
-        (walk_phase + side * std::f32::consts::FRAC_PI_2).sin()
-    } else {
-        0.0
-    };
-    let plant = if moving { stride.max(0.0) } else { 0.0 };
-    let lift = if moving { (-stride).max(0.0) } else { 0.0 };
+fn player_foot_pose(side: f32, locomotion: f32, evading: bool, walk_phase: f32) -> PlayerFootPose {
+    let locomotion = locomotion.clamp(0.0, 1.0);
+    let stride = (walk_phase + side * std::f32::consts::FRAC_PI_2).sin() * locomotion;
+    let plant = stride.max(0.0);
+    let lift = (-stride).max(0.0);
     let evade_drive = if evading { 1.0 } else { 0.0 };
     PlayerFootPose {
         translation: Vec3::new(
-            side * (0.58 + plant * 0.34 + lift * 0.16 + evade_drive * 0.22),
-            0.032 + lift * 0.48 + evade_drive * 0.04,
-            -0.12 + stride * 1.82 + evade_drive * 0.52,
+            side * (0.24 + plant * 0.05 + lift * 0.02 + evade_drive * 0.10),
+            0.025 + lift * 0.07 + evade_drive * 0.025,
+            -0.10 + stride * 0.36 + evade_drive * 0.30,
         ),
         scale: Vec3::new(
-            0.48 + plant * 0.68 + lift * 0.18 + evade_drive * 0.26,
-            0.13,
-            0.44 + plant * 1.52 + lift * 0.42 + evade_drive * 1.62,
+            0.18 + plant * 0.08 + lift * 0.03 + evade_drive * 0.12,
+            0.08,
+            0.28 + plant * 0.22 + lift * 0.06 + evade_drive * 0.62,
         ),
-        visibility: if moving || evading {
+        visibility: if locomotion > 0.02 || evading {
             Visibility::Visible
         } else {
             Visibility::Hidden
@@ -4417,7 +4654,7 @@ fn player_attack_commit_pose(
 }
 
 fn player_visual_pose(
-    moving: bool,
+    locomotion: f32,
     evading: bool,
     walk_sway: f32,
     walk_step: f32,
@@ -4430,12 +4667,12 @@ fn player_visual_pose(
     } else {
         (0.0, 0.0)
     };
-    let locomotion = if moving { 1.0 } else { 0.0 };
+    let locomotion = locomotion.clamp(0.0, 1.0);
     let evade_drive = if evading { 1.0 } else { 0.0 };
     let profile = player_attack_motion_profile(attack_motion, attack_progress);
-    let bob = locomotion * walk_sway.abs() * 0.64 + evade_drive * 0.10;
-    let stride_pitch = locomotion * (-0.66 - evade_drive * 0.20);
-    let stride_roll = locomotion * walk_step * 0.96;
+    let bob = locomotion * walk_sway.abs() * 0.08 + evade_drive * 0.06;
+    let stride_pitch = locomotion * (-0.12 - evade_drive * 0.14);
+    let stride_roll = locomotion * walk_step * 0.055;
     let attack_pitch = profile.body_pitch * attack_arc + profile.body_drive_pitch * attack_drive;
     let attack_yaw = profile.body_yaw * attack_arc + profile.body_drive_yaw * attack_drive;
     let attack_roll = profile.body_roll * attack_arc;
@@ -4462,26 +4699,26 @@ fn player_visual_pose(
 
     PlayerVisualPose {
         body_y: bob + attack_arc * profile.body_lift,
-        body_yaw: locomotion * walk_sway * 0.16 + attack_yaw,
+        body_yaw: locomotion * walk_sway * 0.025 + attack_yaw,
         body_pitch: stride_pitch + attack_pitch,
         body_roll: stride_roll + attack_roll,
         body_scale,
         weapon_translation: Vec3::new(
             0.50 + attack_arc * profile.weapon_x - windup * profile.weapon_windup_x
-                + locomotion * walk_step * 0.26
-                + evade_drive * 0.18,
+                + locomotion * walk_step * 0.04
+                + evade_drive * 0.12,
             0.94 + attack_arc * profile.weapon_y
-                + locomotion * walk_sway.abs() * 0.30
-                + locomotion * walk_step.abs() * 0.08,
+                + locomotion * walk_sway.abs() * 0.05
+                + locomotion * walk_step.abs() * 0.02,
             0.23 + attack_drive * profile.weapon_z - windup * profile.weapon_windup_z
                 + impact_snap * profile.weapon_impact_z
-                + locomotion * walk_sway * 0.46
-                + evade_drive * 0.26,
+                + locomotion * walk_sway * 0.07
+                + evade_drive * 0.18,
         ),
-        weapon_scale: Vec3::splat(0.92 + attack_drive * 0.54 + evade_drive * 0.12),
+        weapon_scale: Vec3::splat(0.92 + attack_drive * 0.54 + evade_drive * 0.08),
         weapon_pitch: -0.58 + attack_arc * profile.weapon_pitch,
-        weapon_yaw: 0.22 + attack_drive * profile.weapon_yaw + locomotion * walk_step * 0.34,
-        weapon_roll: -0.95 + sweep + locomotion * walk_step * 0.62,
+        weapon_yaw: 0.22 + attack_drive * profile.weapon_yaw + locomotion * walk_step * 0.05,
+        weapon_roll: -0.95 + sweep + locomotion * walk_step * 0.08,
     }
 }
 
@@ -4513,7 +4750,7 @@ fn update_player_hit_react(
 }
 
 fn player_visual_pose_with_hit_react(
-    moving: bool,
+    locomotion: f32,
     evading: bool,
     walk_sway: f32,
     walk_step: f32,
@@ -4522,7 +4759,7 @@ fn player_visual_pose_with_hit_react(
     hit_react: Option<PlayerHitReactPose>,
 ) -> PlayerVisualPose {
     let mut pose = player_visual_pose(
-        moving,
+        locomotion,
         evading,
         walk_sway,
         walk_step,
@@ -4548,13 +4785,13 @@ fn player_visual_pose_with_turn_lean(
     evading: bool,
 ) -> PlayerVisualPose {
     let evade_weight = if evading { 1.25 } else { 1.0 };
-    let lean = turn_lean.clamp(-0.50, 0.50) * evade_weight;
-    pose.body_yaw += -lean * 0.18;
-    pose.body_roll += lean;
-    pose.body_pitch += -lean.abs() * 0.12;
-    pose.weapon_translation.x += lean * 0.22;
-    pose.weapon_translation.z += lean.abs() * 0.10;
-    pose.weapon_roll += lean * 0.82;
+    let lean = turn_lean.clamp(-0.18, 0.18) * evade_weight;
+    pose.body_yaw += -lean * 0.10;
+    pose.body_roll += lean * 0.65;
+    pose.body_pitch += -lean.abs() * 0.08;
+    pose.weapon_translation.x += lean * 0.12;
+    pose.weapon_translation.z += lean.abs() * 0.06;
+    pose.weapon_roll += lean * 0.45;
     pose
 }
 
@@ -5643,6 +5880,281 @@ fn tick_burning(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::schedule::ScheduleLabel;
+
+    #[derive(ScheduleLabel, Debug, Hash, PartialEq, Eq, Clone)]
+    struct CaptureCampaignHeroTest;
+
+    #[derive(ScheduleLabel, Debug, Hash, PartialEq, Eq, Clone)]
+    struct RestoreCampaignHeroTest;
+
+    #[test]
+    fn campaign_hero_survives_chapter_transition_with_transient_state_reset() {
+        let weapon = InventoryItem {
+            name: "Hollowbane".to_string(),
+            quality: "legendary".to_string(),
+            damage_bonus: 24.0,
+            crit_chance: 0.18,
+            health_bonus: 36.0,
+            armor_bonus: 22.0,
+            legendary_power: LegendaryPower::Soulreaver,
+            temper_level: 3,
+            socketed_gem: Some(SocketedGem {
+                kind: GemKind::Amethyst,
+                rank: 4,
+            }),
+            slot: GearSlot::Weapon,
+        };
+        let equipment = Equipment {
+            weapon_name: weapon.name.clone(),
+            quality: weapon.quality.clone(),
+            crit_chance: weapon.crit_chance,
+            health_bonus: weapon.health_bonus,
+            armor_bonus: weapon.armor_bonus,
+            legendary_power: weapon.legendary_power,
+            temper_level: weapon.temper_level,
+            socketed_gem: weapon.socketed_gem,
+            worn: Equipment::empty_worn(),
+        };
+        let inventory = Inventory {
+            items: vec![weapon],
+            capacity: 18,
+        };
+        let level = PlayerLevel {
+            level: 6,
+            xp: 42,
+            next_level_xp: 180,
+        };
+        let paragon = EmberParagon {
+            rank: 3,
+            xp: 90,
+            next_rank_xp: 220,
+        };
+        let talents = Talents {
+            points: 1,
+            wrath: 5,
+            vigor: 4,
+            focus: 3,
+        };
+        let codex = LegendaryCodex {
+            unlocked: vec![LegendaryPower::Soulreaver, LegendaryPower::Stormbrand],
+            attuned: LegendaryPower::Soulreaver,
+        };
+        let charm = Charm {
+            name: "Choir Seal".to_string(),
+            quality: "ancient".to_string(),
+            damage_bonus: 8.0,
+            crit_chance: 0.06,
+        };
+        let runes = SkillRunes {
+            dash: DashRune::Reap,
+            nova: NovaRune::Frost,
+            rupture: RuptureRune::Hemorrhage,
+        };
+        let armory = Armory {
+            active_slot: 2,
+            ..default()
+        };
+        let death_ward = DeathWard {
+            checkpoint: Vec3::new(14.0, 0.0, -9.0),
+            revives_used: 1,
+            max_revives: 4,
+            gold_penalty: 95,
+        };
+        let companion = CompanionBond {
+            rank: 5,
+            xp: 77,
+            next_rank_xp: 160,
+            stance: crate::companion::CompanionStance::Seeker,
+            command_cooldown: 6.5,
+        };
+
+        let mut app = App::new();
+        app.init_resource::<CampaignHeroCarryover>()
+            .add_schedule(Schedule::new(CaptureCampaignHeroTest))
+            .add_schedule(Schedule::new(RestoreCampaignHeroTest))
+            .add_systems(CaptureCampaignHeroTest, capture_campaign_hero)
+            .add_systems(RestoreCampaignHeroTest, restore_campaign_hero);
+
+        let source = app
+            .world_mut()
+            .spawn((
+                Player,
+                Health {
+                    current: 17.0,
+                    max: 240.0,
+                },
+                Barrier {
+                    current: 31.0,
+                    max: 88.0,
+                },
+                DamageBonus(24.0),
+                equipment.clone(),
+                inventory.clone(),
+                level.clone(),
+                paragon.clone(),
+            ))
+            .insert((
+                talents,
+                codex.clone(),
+                charm.clone(),
+                runes,
+                armory.clone(),
+                PotionBelt {
+                    current: 1,
+                    max: 7,
+                    heal_amount: 82.0,
+                    cooldown: Timer::from_seconds(2.0, TimerMode::Once),
+                    cooldown_secs: 6.0,
+                },
+                ElixirBelt {
+                    current: 0,
+                    max: 4,
+                    armor_bonus: 35.0,
+                    duration_secs: 22.0,
+                    selected: ElixirKind::Haste,
+                },
+                death_ward,
+                companion.clone(),
+            ))
+            .id();
+
+        app.world_mut().run_schedule(CaptureCampaignHeroTest);
+        assert!(app.world_mut().despawn(source));
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Player,
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+                Barrier {
+                    current: 12.0,
+                    max: 35.0,
+                },
+                DamageBonus(0.0),
+                Equipment {
+                    weapon_name: "Initiate Blade".to_string(),
+                    quality: "common".to_string(),
+                    crit_chance: 0.03,
+                    health_bonus: 0.0,
+                    armor_bonus: 0.0,
+                    legendary_power: LegendaryPower::None,
+                    temper_level: 0,
+                    socketed_gem: None,
+                    worn: Equipment::empty_worn(),
+                },
+                Inventory {
+                    items: Vec::new(),
+                    capacity: 12,
+                },
+                PlayerLevel {
+                    level: 1,
+                    xp: 0,
+                    next_level_xp: 60,
+                },
+                EmberParagon::default(),
+            ))
+            .insert((
+                Talents::default(),
+                LegendaryCodex::default(),
+                Charm::default(),
+                SkillRunes::default(),
+                Armory::default(),
+                PotionBelt {
+                    current: 2,
+                    max: 5,
+                    heal_amount: 45.0,
+                    cooldown: Timer::from_seconds(0.0, TimerMode::Once),
+                    cooldown_secs: 7.0,
+                },
+                ElixirBelt {
+                    current: 1,
+                    max: 3,
+                    armor_bonus: 35.0,
+                    duration_secs: 22.0,
+                    selected: ElixirKind::Iron,
+                },
+                DeathWard {
+                    checkpoint: Vec3::ZERO,
+                    revives_used: 0,
+                    max_revives: 2,
+                    gold_penalty: 60,
+                },
+                CompanionBond::default(),
+            ))
+            .id();
+
+        app.world_mut().run_schedule(RestoreCampaignHeroTest);
+
+        let world = app.world();
+        assert_eq!(
+            *world.get::<Health>(target).unwrap(),
+            Health {
+                current: 240.0,
+                max: 240.0,
+            }
+        );
+        assert_eq!(
+            *world.get::<Barrier>(target).unwrap(),
+            Barrier {
+                current: 0.0,
+                max: 88.0,
+            }
+        );
+        assert_eq!(
+            *world.get::<DamageBonus>(target).unwrap(),
+            DamageBonus(24.0)
+        );
+        assert_eq!(world.get::<Equipment>(target).unwrap(), &equipment);
+        assert_eq!(world.get::<Inventory>(target).unwrap(), &inventory);
+        assert_eq!(world.get::<PlayerLevel>(target).unwrap(), &level);
+        assert_eq!(world.get::<EmberParagon>(target).unwrap(), &paragon);
+        assert_eq!(*world.get::<Talents>(target).unwrap(), talents);
+        assert_eq!(world.get::<LegendaryCodex>(target).unwrap(), &codex);
+        assert_eq!(world.get::<Charm>(target).unwrap(), &charm);
+        assert_eq!(*world.get::<SkillRunes>(target).unwrap(), runes);
+        assert_eq!(world.get::<Armory>(target).unwrap(), &armory);
+
+        let potions = world.get::<PotionBelt>(target).unwrap();
+        assert_eq!(
+            (potions.current, potions.max, potions.heal_amount),
+            (7, 7, 82.0)
+        );
+        let elixirs = world.get::<ElixirBelt>(target).unwrap();
+        assert_eq!(
+            (elixirs.current, elixirs.max, elixirs.selected),
+            (4, 4, ElixirKind::Haste)
+        );
+        assert_eq!(
+            *world.get::<DeathWard>(target).unwrap(),
+            DeathWard {
+                checkpoint: Vec3::new(0.0, 0.0, 4.0),
+                revives_used: 0,
+                max_revives: death_ward.max_revives,
+                gold_penalty: death_ward.gold_penalty,
+            }
+        );
+        let restored_companion = world.get::<CompanionBond>(target).unwrap();
+        assert_eq!(
+            (
+                restored_companion.rank,
+                restored_companion.xp,
+                restored_companion.next_rank_xp,
+                restored_companion.stance,
+                restored_companion.command_cooldown,
+            ),
+            (
+                companion.rank,
+                companion.xp,
+                companion.next_rank_xp,
+                companion.stance,
+                0.0,
+            )
+        );
+    }
 
     #[test]
     fn relic_buff_multiplier_expires() {
@@ -6913,15 +7425,17 @@ mod tests {
 
     #[test]
     fn player_visual_pose_makes_walk_and_evade_readable() {
-        let idle = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
-        let walking = player_visual_pose(true, false, 1.0, 0.5, PlayerAttackMotion::Basic, 1.0);
-        let evading = player_visual_pose(true, true, 1.0, 0.5, PlayerAttackMotion::Basic, 1.0);
+        let idle = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
+        let walking = player_visual_pose(1.0, false, 1.0, 0.5, PlayerAttackMotion::Basic, 1.0);
+        let evading = player_visual_pose(1.0, true, 1.0, 0.5, PlayerAttackMotion::Basic, 1.0);
 
-        assert!(walking.body_y > idle.body_y + 0.14);
-        assert!(walking.body_yaw.abs() > idle.body_yaw.abs() + 0.12);
-        assert!(walking.body_pitch < idle.body_pitch - 0.30);
-        assert!(walking.body_roll.abs() > idle.body_roll.abs() + 0.20);
-        assert!(walking.weapon_translation.z > idle.weapon_translation.z + 0.12);
+        assert!(walking.body_y > idle.body_y + 0.06);
+        assert!(walking.body_y < idle.body_y + 0.10);
+        assert!(walking.body_yaw.abs() < 0.04);
+        assert!(walking.body_pitch < idle.body_pitch - 0.08);
+        assert!(walking.body_pitch > idle.body_pitch - 0.16);
+        assert!(walking.body_roll.abs() < 0.04);
+        assert!(walking.weapon_translation.z > idle.weapon_translation.z + 0.06);
         assert!(evading.body_pitch < walking.body_pitch);
         assert!(evading.weapon_translation.z > walking.weapon_translation.z);
         assert!(evading.weapon_scale.x > walking.weapon_scale.x);
@@ -6946,12 +7460,12 @@ mod tests {
         assert_eq!(player_hit_react_kind(ward), PlayerHitReactKind::Ward);
         assert_eq!(player_hit_react_kind(evade), PlayerHitReactKind::Evade);
 
-        let base = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
+        let base = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
         let hurt_pose = player_hit_react_pose(PlayerHitReactKind::Health, 0.28);
         let ward_pose = player_hit_react_pose(PlayerHitReactKind::Ward, 0.28);
         let evade_pose = player_hit_react_pose(PlayerHitReactKind::Evade, 0.28);
         let hurt = player_visual_pose_with_hit_react(
-            false,
+            0.0,
             false,
             0.0,
             0.0,
@@ -6960,7 +7474,7 @@ mod tests {
             Some(hurt_pose),
         );
         let blocked = player_visual_pose_with_hit_react(
-            false,
+            0.0,
             false,
             0.0,
             0.0,
@@ -6969,7 +7483,7 @@ mod tests {
             Some(ward_pose),
         );
         let dodged = player_visual_pose_with_hit_react(
-            false,
+            0.0,
             false,
             0.0,
             0.0,
@@ -6989,11 +7503,11 @@ mod tests {
 
     #[test]
     fn player_walk_cycle_has_planted_steps_not_only_body_drift() {
-        let planted = player_foot_pose(1.0, true, false, 0.0);
-        let lifted = player_foot_pose(-1.0, true, false, 0.0);
+        let planted = player_foot_pose(1.0, 1.0, false, 0.0);
+        let lifted = player_foot_pose(-1.0, 1.0, false, 0.0);
         let right_leg = player_limb_pose(
             PlayerLimbKind::RightLeg,
-            true,
+            1.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7001,20 +7515,23 @@ mod tests {
         );
         let left_leg = player_limb_pose(
             PlayerLimbKind::LeftLeg,
-            true,
+            1.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
             1.0,
         );
-        let stride_pose = player_visual_pose(true, false, 1.0, 1.0, PlayerAttackMotion::Basic, 1.0);
+        let stride_pose = player_visual_pose(1.0, false, 1.0, 1.0, PlayerAttackMotion::Basic, 1.0);
 
-        assert!(planted.scale.z > 1.62);
-        assert!(planted.translation.x > 0.88);
-        assert!(lifted.translation.y > planted.translation.y + 0.30);
-        assert!(right_leg.translation.z > left_leg.translation.z + 1.25);
-        assert!(stride_pose.body_roll > 0.78);
-        assert!(stride_pose.body_pitch < -0.55);
+        assert!(planted.scale.z > 0.45);
+        assert!(planted.scale.z < 0.55);
+        assert!(planted.translation.x > 0.28);
+        assert!(lifted.translation.y > planted.translation.y + 0.06);
+        assert!(right_leg.translation.z > left_leg.translation.z + 0.60);
+        assert!(stride_pose.body_roll > 0.04);
+        assert!(stride_pose.body_roll < 0.07);
+        assert!(stride_pose.body_pitch < -0.10);
+        assert!(stride_pose.body_pitch > -0.16);
     }
 
     #[test]
@@ -7045,34 +7562,47 @@ mod tests {
     }
 
     #[test]
+    fn player_locomotion_blend_eases_in_and_out_without_snapping() {
+        let started = player_locomotion_blend(0.0, true, 0.016);
+        let accelerating = player_locomotion_blend(started, true, 0.016);
+        let stopping = player_locomotion_blend(1.0, false, 0.016);
+
+        assert!(started > 0.0 && started < 0.30);
+        assert!(accelerating > started && accelerating < 1.0);
+        assert!(stopping > 0.80 && stopping < 1.0);
+        assert_eq!(player_locomotion_blend(0.4, true, 0.0), 0.4);
+    }
+
+    #[test]
     fn player_visual_pose_turn_lean_adds_readable_weight_shift() {
-        let base = player_visual_pose(true, false, 0.5, 0.0, PlayerAttackMotion::Basic, 1.0);
+        let base = player_visual_pose(1.0, false, 0.5, 0.0, PlayerAttackMotion::Basic, 1.0);
         let leaning = player_visual_pose_with_turn_lean(base, 0.38, false);
         let evading = player_visual_pose_with_turn_lean(base, 0.38, true);
 
-        assert!(leaning.body_roll > base.body_roll + 0.34);
-        assert!(leaning.body_pitch < base.body_pitch - 0.04);
-        assert!(leaning.weapon_translation.x > base.weapon_translation.x + 0.07);
+        assert!(leaning.body_roll > base.body_roll + 0.10);
+        assert!(leaning.body_roll < base.body_roll + 0.13);
+        assert!(leaning.body_pitch < base.body_pitch - 0.01);
+        assert!(leaning.weapon_translation.x > base.weapon_translation.x + 0.02);
         assert!(evading.body_roll > leaning.body_roll);
         assert!(evading.weapon_roll > leaning.weapon_roll);
     }
 
     #[test]
     fn player_foot_pose_alternates_visible_stride_marks() {
-        let idle = player_foot_pose(-1.0, false, false, 0.0);
+        let idle = player_foot_pose(-1.0, 0.0, false, 0.0);
         assert_eq!(idle.visibility, Visibility::Hidden);
 
-        let left = player_foot_pose(-1.0, true, false, 0.0);
-        let right = player_foot_pose(1.0, true, false, 0.0);
+        let left = player_foot_pose(-1.0, 1.0, false, 0.0);
+        let right = player_foot_pose(1.0, 1.0, false, 0.0);
         assert_eq!(left.visibility, Visibility::Visible);
         assert_eq!(right.visibility, Visibility::Visible);
         assert!(left.translation.z < right.translation.z);
-        assert!(left.translation.y > right.translation.y + 0.14);
-        assert!(right.translation.x > left.translation.x + 0.70);
+        assert!(left.translation.y > right.translation.y + 0.06);
+        assert!(right.translation.x > left.translation.x + 0.50);
         assert!(right.scale.z > left.scale.z);
-        assert!(right.scale.z > 1.10);
+        assert!(right.scale.z < 0.55);
 
-        let evade = player_foot_pose(1.0, false, true, 0.0);
+        let evade = player_foot_pose(1.0, 0.0, true, 0.0);
         assert_eq!(evade.visibility, Visibility::Visible);
         assert!(evade.translation.z > idle.translation.z);
         assert!(evade.translation.x > idle.translation.x);
@@ -7083,7 +7613,7 @@ mod tests {
     fn player_limb_pose_gives_visible_walk_cycle_and_weapon_arm() {
         let idle_right_leg = player_limb_pose(
             PlayerLimbKind::RightLeg,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7091,7 +7621,7 @@ mod tests {
         );
         let walking_right_leg = player_limb_pose(
             PlayerLimbKind::RightLeg,
-            true,
+            1.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7099,7 +7629,7 @@ mod tests {
         );
         let walking_left_leg = player_limb_pose(
             PlayerLimbKind::LeftLeg,
-            true,
+            1.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7107,7 +7637,7 @@ mod tests {
         );
         let idle_weapon_arm = player_limb_pose(
             PlayerLimbKind::RightArm,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7115,9 +7645,9 @@ mod tests {
         );
 
         assert_eq!(idle_right_leg.visibility, Visibility::Visible);
-        assert!(walking_right_leg.translation.z > idle_right_leg.translation.z + 0.38);
-        assert!(walking_left_leg.translation.z < idle_right_leg.translation.z - 0.38);
-        assert!(walking_right_leg.translation.z > walking_left_leg.translation.z + 0.95);
+        assert!(walking_right_leg.translation.z > idle_right_leg.translation.z + 0.30);
+        assert!(walking_left_leg.translation.z < idle_right_leg.translation.z - 0.30);
+        assert!(walking_right_leg.translation.z > walking_left_leg.translation.z + 0.60);
         assert!(walking_right_leg.rotation != walking_left_leg.rotation);
         assert!(idle_weapon_arm.translation.x > 0.52);
         assert!(idle_weapon_arm.scale.y > idle_weapon_arm.scale.x * 2.5);
@@ -7127,7 +7657,7 @@ mod tests {
     fn player_limb_pose_makes_attacks_read_as_arm_and_shoulder_motion() {
         let idle_arm = player_limb_pose(
             PlayerLimbKind::RightArm,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7135,7 +7665,7 @@ mod tests {
         );
         let windup_arm = player_limb_pose(
             PlayerLimbKind::RightArm,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7143,7 +7673,7 @@ mod tests {
         );
         let impact_arm = player_limb_pose(
             PlayerLimbKind::RightArm,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7151,7 +7681,7 @@ mod tests {
         );
         let idle_shoulder = player_limb_pose(
             PlayerLimbKind::ShoulderMantle,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7159,7 +7689,7 @@ mod tests {
         );
         let impact_shoulder = player_limb_pose(
             PlayerLimbKind::ShoulderMantle,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Basic,
@@ -7167,7 +7697,7 @@ mod tests {
         );
         let rupture_arm = player_limb_pose(
             PlayerLimbKind::RightArm,
-            false,
+            0.0,
             false,
             0.0,
             PlayerAttackMotion::Rupture,
@@ -7206,11 +7736,11 @@ mod tests {
 
     #[test]
     fn player_visual_pose_swings_weapon_through_attacks() {
-        let idle = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
-        let windup = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.15);
-        let impact = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.45);
+        let idle = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 1.0);
+        let windup = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.15);
+        let impact = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.45);
         let follow_through =
-            player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.85);
+            player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.85);
 
         assert!(impact.body_y > idle.body_y + 0.08);
         assert!(impact.body_yaw > windup.body_yaw + 0.48);
@@ -7226,8 +7756,8 @@ mod tests {
 
     #[test]
     fn basic_attack_reads_as_heavy_weapon_swing_with_broad_arc() {
-        let windup = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.14);
-        let impact = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.44);
+        let windup = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.14);
+        let impact = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.44);
         let arc = player_attack_arc_pose(PlayerAttackMotion::Basic, 0.44).unwrap();
 
         assert!(impact.weapon_translation.x > windup.weapon_translation.x + 0.82);
@@ -7390,10 +7920,10 @@ mod tests {
 
     #[test]
     fn player_attack_motions_read_as_different_skill_animations() {
-        let basic = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.45);
-        let dash = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Dash, 0.30);
-        let rupture = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Rupture, 0.60);
-        let nova = player_visual_pose(false, false, 0.0, 0.0, PlayerAttackMotion::Nova, 0.50);
+        let basic = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, 0.45);
+        let dash = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Dash, 0.30);
+        let rupture = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Rupture, 0.60);
+        let nova = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Nova, 0.50);
 
         assert!(dash.weapon_translation.z > basic.weapon_translation.z + 0.18);
         assert!(dash.body_pitch < basic.body_pitch - 0.10);

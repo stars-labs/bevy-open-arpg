@@ -23,6 +23,110 @@ const SEAL_FRAGMENT_REWARD_GOLD: u32 = 35;
 const SEAL_FRAGMENT_REWARD_SHARDS: u32 = 1;
 const FINAL_SEAL_REWARD_ESSENCE: u32 = 1;
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChapterId {
+    #[default]
+    AshenReliquary,
+    HollowBastion,
+}
+
+impl ChapterId {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "Chapter I: The Ashen Reliquary",
+            Self::HollowBastion => "Chapter II: The Hollow Bastion",
+        }
+    }
+
+    pub fn short_title(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "The Ashen Reliquary",
+            Self::HollowBastion => "The Hollow Bastion",
+        }
+    }
+
+    pub fn opening_kill_target(self) -> u32 {
+        match self {
+            Self::AshenReliquary => 3,
+            Self::HollowBastion => 4,
+        }
+    }
+
+    pub fn guard_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "reliquary guards",
+            Self::HollowBastion => "Hollowbound vanguard",
+        }
+    }
+
+    pub fn cache_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "sealed reliquary cache",
+            Self::HollowBastion => "Choir reliquary",
+        }
+    }
+
+    pub fn warden_id(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "seal_warden",
+            Self::HollowBastion => "bell_warden",
+        }
+    }
+
+    pub fn warden_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "Seal Warden Vhal",
+            Self::HollowBastion => "Vesper, Bell Warden",
+        }
+    }
+
+    pub fn ritual_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "ember altar",
+            Self::HollowBastion => "soul font",
+        }
+    }
+
+    pub fn boss_id(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "keeper",
+            Self::HollowBastion => "hollow_matron",
+        }
+    }
+
+    pub fn boss_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "Malrec, Keeper of Ash",
+            Self::HollowBastion => "Nyxara, Hollow Matron",
+        }
+    }
+
+    pub fn boss_short_name(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "Malrec",
+            Self::HollowBastion => "Nyxara",
+        }
+    }
+
+    pub fn victory_title(self) -> &'static str {
+        match self {
+            Self::AshenReliquary => "The Ashen Reliquary is cleansed",
+            Self::HollowBastion => "The Hollow Bastion is silenced",
+        }
+    }
+
+    pub fn next(self) -> Option<Self> {
+        match self {
+            Self::AshenReliquary => Some(Self::HollowBastion),
+            Self::HollowBastion => None,
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct ActiveChapter(pub ChapterId);
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ChapterPhase {
     Breach,
@@ -59,13 +163,16 @@ pub enum MainQuestStep {
 }
 
 impl MainQuestStep {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::BreachReliquary => "Breach",
-            Self::ClaimOuterSeal => "Outer Seal",
-            Self::BreakSealWarden => "Seal Warden",
-            Self::ClaimFinalSeal => "Final Seal",
-            Self::DefeatKeeper => "Malrec",
+    pub fn label_for(self, chapter: ChapterId) -> &'static str {
+        match (self, chapter) {
+            (Self::BreachReliquary, _) => "Breach",
+            (Self::ClaimOuterSeal, ChapterId::AshenReliquary) => "Outer Seal",
+            (Self::ClaimOuterSeal, ChapterId::HollowBastion) => "Choir Seal",
+            (Self::BreakSealWarden, ChapterId::AshenReliquary) => "Seal Warden",
+            (Self::BreakSealWarden, ChapterId::HollowBastion) => "Bell Warden",
+            (Self::ClaimFinalSeal, _) => "Final Seal",
+            (Self::DefeatKeeper, ChapterId::AshenReliquary) => "Malrec",
+            (Self::DefeatKeeper, ChapterId::HollowBastion) => "Nyxara",
         }
     }
 }
@@ -80,10 +187,18 @@ pub struct MainQuestSnapshot {
 
 impl Default for ChapterProgress {
     fn default() -> Self {
+        Self::for_chapter(ChapterId::default())
+    }
+}
+
+impl ChapterProgress {
+    pub fn for_chapter(chapter: ChapterId) -> Self {
+        let objective = format!("Purge the {}", chapter.guard_name());
+        let interaction_hint = format!("Find the {}", chapter.cache_name());
         Self {
-            title: "Chapter I: The Ashen Reliquary".to_string(),
+            title: chapter.title().to_string(),
             phase: ChapterPhase::Breach,
-            objective: "Purge the reliquary guards".to_string(),
+            objective,
             enemies_slain: 0,
             chest_opened: false,
             altar_activated: false,
@@ -92,8 +207,20 @@ impl Default for ChapterProgress {
             boss_spawned: false,
             boss_slain: false,
             last_kill: "No kills yet".to_string(),
-            interaction_hint: "Find the sealed reliquary cache".to_string(),
+            interaction_hint,
         }
+    }
+
+    pub fn chapter_id(&self) -> ChapterId {
+        if self.title == ChapterId::HollowBastion.title() {
+            ChapterId::HollowBastion
+        } else {
+            ChapterId::AshenReliquary
+        }
+    }
+
+    pub fn opening_kill_target(&self) -> u32 {
+        self.chapter_id().opening_kill_target()
     }
 }
 
@@ -130,7 +257,8 @@ pub struct ChapterPlugin;
 
 impl Plugin for ChapterPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ChapterProgress>()
+        app.init_resource::<ActiveChapter>()
+            .init_resource::<ChapterProgress>()
             .add_message::<SpawnBoss>()
             .add_message::<SpawnSanctumWave>()
             .add_message::<InteractableUsed>()
@@ -154,11 +282,16 @@ pub fn phase_label(phase: ChapterPhase) -> &'static str {
 }
 
 pub fn main_quest_snapshot(progress: &ChapterProgress, stats: &RunStats) -> MainQuestSnapshot {
+    let opening_target = progress.opening_kill_target();
     let steps = [
         (
             MainQuestStep::BreachReliquary,
-            progress.phase != ChapterPhase::Breach || progress.enemies_slain >= 3,
-            format!("{} / 3 kills", progress.enemies_slain.min(3)),
+            progress.phase != ChapterPhase::Breach || progress.enemies_slain >= opening_target,
+            format!(
+                "{} / {} kills",
+                progress.enemies_slain.min(opening_target),
+                opening_target
+            ),
         ),
         (
             MainQuestStep::ClaimOuterSeal,
@@ -230,7 +363,7 @@ pub fn main_quest_summary(progress: &ChapterProgress, stats: &RunStats) -> Strin
             "{}/{} {} {}",
             snapshot.completed_steps,
             snapshot.total_steps,
-            step.label(),
+            step.label_for(progress.chapter_id()),
             snapshot.active_status
         ),
         None => format!(
@@ -240,8 +373,8 @@ pub fn main_quest_summary(progress: &ChapterProgress, stats: &RunStats) -> Strin
     }
 }
 
-fn reset_chapter(mut progress: ResMut<ChapterProgress>) {
-    *progress = ChapterProgress::default();
+fn reset_chapter(active: Res<ActiveChapter>, mut progress: ResMut<ChapterProgress>) {
+    *progress = ChapterProgress::for_chapter(active.0);
 }
 
 #[derive(SystemParam)]
@@ -288,10 +421,11 @@ fn update_chapter(
             "Last slain: {} at {:.0}, {:.0}",
             event.display_name, event.position.x, event.position.z
         );
-        if event.enemy_id == "keeper" {
+        let chapter = resources.progress.chapter_id();
+        if event.enemy_id == chapter.boss_id() {
             resources.progress.boss_slain = true;
         }
-        if event.enemy_id == "seal_warden" {
+        if event.enemy_id == chapter.warden_id() {
             resources.stats.seal_warden_slain = true;
         }
     }
@@ -311,7 +445,11 @@ fn update_chapter(
             &mut events.combat_events,
         );
     }
-    publish_chapter_milestones(&actions.milestones, &mut events.combat_events);
+    publish_chapter_milestones(
+        resources.progress.chapter_id(),
+        &actions.milestones,
+        &mut events.combat_events,
+    );
     if actions.spawn_sanctum_wave {
         events.sanctum_spawn.write(SpawnSanctumWave);
         // The sealed gate parts once the sanctum phase begins.
@@ -322,6 +460,7 @@ fn update_chapter(
     }
     if actions.victory {
         grant_completion_reward(
+            resources.progress.chapter_id(),
             &mut resources.stats,
             &resources.difficulty,
             &resources.journal,
@@ -365,6 +504,7 @@ fn advance_progress(
     seal_warden_slain: bool,
 ) -> ProgressActions {
     let mut actions = ProgressActions::default();
+    let chapter = progress.chapter_id();
 
     for event in interactions {
         match event.kind {
@@ -394,17 +534,30 @@ fn advance_progress(
         }
     }
 
-    if progress.phase == ChapterPhase::Breach && progress.enemies_slain >= 3 {
+    if progress.phase == ChapterPhase::Breach
+        && progress.enemies_slain >= chapter.opening_kill_target()
+    {
         progress.phase = ChapterPhase::Cache;
-        progress.objective = seal_objective(progress, "Open the sealed reliquary cache");
-        progress.interaction_hint = "Press Space near the cache".to_string();
+        progress.objective =
+            seal_objective(progress, &format!("Open the {}", chapter.cache_name()));
+        progress.interaction_hint = format!("Press Space near the {}", chapter.cache_name());
         actions.milestones.push(ChapterMilestone::BreachSecured);
     }
 
     if progress.phase == ChapterPhase::Cache && progress.chest_opened {
         progress.phase = ChapterPhase::Sanctum;
-        progress.objective = seal_objective(progress, "Survive the cult ambush");
-        progress.interaction_hint = "The inner sanctum is open".to_string();
+        progress.objective = seal_objective(
+            progress,
+            match chapter {
+                ChapterId::AshenReliquary => "Survive the cult ambush",
+                ChapterId::HollowBastion => "Silence the Hollow Choir ambush",
+            },
+        );
+        progress.interaction_hint = match chapter {
+            ChapterId::AshenReliquary => "The inner sanctum is open",
+            ChapterId::HollowBastion => "The bell crypt is open",
+        }
+        .to_string();
         actions.milestones.push(ChapterMilestone::CacheOpened);
         if !progress.sanctum_wave_spawned {
             progress.sanctum_wave_spawned = true;
@@ -415,9 +568,17 @@ fn advance_progress(
     if progress.phase == ChapterPhase::Sanctum && seal_warden_slain {
         actions.seal_fragments_claimed += u32::from(collect_seal_fragment(progress));
         progress.phase = ChapterPhase::Ritual;
-        progress.objective = seal_objective(progress, "Extinguish the ember altar");
-        progress.interaction_hint =
-            "Press Space near the altar to claim the final seal".to_string();
+        progress.objective = seal_objective(
+            progress,
+            match chapter {
+                ChapterId::AshenReliquary => "Extinguish the ember altar",
+                ChapterId::HollowBastion => "Shatter the soul font",
+            },
+        );
+        progress.interaction_hint = format!(
+            "Press Space near the {} to claim the final seal",
+            chapter.ritual_name()
+        );
         actions.milestones.push(ChapterMilestone::SealWardenBroken);
     }
 
@@ -427,8 +588,12 @@ fn advance_progress(
         && !progress.boss_spawned
     {
         progress.phase = ChapterPhase::Boss;
-        progress.objective = "Defeat Malrec, Keeper of Ash".to_string();
-        progress.interaction_hint = "Malrec has entered the reliquary".to_string();
+        progress.objective = format!("Defeat {}", chapter.boss_name());
+        progress.interaction_hint = format!(
+            "{} has entered {}",
+            chapter.boss_short_name(),
+            chapter.short_title()
+        );
         progress.boss_spawned = true;
         actions.milestones.push(ChapterMilestone::FinalSealClaimed);
         actions.milestones.push(ChapterMilestone::KeeperAwakened);
@@ -437,7 +602,7 @@ fn advance_progress(
 
     if progress.boss_slain {
         progress.phase = ChapterPhase::Victory;
-        progress.objective = "The reliquary is cleansed".to_string();
+        progress.objective = chapter.victory_title().to_string();
         actions.milestones.push(ChapterMilestone::Victory);
         actions.victory = true;
     }
@@ -459,36 +624,55 @@ pub fn seal_objective(progress: &ChapterProgress, action: &str) -> String {
 }
 
 fn publish_chapter_milestones(
+    chapter: ChapterId,
     milestones: &[ChapterMilestone],
     combat_events: &mut MessageWriter<CombatEvent>,
 ) {
     for milestone in milestones {
         combat_events.write(CombatEvent {
-            text: chapter_milestone_text(*milestone).to_string(),
+            text: chapter_milestone_text(chapter, *milestone),
         });
     }
 }
 
-fn chapter_milestone_text(milestone: ChapterMilestone) -> &'static str {
-    match milestone {
-        ChapterMilestone::BreachSecured => {
+fn chapter_milestone_text(chapter: ChapterId, milestone: ChapterMilestone) -> String {
+    match (chapter, milestone) {
+        (ChapterId::AshenReliquary, ChapterMilestone::BreachSecured) => {
             "MAIN Breach Secured | NEXT open sealed cache | REWARD outer seal + cache loot"
+                .to_string()
         }
-        ChapterMilestone::CacheOpened => {
+        (ChapterId::AshenReliquary, ChapterMilestone::CacheOpened) => {
             "MAIN Cache Opened | NEXT survive sanctum ambush | REWARD first seal + upgraded loot"
+                .to_string()
         }
-        ChapterMilestone::SealWardenBroken => {
+        (ChapterId::AshenReliquary, ChapterMilestone::SealWardenBroken) => {
             "MAIN Seal Warden Broken | NEXT extinguish ember altar | REWARD second seal + altar heal"
+                .to_string()
         }
-        ChapterMilestone::FinalSealClaimed => {
-            "MAIN Final Seal Claimed | NEXT face Malrec | REWARD essence + boss gate"
+        (ChapterId::HollowBastion, ChapterMilestone::BreachSecured) => {
+            "MAIN Vanguard Broken | NEXT open Choir reliquary | REWARD choir seal + cache loot"
+                .to_string()
         }
-        ChapterMilestone::KeeperAwakened => {
-            "BOSS Malrec Awakened | NEXT break stagger, deny enrage | PAYOFF Soul Sigil + chapter cache"
+        (ChapterId::HollowBastion, ChapterMilestone::CacheOpened) => {
+            "MAIN Choir Seal Claimed | NEXT enter bell crypt | REWARD first seal + upgraded loot"
+                .to_string()
         }
-        ChapterMilestone::Victory => {
-            "MAIN Complete | NEXT claim cache, review build | REWARD Reliquary cleansed"
+        (ChapterId::HollowBastion, ChapterMilestone::SealWardenBroken) => {
+            "MAIN Bell Warden Silenced | NEXT shatter soul font | REWARD second seal + font heal"
+                .to_string()
         }
+        (_, ChapterMilestone::FinalSealClaimed) => format!(
+            "MAIN Final Seal Claimed | NEXT face {} | REWARD essence + boss gate",
+            chapter.boss_short_name()
+        ),
+        (_, ChapterMilestone::KeeperAwakened) => format!(
+            "BOSS {} Awakened | NEXT break stagger, deny enrage | PAYOFF Soul Sigil + chapter cache",
+            chapter.boss_short_name()
+        ),
+        (_, ChapterMilestone::Victory) => format!(
+            "MAIN Complete | NEXT claim cache, review build | REWARD {}",
+            chapter.victory_title()
+        ),
     }
 }
 
@@ -541,6 +725,7 @@ pub fn seal_fragment_reward_preview(total_fragments_after_claim: u32) -> String 
 }
 
 fn grant_completion_reward(
+    chapter: ChapterId,
     stats: &mut RunStats,
     difficulty: &DifficultySettings,
     journal: &LoreJournal,
@@ -595,7 +780,7 @@ fn grant_completion_reward(
         stats.primal_cache_echo_items += echo_items;
         grant_primal_cache_items(stats, loot_table, player, combat_events);
     }
-    grant_malrec_soul_sigils(stats, combat_events);
+    grant_chapter_soul_sigils(chapter, stats, combat_events);
     stats.completion_reward_claimed = true;
     combat_events.write(CombatEvent {
         text: format!(
@@ -612,7 +797,11 @@ fn grant_completion_reward(
     }
 }
 
-fn grant_malrec_soul_sigils(stats: &mut RunStats, combat_events: &mut MessageWriter<CombatEvent>) {
+fn grant_chapter_soul_sigils(
+    chapter: ChapterId,
+    stats: &mut RunStats,
+    combat_events: &mut MessageWriter<CombatEvent>,
+) {
     let sigils = malrec_soul_sigil_reward(stats);
     if sigils == 0 {
         return;
@@ -620,7 +809,7 @@ fn grant_malrec_soul_sigils(stats: &mut RunStats, combat_events: &mut MessageWri
     stats.malrec_soul_sigils = stats.malrec_soul_sigils.saturating_add(sigils);
     stats.malrec_soul_sigils_earned = stats.malrec_soul_sigils_earned.saturating_add(sigils);
     combat_events.write(CombatEvent {
-        text: malrec_soul_sigil_reward_text(sigils, stats.malrec_soul_sigils),
+        text: chapter_soul_sigil_reward_text(chapter, sigils, stats.malrec_soul_sigils),
     });
 }
 
@@ -628,17 +817,26 @@ fn malrec_soul_sigil_reward(stats: &RunStats) -> u32 {
     1 + u32::from(stats.boss_staggers >= BOSS_BREAK_TARGET) + u32::from(!stats.boss_enraged)
 }
 
+#[cfg(test)]
 fn malrec_soul_sigil_reward_text(sigils_gained: u32, total_sigils: u32) -> String {
+    chapter_soul_sigil_reward_text(ChapterId::AshenReliquary, sigils_gained, total_sigils)
+}
+
+fn chapter_soul_sigil_reward_text(
+    chapter: ChapterId,
+    sigils_gained: u32,
+    total_sigils: u32,
+) -> String {
     let plural = if sigils_gained == 1 { "" } else { "s" };
+    let trophy_name = match chapter {
+        ChapterId::AshenReliquary => "Malrec Soul Sigil",
+        ChapterId::HollowBastion => "Nyxara Soul Sigil",
+    };
     match soul_sigil_cache_ready_summary(total_sigils) {
-        Some(cache) => format!(
-            "Malrec Soul Sigil{} +{}: {} ready at the quartermaster",
-            plural, sigils_gained, cache
-        ),
-        None => format!(
-            "Malrec Soul Sigil{} +{}: collect more for a Trophy Cache",
-            plural, sigils_gained
-        ),
+        Some(cache) => {
+            format!("{trophy_name}{plural} +{sigils_gained}: {cache} ready at the quartermaster")
+        }
+        None => format!("{trophy_name}{plural} +{sigils_gained}: collect more for a Trophy Cache"),
     }
 }
 
@@ -883,17 +1081,111 @@ mod tests {
             ChapterMilestone::KeeperAwakened,
             ChapterMilestone::Victory,
         ] {
-            let text = chapter_milestone_text(milestone);
+            let text = chapter_milestone_text(ChapterId::AshenReliquary, milestone);
             assert!(text.contains("NEXT"), "{text}");
             assert!(text.contains("REWARD") || text.contains("PAYOFF"), "{text}");
             assert!(text.len() <= 96, "{text}");
         }
-        assert!(chapter_milestone_text(ChapterMilestone::BreachSecured).contains("sealed cache"));
-        assert!(chapter_milestone_text(ChapterMilestone::CacheOpened).contains("ambush"));
-        assert!(chapter_milestone_text(ChapterMilestone::SealWardenBroken).contains("altar"));
-        assert!(chapter_milestone_text(ChapterMilestone::FinalSealClaimed).contains("Malrec"));
-        assert!(chapter_milestone_text(ChapterMilestone::KeeperAwakened).contains("Soul Sigil"));
-        assert!(chapter_milestone_text(ChapterMilestone::Victory).contains("build"));
+        assert!(
+            chapter_milestone_text(ChapterId::AshenReliquary, ChapterMilestone::BreachSecured)
+                .contains("sealed cache")
+        );
+        assert!(
+            chapter_milestone_text(ChapterId::AshenReliquary, ChapterMilestone::CacheOpened)
+                .contains("ambush")
+        );
+        assert!(
+            chapter_milestone_text(
+                ChapterId::AshenReliquary,
+                ChapterMilestone::SealWardenBroken
+            )
+            .contains("altar")
+        );
+        assert!(
+            chapter_milestone_text(
+                ChapterId::AshenReliquary,
+                ChapterMilestone::FinalSealClaimed
+            )
+            .contains("Malrec")
+        );
+        assert!(
+            chapter_milestone_text(ChapterId::AshenReliquary, ChapterMilestone::KeeperAwakened)
+                .contains("Soul Sigil")
+        );
+        assert!(
+            chapter_milestone_text(ChapterId::AshenReliquary, ChapterMilestone::Victory)
+                .contains("build")
+        );
+    }
+
+    #[test]
+    fn hollow_bastion_progresses_through_its_full_mainline() {
+        let mut progress = ChapterProgress::for_chapter(ChapterId::HollowBastion);
+
+        progress.enemies_slain = 3;
+        let actions = advance_progress(&mut progress, &[], false);
+        assert_eq!(progress.phase, ChapterPhase::Breach);
+        assert!(actions.milestones.is_empty());
+
+        progress.enemies_slain = ChapterId::HollowBastion.opening_kill_target();
+        let actions = advance_progress(&mut progress, &[], false);
+        assert_eq!(progress.phase, ChapterPhase::Cache);
+        assert_eq!(actions.milestones, vec![ChapterMilestone::BreachSecured]);
+        assert!(progress.objective.contains("Choir reliquary"));
+
+        let actions = advance_progress(
+            &mut progress,
+            &[InteractableUsed {
+                kind: InteractableKind::Cache,
+                position: Vec3::ZERO,
+            }],
+            false,
+        );
+        assert_eq!(progress.phase, ChapterPhase::Sanctum);
+        assert!(actions.spawn_sanctum_wave);
+        assert_eq!(progress.seal_fragments, 1);
+        assert!(progress.objective.contains("Hollow Choir"));
+
+        let actions = advance_progress(&mut progress, &[], true);
+        assert_eq!(progress.phase, ChapterPhase::Ritual);
+        assert_eq!(progress.seal_fragments, 2);
+        assert_eq!(actions.milestones, vec![ChapterMilestone::SealWardenBroken]);
+        assert!(progress.objective.contains("soul font"));
+
+        let actions = advance_progress(
+            &mut progress,
+            &[InteractableUsed {
+                kind: InteractableKind::Altar,
+                position: Vec3::ZERO,
+            }],
+            true,
+        );
+        assert_eq!(progress.phase, ChapterPhase::Boss);
+        assert_eq!(progress.seal_fragments, REQUIRED_SEAL_FRAGMENTS);
+        assert!(actions.spawn_boss);
+        assert!(progress.objective.contains("Nyxara"));
+
+        progress.boss_slain = true;
+        let actions = advance_progress(&mut progress, &[], true);
+        assert_eq!(progress.phase, ChapterPhase::Victory);
+        assert!(actions.victory);
+        assert_eq!(progress.objective, ChapterId::HollowBastion.victory_title());
+    }
+
+    #[test]
+    fn hollow_bastion_milestones_name_chapter_specific_targets() {
+        assert!(
+            chapter_milestone_text(ChapterId::HollowBastion, ChapterMilestone::BreachSecured)
+                .contains("Choir reliquary")
+        );
+        assert!(
+            chapter_milestone_text(ChapterId::HollowBastion, ChapterMilestone::SealWardenBroken)
+                .contains("soul font")
+        );
+        assert!(
+            chapter_milestone_text(ChapterId::HollowBastion, ChapterMilestone::FinalSealClaimed)
+                .contains("Nyxara")
+        );
     }
 
     #[test]

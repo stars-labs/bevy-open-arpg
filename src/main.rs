@@ -39,18 +39,23 @@ use bevy::core_pipeline::{CorePipelinePlugin, prepass::DepthPrepass, tonemapping
 #[cfg(feature = "dev_tools")]
 use bevy::dev_tools::picking_debug::{DebugPickingMode, DebugPickingPlugin};
 #[cfg(feature = "dev_tools")]
+use bevy::dev_tools::render_debug::RenderDebugOverlayPlugin;
+#[cfg(feature = "dev_tools")]
 use bevy::diagnostic::{
     EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin,
     SystemInformationDiagnosticsPlugin,
 };
+use bevy::ecs::system::SystemParam;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gizmos_render::GizmoRenderPlugin;
 use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats};
 #[cfg(feature = "dev_tools")]
 use bevy::input::mouse::MouseButton;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::light::VolumetricFog;
 use bevy::light::{
     Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, RectLight, ShadowFilteringMethod,
-    VolumetricFog, VolumetricLight, atmosphere::ScatteringMedium,
+    VolumetricLight, atmosphere::ScatteringMedium,
 };
 use bevy::pbr::{
     AtmosphereMode, AtmosphereSettings, ContactShadows, DistanceFog, FogFalloff, PbrPlugin,
@@ -73,15 +78,14 @@ use bevy::reflect::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
+use bevy::render::RenderPlugin;
 #[cfg(feature = "dev_tools")]
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
-use bevy::render::{
-    RenderPlugin,
-    settings::{
-        Backends, InstanceFlags, RenderCreation, WgpuFeatures, WgpuSettings, WgpuSettingsPriority,
-    },
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::render::settings::{
+    Backends, InstanceFlags, RenderCreation, WgpuFeatures, WgpuSettings, WgpuSettingsPriority,
 };
 use bevy::settings::{
     ReflectSettingsGroup, SaveSettingsDeferred, SaveSettingsSync, SettingsGroup, SettingsPlugin,
@@ -92,7 +96,7 @@ use bevy::window::{ExitCondition, WindowCloseRequested};
 use bevy::winit::WinitPlugin;
 use bounty::BountyPlugin;
 use challenge::ChallengePlugin;
-use chapter::ChapterPlugin;
+use chapter::{ActiveChapter, ChapterId, ChapterPlugin, ChapterProgress};
 use combat::CombatPlugin;
 use companion::CompanionPlugin;
 use data::GameDataPlugin;
@@ -107,7 +111,7 @@ use obelisk::ObeliskPlugin;
 use ordeal::{ChapterModifier, modifier_for_run};
 use player::{Player, PlayerPlugin};
 use rift::RiftPlugin;
-use save::{PendingLoadGame, SavePlugin};
+use save::{PendingLoadGame, SavePlugin, prepare_load_request};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use story::StoryPlugin;
@@ -437,6 +441,7 @@ struct DebugFreeCamera {
 #[derive(Debug, Clone, Copy, Resource)]
 struct HeadlessSmokeExit {
     frames_remaining: u32,
+    chapter: Option<ChapterId>,
 }
 
 const OPEN_ARPG_WINDOW_TITLE: &str = "Bevy Open ARPG";
@@ -456,6 +461,7 @@ struct OpenArpgRuntimeConfig {
     headless_smoke: bool,
     remote_enabled: bool,
     smoke_frames: u32,
+    smoke_chapter: Option<ChapterId>,
     asset_mode: OpenArpgAssetMode,
     render_profile: Option<OpenArpgRenderProfile>,
     window_backend: Option<OpenArpgWindowBackend>,
@@ -481,6 +487,7 @@ impl OpenArpgRuntimeConfig {
             false
         } else {
             args.headless_smoke.or(headless_from_env).unwrap_or(false)
+                || args.smoke_chapter.is_some()
         };
         Self {
             audio_enabled: args.audio_enabled.or(audio_from_env).unwrap_or(true),
@@ -503,6 +510,7 @@ impl OpenArpgRuntimeConfig {
                 .remote_enabled
                 .unwrap_or_else(|| open_arpg_env_flag("BEVY_OPEN_ARPG_REMOTE")),
             smoke_frames: args.smoke_frames.unwrap_or_else(open_arpg_smoke_frames),
+            smoke_chapter: headless_smoke.then_some(args.smoke_chapter).flatten(),
             asset_mode: args.asset_mode.unwrap_or_else(open_arpg_asset_mode),
             render_profile: args.render_profile.or_else(open_arpg_render_profile),
             window_backend: args.window_backend,
@@ -522,6 +530,7 @@ struct OpenArpgCliArgs {
     headless_smoke: Option<bool>,
     remote_enabled: Option<bool>,
     smoke_frames: Option<u32>,
+    smoke_chapter: Option<ChapterId>,
     asset_mode: Option<OpenArpgAssetMode>,
     render_profile: Option<OpenArpgRenderProfile>,
     window_backend: Option<OpenArpgWindowBackend>,
@@ -627,6 +636,7 @@ fn should_fallback_to_headless_smoke(config: OpenArpgRuntimeConfig, display_pres
 
 fn build_app(config: OpenArpgRuntimeConfig) -> App {
     let mut app = App::new();
+    let runtime_audio_enabled = config.audio_enabled && !config.headless_smoke;
     let mut default_plugins = DefaultPlugins
         .build()
         .set(AssetPlugin {
@@ -663,7 +673,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
             ..default()
         });
     }
-    if !config.audio_enabled {
+    if !runtime_audio_enabled {
         default_plugins = default_plugins.disable::<AudioPlugin>();
     }
     if config.headless_smoke {
@@ -682,6 +692,10 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
             .disable::<PbrPlugin>()
             .disable::<PostProcessPlugin>()
             .disable::<AntiAliasPlugin>();
+        #[cfg(feature = "dev_tools")]
+        {
+            default_plugins = default_plugins.disable::<RenderDebugOverlayPlugin>();
+        }
         app.insert_resource(CompressedImageFormatSupport(CompressedImageFormats::NONE));
     }
     app.insert_resource(ClearColor(Color::srgb(0.015, 0.013, 0.018)))
@@ -694,14 +708,14 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         .insert_resource(JournalOpen::default())
         .insert_resource(OpenArpgUserSettings::from_config(config))
         .insert_resource(OpenArpgPreferenceLocks {
-            audio_enabled: config.audio_locked,
+            audio_enabled: config.audio_locked || config.headless_smoke,
             debug_visuals: config.debug_visuals_locked,
         })
         .insert_resource(DebugVisuals {
             enabled: config.debug_visuals,
         })
         .insert_resource(AudioSettings {
-            enabled: config.audio_enabled,
+            enabled: runtime_audio_enabled,
         })
         .insert_resource(PickingSettings {
             is_window_picking_enabled: false,
@@ -741,8 +755,10 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     }
     #[cfg(feature = "dev_tools")]
     {
-        app.add_plugins(DebugPickingPlugin)
-            .insert_resource(DebugPickingMode::Disabled)
+        if !config.headless_smoke {
+            app.add_plugins(DebugPickingPlugin);
+        }
+        app.insert_resource(DebugPickingMode::Disabled)
             .add_systems(PreUpdate, cycle_debug_picking);
     }
     if config.headless_smoke {
@@ -751,6 +767,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     if config.headless_smoke {
         app.insert_resource(HeadlessSmokeExit {
             frames_remaining: config.smoke_frames,
+            chapter: config.smoke_chapter,
         })
         .set_runner(headless_smoke_runner);
     }
@@ -860,24 +877,87 @@ fn headless_smoke_runner(mut app: App) -> AppExit {
     app.finish();
     app.cleanup();
 
-    let mut frames_remaining = app
+    let smoke = app
         .world_mut()
         .remove_resource::<HeadlessSmokeExit>()
-        .map(|resource| resource.frames_remaining)
-        .unwrap_or_default();
+        .unwrap_or(HeadlessSmokeExit {
+            frames_remaining: 0,
+            chapter: None,
+        });
+    let mut frames_remaining = if smoke.chapter.is_some() {
+        smoke.frames_remaining.max(12)
+    } else {
+        smoke.frames_remaining
+    };
+    let total_frames = frames_remaining;
+    let trace_frames = open_arpg_env_flag("BEVY_OPEN_ARPG_SMOKE_TRACE");
+    let mut entered_game = false;
 
     loop {
         if frames_remaining == 0 {
-            return AppExit::Success;
+            return validate_headless_smoke_result(&mut app, smoke.chapter);
         }
 
+        let frame = total_frames.saturating_sub(frames_remaining) + 1;
+        if trace_frames {
+            eprintln!("headless smoke frame {frame}/{total_frames}: begin");
+        }
         app.update();
+        if trace_frames {
+            eprintln!("headless smoke frame {frame}/{total_frames}: complete");
+        }
+        if let Some(chapter) = smoke.chapter
+            && !entered_game
+            && app
+                .world()
+                .get_resource::<State<GameState>>()
+                .is_some_and(|state| *state.get() == GameState::MainMenu)
+        {
+            app.world_mut().resource_mut::<ActiveChapter>().0 = chapter;
+            app.world_mut()
+                .resource_mut::<NextState<GameState>>()
+                .set(GameState::InGame);
+            entered_game = true;
+        }
 
         if let Some(exit) = app.should_exit() {
             return exit;
         }
 
         frames_remaining = frames_remaining.saturating_sub(1);
+    }
+}
+
+fn validate_headless_smoke_result(app: &mut App, chapter: Option<ChapterId>) -> AppExit {
+    let Some(chapter) = chapter else {
+        return AppExit::Success;
+    };
+    let world = app.world_mut();
+    let state_ready = world
+        .get_resource::<State<GameState>>()
+        .is_some_and(|state| *state.get() == GameState::InGame);
+    let chapter_ready = world
+        .get_resource::<ActiveChapter>()
+        .is_some_and(|active| active.0 == chapter)
+        && world
+            .get_resource::<ChapterProgress>()
+            .is_some_and(|progress| progress.chapter_id() == chapter);
+    let player_count = world
+        .query_filtered::<Entity, With<Player>>()
+        .iter(world)
+        .count();
+    if state_ready && chapter_ready && player_count == 1 {
+        info!(
+            "headless gameplay smoke complete: chapter={} players={player_count}",
+            chapter.title()
+        );
+        AppExit::Success
+    } else {
+        error!(
+            "headless gameplay smoke failed: chapter={} state_ready={state_ready} chapter_ready={chapter_ready} players={player_count}",
+            chapter.title()
+        );
+        AppExit::error()
     }
 }
 
@@ -1039,12 +1119,26 @@ fn parse_open_arpg_cli_arg(arg: &str, parsed: &mut OpenArpgCliArgs) {
         value => {
             if let Some(value) = value.strip_prefix("--smoke-frames=") {
                 parsed.smoke_frames = Some(parse_open_arpg_smoke_frames(Some(value)));
+            } else if let Some(value) = value.strip_prefix("--smoke-chapter=") {
+                parsed.smoke_chapter = parse_open_arpg_smoke_chapter(value);
             } else if let Some(value) = value.strip_prefix("--asset-mode=") {
                 parsed.asset_mode = Some(parse_open_arpg_asset_mode(Some(value)));
             } else if let Some(value) = value.strip_prefix("--render-profile=") {
                 parsed.render_profile = parse_open_arpg_render_profile(Some(value));
             }
         }
+    }
+}
+
+fn parse_open_arpg_smoke_chapter(value: &str) -> Option<ChapterId> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "chapter-1" | "chapter1" | "ashen" | "ashen-reliquary" => {
+            Some(ChapterId::AshenReliquary)
+        }
+        "2" | "chapter-2" | "chapter2" | "hollow" | "hollow-bastion" => {
+            Some(ChapterId::HollowBastion)
+        }
+        _ => None,
     }
 }
 
@@ -1167,7 +1261,13 @@ fn startup_window_diagnostic(
         .render_profile
         .map(OpenArpgRenderProfile::label)
         .unwrap_or("auto");
-    let audio = if config.audio_enabled { "on" } else { "off" };
+    let audio = if config.headless_smoke {
+        "off(headless)"
+    } else if config.audio_enabled {
+        "on"
+    } else {
+        "off"
+    };
     let mut message = if config.headless_smoke {
         format!(
             "Bevy Open ARPG startup: window=disabled(headless-smoke) display={display} backend={backend} render={render} audio={audio} asset_mode={}. If you expected a popup, run `cargo run -- --windowed` or unset BEVY_OPEN_ARPG_HEADLESS_SMOKE.",
@@ -1250,6 +1350,7 @@ fn cycle_debug_picking(keyboard: Res<ButtonInput<KeyCode>>, mut mode: ResMut<Deb
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_arpg_wgpu_settings(profile: Option<OpenArpgRenderProfile>) -> WgpuSettings {
     let mut settings = WgpuSettings {
         features: WgpuFeatures::empty(),
@@ -1269,11 +1370,13 @@ fn open_arpg_wgpu_settings(profile: Option<OpenArpgRenderProfile>) -> WgpuSettin
     settings
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct OpenArpgRenderSettings {
     priority: WgpuSettingsPriority,
     backends: Option<Backends>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render_settings_from_profile(
     profile: Option<OpenArpgRenderProfile>,
 ) -> Option<OpenArpgRenderSettings> {
@@ -1525,6 +1628,7 @@ fn main_menu_input(
     mut difficulty: ResMut<DifficultySettings>,
     mut modifier: ResMut<ChapterModifier>,
     mut pending_load: ResMut<PendingLoadGame>,
+    mut active_chapter: ResMut<ActiveChapter>,
     records: Res<ChapterRecords>,
 ) {
     if keyboard.just_pressed(KeyCode::Tab)
@@ -1535,7 +1639,7 @@ fn main_menu_input(
     if keyboard.just_pressed(KeyCode::F9)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::Select])
     {
-        pending_load.request();
+        prepare_load_request(&mut pending_load, &mut active_chapter);
         next_state.set(GameState::InGame);
         return;
     }
@@ -1543,6 +1647,7 @@ fn main_menu_input(
         || keyboard.just_pressed(KeyCode::Enter)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::South, GamepadButton::Start])
     {
+        active_chapter.0 = ChapterId::AshenReliquary;
         reset_run_stats_for_new_chapter(&mut stats);
         *modifier = modifier_for_run(difficulty.current, records.clears(difficulty.current));
         next_state.set(GameState::InGame);
@@ -1567,31 +1672,55 @@ fn game_over_input(
     }
 }
 
+#[derive(SystemParam)]
+struct VictoryRouteResources<'w> {
+    next_state: ResMut<'w, NextState<GameState>>,
+    stats: ResMut<'w, RunStats>,
+    difficulty: ResMut<'w, DifficultySettings>,
+    modifier: ResMut<'w, ChapterModifier>,
+    progress: Res<'w, ChapterProgress>,
+    active_chapter: ResMut<'w, ActiveChapter>,
+    records: Res<'w, ChapterRecords>,
+}
+
 fn victory_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
-    mut next_state: ResMut<NextState<GameState>>,
-    mut stats: ResMut<RunStats>,
-    mut difficulty: ResMut<DifficultySettings>,
-    mut modifier: ResMut<ChapterModifier>,
-    records: Res<ChapterRecords>,
+    mut resources: VictoryRouteResources,
 ) {
     if keyboard.just_pressed(KeyCode::Space)
         || keyboard.just_pressed(KeyCode::Enter)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::South, GamepadButton::Start])
     {
-        difficulty.current = victory_next_difficulty_after_clear(difficulty.current, &records);
-        reset_run_stats_for_new_chapter(&mut stats);
-        *modifier = modifier_for_run(difficulty.current, records.clears(difficulty.current));
-        next_state.set(GameState::InGame);
+        let current_chapter = resources.progress.chapter_id();
+        if let Some(next_chapter) = current_chapter.next() {
+            resources.active_chapter.0 = next_chapter;
+            reset_run_stats_for_campaign_chapter(&mut resources.stats);
+        } else {
+            resources.active_chapter.0 = ChapterId::AshenReliquary;
+            resources.difficulty.current = victory_next_difficulty_after_clear(
+                resources.difficulty.current,
+                &resources.records,
+            );
+            reset_run_stats_for_new_chapter(&mut resources.stats);
+        }
+        *resources.modifier = modifier_for_run(
+            resources.difficulty.current,
+            resources.records.clears(resources.difficulty.current),
+        );
+        resources.next_state.set(GameState::InGame);
         return;
     }
     if keyboard.just_pressed(KeyCode::KeyR)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::West])
     {
-        reset_run_stats_for_new_chapter(&mut stats);
-        *modifier = modifier_for_run(difficulty.current, records.clears(difficulty.current));
-        next_state.set(GameState::InGame);
+        resources.active_chapter.0 = resources.progress.chapter_id();
+        reset_run_stats_for_new_chapter(&mut resources.stats);
+        *resources.modifier = modifier_for_run(
+            resources.difficulty.current,
+            resources.records.clears(resources.difficulty.current),
+        );
+        resources.next_state.set(GameState::InGame);
     }
 }
 
@@ -1610,6 +1739,23 @@ fn reset_run_stats_for_new_chapter(stats: &mut RunStats) {
     let carried_soul_sigils = stats.malrec_soul_sigils;
     *stats = RunStats {
         malrec_soul_sigils: carried_soul_sigils,
+        ..Default::default()
+    };
+}
+
+fn reset_run_stats_for_campaign_chapter(stats: &mut RunStats) {
+    let carried_gold = stats.gold;
+    let carried_shards = stats.ember_shards;
+    let carried_essence = stats.affix_essence;
+    let carried_soul_sigils = stats.malrec_soul_sigils;
+    *stats = RunStats {
+        gold: carried_gold,
+        ember_shards: carried_shards,
+        affix_essence: carried_essence,
+        malrec_soul_sigils: carried_soul_sigils,
+        renown_bonus_claimed: true,
+        stash_bonus_claimed: true,
+        altar_bonus_claimed: true,
         ..Default::default()
     };
 }
@@ -2319,6 +2465,7 @@ mod tests {
             headless_smoke,
             remote_enabled: false,
             smoke_frames: 30,
+            smoke_chapter: None,
             asset_mode: OpenArpgAssetMode::Unprocessed,
             render_profile: None,
             window_backend: None,
@@ -2442,6 +2589,7 @@ mod tests {
             "--no-audio",
             "--headless-smoke",
             "--smoke-frames=24",
+            "--smoke-chapter=hollow-bastion",
             "--render-profile=gl",
             "--asset-mode=processed",
             "--x11",
@@ -2451,6 +2599,7 @@ mod tests {
         assert_eq!(args.audio_enabled, Some(false));
         assert_eq!(args.headless_smoke, Some(true));
         assert_eq!(args.smoke_frames, Some(24));
+        assert_eq!(args.smoke_chapter, Some(ChapterId::HollowBastion));
         assert_eq!(args.render_profile, Some(OpenArpgRenderProfile::Gl));
         assert_eq!(args.asset_mode, Some(OpenArpgAssetMode::Processed));
         assert_eq!(args.window_backend, Some(OpenArpgWindowBackend::X11));
@@ -2471,6 +2620,25 @@ mod tests {
             Some(OpenArpgRenderProfile::Compatibility)
         );
         assert_eq!(config.window_backend, Some(OpenArpgWindowBackend::Wayland));
+    }
+
+    #[test]
+    fn smoke_chapter_parser_accepts_campaign_aliases() {
+        assert_eq!(
+            parse_open_arpg_smoke_chapter("chapter-1"),
+            Some(ChapterId::AshenReliquary)
+        );
+        assert_eq!(
+            parse_open_arpg_smoke_chapter("HOLLOW-BASTION"),
+            Some(ChapterId::HollowBastion)
+        );
+        assert_eq!(parse_open_arpg_smoke_chapter("unknown"), None);
+
+        let config =
+            OpenArpgRuntimeConfig::from_env_and_args(["--smoke-chapter=2", "--smoke-frames=8"]);
+        assert!(config.headless_smoke);
+        assert_eq!(config.smoke_chapter, Some(ChapterId::HollowBastion));
+        assert_eq!(config.smoke_frames, 8);
     }
 
     #[test]
@@ -2968,13 +3136,13 @@ mod tests {
     #[test]
     fn startup_window_diagnostic_explains_headless_no_popup_mode() {
         let mut config = runtime_config_for_test(true);
-        config.audio_enabled = false;
+        config.audio_enabled = true;
         config.asset_mode = OpenArpgAssetMode::Processed;
 
         let diagnostic = startup_window_diagnostic(config, Some(":0"), None, None, true, None);
 
         assert!(diagnostic.contains("window=disabled(headless-smoke)"));
-        assert!(diagnostic.contains("audio=off"));
+        assert!(diagnostic.contains("audio=off(headless)"));
         assert!(diagnostic.contains("asset_mode=processed"));
         assert!(diagnostic.contains("run `cargo run -- --windowed`"));
         assert!(

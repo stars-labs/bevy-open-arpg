@@ -2,8 +2,8 @@ use crate::{
     Difficulty, DifficultySettings, GameState, RunStats,
     assets::GameAssets,
     chapter::{
-        ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed, SpawnBoss,
-        SpawnSanctumWave,
+        ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind,
+        InteractableUsed, SpawnBoss, SpawnSanctumWave,
     },
     data::{EnemyAttackKind, EnemyCatalog, EnemyTuning},
     feedback::{CombatEvent, FloatingCombatTextEvent, ScreenShakeEvent},
@@ -37,14 +37,40 @@ pub struct Enemy {
 }
 
 pub fn enemy_cursor_pick_radius(enemy: &Enemy) -> f32 {
-    if enemy.id == "keeper" {
+    if matches!(enemy.id.as_str(), "keeper" | "hollow_matron") {
         1.55
-    } else if enemy.id == "seal_warden" {
+    } else if matches!(enemy.id.as_str(), "seal_warden" | "bell_warden") {
         1.18
     } else if enemy.id == "nemesis" || !enemy.affixes.is_empty() {
         1.05
     } else {
         0.76
+    }
+}
+
+fn chapter_enemy_id(chapter: ChapterId, base_id: &str) -> &str {
+    if chapter == ChapterId::AshenReliquary {
+        return base_id;
+    }
+    match base_id {
+        "skeleton" | "bone_stalker" => "hollow_thrall",
+        "cultist" | "ashen_marksman" => "choir_acolyte",
+        "reliquary_brute" => "hollow_reaver",
+        "seal_warden" => "bell_warden",
+        "keeper" => "hollow_matron",
+        _ => base_id,
+    }
+}
+
+fn enemy_scene(assets: &GameAssets, model: &str) -> Handle<WorldAsset> {
+    match model {
+        "cultist.glb" => assets.cultist.clone(),
+        "butcher.glb" => assets.butcher.clone(),
+        "hollow_thrall.glb" => assets.hollow_thrall.clone(),
+        "choir_acolyte.glb" => assets.choir_acolyte.clone(),
+        "hollow_reaver.glb" => assets.hollow_reaver.clone(),
+        "hollow_matron.glb" => assets.hollow_matron.clone(),
+        _ => assets.skeleton.clone(),
     }
 }
 
@@ -573,6 +599,16 @@ struct EnemyFeedbackWriters<'w> {
     screen_shake: MessageWriter<'w, ScreenShakeEvent>,
 }
 
+#[derive(SystemParam)]
+struct EnemySpawnResources<'w, 's> {
+    commands: Commands<'w, 's>,
+    assets: Res<'w, GameAssets>,
+    catalog: Res<'w, EnemyCatalog>,
+    difficulty: Res<'w, DifficultySettings>,
+    modifier: Res<'w, ChapterModifier>,
+    active_chapter: Res<'w, ActiveChapter>,
+}
+
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<EnemyKilled>()
@@ -612,6 +648,7 @@ fn spawn_enemies(
     catalog: Res<EnemyCatalog>,
     difficulty: Res<DifficultySettings>,
     modifier: Res<ChapterModifier>,
+    active_chapter: Res<ActiveChapter>,
 ) {
     // Keep the guard wave ahead of the player spawn (0, 0, 4): an ARPG opener
     // should give a few seconds to read the room before first contact, not
@@ -627,16 +664,12 @@ fn spawn_enemies(
         ("skeleton", Vec3::new(7.0, 0.0, -2.0), vec![]),
     ];
 
-    for (id, position, affixes) in spawns {
+    for (base_id, position, affixes) in spawns {
+        let id = chapter_enemy_id(active_chapter.0, base_id);
         let Some(tuning) = catalog.get(id) else {
             continue;
         };
-        let scene = match tuning.model.as_str() {
-            "skeleton.glb" => assets.skeleton.clone(),
-            "cultist.glb" => assets.cultist.clone(),
-            "butcher.glb" => assets.butcher.clone(),
-            _ => assets.skeleton.clone(),
-        };
+        let scene = enemy_scene(&assets, &tuning.model);
         spawn_enemy(
             &mut commands,
             &assets,
@@ -666,9 +699,17 @@ fn spawn_enemies(
         &catalog,
         difficulty.current,
         *modifier,
+        active_chapter.0,
     );
     combat_events.write(CombatEvent {
-        text: "A reliquary champion pack patrols the outer halls".to_string(),
+        text: match active_chapter.0 {
+            ChapterId::AshenReliquary => {
+                "A reliquary champion pack patrols the outer halls".to_string()
+            }
+            ChapterId::HollowBastion => {
+                "A Hollow Choir champion pack guards the bastion crossing".to_string()
+            }
+        },
     });
 }
 
@@ -705,16 +746,14 @@ fn spawn_champion_pack(
     catalog: &EnemyCatalog,
     difficulty: Difficulty,
     modifier: ChapterModifier,
+    chapter: ChapterId,
 ) {
-    for (id, position, affixes) in champion_pack_spawns() {
-        let Some(tuning) = catalog.get(&id) else {
+    for (base_id, position, affixes) in champion_pack_spawns() {
+        let id = chapter_enemy_id(chapter, &base_id);
+        let Some(tuning) = catalog.get(id) else {
             continue;
         };
-        let scene = match tuning.model.as_str() {
-            "cultist.glb" => assets.cultist.clone(),
-            "butcher.glb" => assets.butcher.clone(),
-            _ => assets.skeleton.clone(),
-        };
+        let scene = enemy_scene(assets, &tuning.model);
         let entity = spawn_enemy(
             commands,
             assets,
@@ -761,16 +800,12 @@ fn spawn_treasure_fiend(
 }
 
 fn spawn_sanctum_wave(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut wave_events: MessageReader<SpawnSanctumWave>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for _ in wave_events.read() {
-        for (id, position, affixes) in [
+        for (base_id, position, affixes) in [
             ("ashen_marksman", Vec3::new(-4.0, 0.0, -15.0), vec![]),
             (
                 "seal_warden",
@@ -791,29 +826,29 @@ fn spawn_sanctum_wave(
                 vec![EnemyAffix::Molten],
             ),
         ] {
-            let Some(tuning) = catalog.get(id) else {
+            let id = chapter_enemy_id(resources.active_chapter.0, base_id);
+            let Some(tuning) = resources.catalog.get(id) else {
                 continue;
             };
-            let scene = match tuning.model.as_str() {
-                "cultist.glb" => assets.cultist.clone(),
-                "butcher.glb" => assets.butcher.clone(),
-                _ => assets.skeleton.clone(),
-            };
+            let scene = enemy_scene(&resources.assets, &tuning.model);
             spawn_enemy(
-                &mut commands,
-                &assets,
+                &mut resources.commands,
+                &resources.assets,
                 EnemySpawnSpec {
                     scene,
                     tuning,
                     position,
-                    difficulty: difficulty.current,
-                    modifier: *modifier,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
                     affixes,
                 },
             );
         }
         combat_events.write(CombatEvent {
-            text: "Seal Warden Vhal guards the second reliquary seal".to_string(),
+            text: format!(
+                "{} guards the second chapter seal",
+                resources.active_chapter.0.warden_name()
+            ),
         });
     }
 }
@@ -852,40 +887,33 @@ fn cursed_shrine_spawns(origin: Vec3) -> [(String, Vec3, Vec<EnemyAffix>); 4] {
 }
 
 fn spawn_cursed_shrine_wave(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut interactions: MessageReader<InteractableUsed>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for event in interactions.read() {
         if event.kind != InteractableKind::CursedShrine {
             continue;
         }
-        for (id, position, affixes) in cursed_shrine_spawns(event.position) {
-            let Some(tuning) = catalog.get(&id) else {
+        for (base_id, position, affixes) in cursed_shrine_spawns(event.position) {
+            let id = chapter_enemy_id(resources.active_chapter.0, &base_id);
+            let Some(tuning) = resources.catalog.get(id) else {
                 continue;
             };
-            let scene = match tuning.model.as_str() {
-                "cultist.glb" => assets.cultist.clone(),
-                "butcher.glb" => assets.butcher.clone(),
-                _ => assets.skeleton.clone(),
-            };
+            let scene = enemy_scene(&resources.assets, &tuning.model);
             let entity = spawn_enemy(
-                &mut commands,
-                &assets,
+                &mut resources.commands,
+                &resources.assets,
                 EnemySpawnSpec {
                     scene,
                     tuning,
                     position,
-                    difficulty: difficulty.current,
-                    modifier: *modifier,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
                     affixes,
                 },
             );
-            commands.entity(entity).try_insert(CursedAmbusher);
+            resources.commands.entity(entity).try_insert(CursedAmbusher);
         }
         combat_events.write(CombatEvent {
             text: "Cursed shrine awakened an elite ambush".to_string(),
@@ -924,33 +952,26 @@ fn obelisk_spawns(origin: Vec3) -> [(String, Vec3, Vec<EnemyAffix>); 5] {
 }
 
 fn spawn_obelisk_wave(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut events: MessageReader<SpawnObeliskWave>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for event in events.read() {
-        for (id, position, affixes) in obelisk_spawns(event.origin) {
-            let Some(tuning) = catalog.get(&id) else {
+        for (base_id, position, affixes) in obelisk_spawns(event.origin) {
+            let id = chapter_enemy_id(resources.active_chapter.0, &base_id);
+            let Some(tuning) = resources.catalog.get(id) else {
                 continue;
             };
-            let scene = match tuning.model.as_str() {
-                "cultist.glb" => assets.cultist.clone(),
-                "butcher.glb" => assets.butcher.clone(),
-                _ => assets.skeleton.clone(),
-            };
+            let scene = enemy_scene(&resources.assets, &tuning.model);
             spawn_enemy(
-                &mut commands,
-                &assets,
+                &mut resources.commands,
+                &resources.assets,
                 EnemySpawnSpec {
                     scene,
                     tuning,
                     position,
-                    difficulty: difficulty.current,
-                    modifier: *modifier,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
                     affixes,
                 },
             );
@@ -997,33 +1018,26 @@ fn rift_spawns(origin: Vec3) -> [(String, Vec3, Vec<EnemyAffix>); 6] {
 }
 
 fn spawn_rift_wave(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut events: MessageReader<SpawnRiftWave>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for event in events.read() {
-        for (id, position, affixes) in rift_spawns(event.origin) {
-            let Some(tuning) = catalog.get(&id) else {
+        for (base_id, position, affixes) in rift_spawns(event.origin) {
+            let id = chapter_enemy_id(resources.active_chapter.0, &base_id);
+            let Some(tuning) = resources.catalog.get(id) else {
                 continue;
             };
-            let scene = match tuning.model.as_str() {
-                "cultist.glb" => assets.cultist.clone(),
-                "butcher.glb" => assets.butcher.clone(),
-                _ => assets.skeleton.clone(),
-            };
+            let scene = enemy_scene(&resources.assets, &tuning.model);
             spawn_enemy(
-                &mut commands,
-                &assets,
+                &mut resources.commands,
+                &resources.assets,
                 EnemySpawnSpec {
                     scene,
                     tuning,
                     position,
-                    difficulty: difficulty.current,
-                    modifier: *modifier,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
                     affixes,
                 },
             );
@@ -1060,42 +1074,41 @@ fn ashen_threat_spawns(origin: Vec3, surge: u32) -> [(String, Vec3, Vec<EnemyAff
 }
 
 fn spawn_ashen_threat_wave(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut events: MessageReader<SpawnAshenThreatWave>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for event in events.read() {
-        for (id, position, affixes) in ashen_threat_spawns(event.origin, event.surge) {
-            let Some(tuning) = catalog.get(&id) else {
+        for (base_id, position, affixes) in ashen_threat_spawns(event.origin, event.surge) {
+            let id = chapter_enemy_id(resources.active_chapter.0, &base_id);
+            let Some(tuning) = resources.catalog.get(id) else {
                 continue;
             };
-            let scene = match tuning.model.as_str() {
-                "cultist.glb" => assets.cultist.clone(),
-                "butcher.glb" => assets.butcher.clone(),
-                _ => assets.skeleton.clone(),
-            };
+            let scene = enemy_scene(&resources.assets, &tuning.model);
             spawn_enemy(
-                &mut commands,
-                &assets,
+                &mut resources.commands,
+                &resources.assets,
                 EnemySpawnSpec {
                     scene,
                     tuning,
                     position,
-                    difficulty: difficulty.current,
-                    modifier: *modifier,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
                     affixes,
                 },
             );
         }
         combat_events.write(CombatEvent {
-            text: format!(
-                "Ashen threat surge {} opened a retaliation wave",
-                event.surge
-            ),
+            text: match resources.active_chapter.0 {
+                ChapterId::AshenReliquary => format!(
+                    "Ashen threat surge {} opened a retaliation wave",
+                    event.surge
+                ),
+                ChapterId::HollowBastion => format!(
+                    "Hollow resonance surge {} opened a retaliation wave",
+                    event.surge
+                ),
+            },
         });
     }
 }
@@ -1107,9 +1120,11 @@ fn spawn_boss(
     catalog: Res<EnemyCatalog>,
     difficulty: Res<DifficultySettings>,
     modifier: Res<ChapterModifier>,
+    active_chapter: Res<ActiveChapter>,
 ) {
     for _ in boss_events.read() {
-        let Some(tuning) = catalog.get("keeper") else {
+        let boss_id = active_chapter.0.boss_id();
+        let Some(tuning) = catalog.get(boss_id) else {
             continue;
         };
         let boss_position = Vec3::new(0.0, 0.0, -20.0);
@@ -1117,11 +1132,18 @@ fn spawn_boss(
             WorldAssetRoot(assets.boss_summon_portal.clone()),
             Transform::from_translation(boss_position).with_scale(Vec3::splat(1.18)),
             EnemyEntity,
-            Name::new("Malrec Summoning Seal"),
+            Name::new(format!(
+                "{} Summoning Seal",
+                active_chapter.0.boss_short_name()
+            )),
         ));
+        let summon_color = match active_chapter.0 {
+            ChapterId::AshenReliquary => Color::srgb(1.0, 0.18, 0.04),
+            ChapterId::HollowBastion => Color::srgb(0.10, 0.82, 1.0),
+        };
         commands.spawn((
             PointLight {
-                color: Color::srgb(1.0, 0.18, 0.04),
+                color: summon_color,
                 intensity: 950.0,
                 range: 8.0,
                 shadow_maps_enabled: false,
@@ -1129,13 +1151,16 @@ fn spawn_boss(
             },
             Transform::from_translation(boss_position + Vec3::Y * 1.35),
             EnemyEntity,
-            Name::new("Malrec Summoning Light"),
+            Name::new(format!(
+                "{} Summoning Light",
+                active_chapter.0.boss_short_name()
+            )),
         ));
         let boss = spawn_enemy(
             &mut commands,
             &assets,
             EnemySpawnSpec {
-                scene: assets.butcher.clone(),
+                scene: enemy_scene(&assets, &tuning.model),
                 tuning,
                 position: boss_position,
                 difficulty: difficulty.current,
@@ -1255,7 +1280,7 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
             Name::new(display_name),
         ))
         .id();
-    if tuning.id == "seal_warden" {
+    if matches!(tuning.id.as_str(), "seal_warden" | "bell_warden") {
         commands
             .entity(entity)
             .try_insert(SealWardenWard::default());
@@ -1390,10 +1415,16 @@ fn main_quest_enemy_marker_state(
     if health.current <= 0.0 {
         return MainQuestEnemyMarkerState::Hidden;
     }
-    match (progress.phase, enemy.id.as_str()) {
-        (ChapterPhase::Sanctum, "seal_warden") => MainQuestEnemyMarkerState::SealWarden,
-        (ChapterPhase::Boss, "keeper") if !progress.boss_slain => MainQuestEnemyMarkerState::Keeper,
-        _ => MainQuestEnemyMarkerState::Hidden,
+    let chapter = progress.chapter_id();
+    if progress.phase == ChapterPhase::Sanctum && enemy.id == chapter.warden_id() {
+        MainQuestEnemyMarkerState::SealWarden
+    } else if progress.phase == ChapterPhase::Boss
+        && enemy.id == chapter.boss_id()
+        && !progress.boss_slain
+    {
+        MainQuestEnemyMarkerState::Keeper
+    } else {
+        MainQuestEnemyMarkerState::Hidden
     }
 }
 
@@ -1862,7 +1893,7 @@ fn enemy_ai(
                     text: "Desecrator affix: corrupted ground opens".to_string(),
                 });
             }
-            if enemy.id == "seal_warden" {
+            if matches!(enemy.id.as_str(), "seal_warden" | "bell_warden") {
                 spawn_seal_warden_rune(
                     &mut commands,
                     &mut meshes,
@@ -2415,6 +2446,7 @@ struct BossPhaseResources<'w, 's> {
     catalog: Res<'w, EnemyCatalog>,
     difficulty: Res<'w, DifficultySettings>,
     modifier: Res<'w, ChapterModifier>,
+    active_chapter: Res<'w, ActiveChapter>,
     stats: ResMut<'w, RunStats>,
 }
 
@@ -2432,15 +2464,18 @@ fn boss_phase_transition(
                     resources.stats.boss_enraged = true;
                     spawn_boss_reinforcement_wave(
                         &mut resources.commands,
-                        &resources.assets,
-                        &resources.catalog,
-                        transform.translation,
-                        resources.difficulty.current,
-                        *resources.modifier,
+                        BossReinforcementWaveContext {
+                            assets: &resources.assets,
+                            catalog: &resources.catalog,
+                            origin: transform.translation,
+                            difficulty: resources.difficulty.current,
+                            modifier: *resources.modifier,
+                            chapter: resources.active_chapter.0,
+                        },
                         boss_enrage_reinforcements(),
                     );
                     combat_events.write(CombatEvent {
-                        text: boss_enrage_event_text().to_string(),
+                        text: boss_enrage_event_text_for(resources.active_chapter.0),
                     });
                 }
             }
@@ -2454,7 +2489,8 @@ fn boss_phase_transition(
         phase.enrage_timer = Timer::from_seconds(BOSS_ENRAGE_DELAY_SECS, TimerMode::Once);
         if !enemy.affixes.contains(&EnemyAffix::Frenzied) {
             enemy.affixes.push(EnemyAffix::Frenzied);
-            enemy.display_name = display_name_with_affixes("Malrec, Keeper of Ash", &enemy.affixes);
+            enemy.display_name =
+                display_name_with_affixes(resources.active_chapter.0.boss_name(), &enemy.affixes);
         }
         enemy.attack_damage *= 1.18;
         enemy.move_speed *= 1.15;
@@ -2462,38 +2498,37 @@ fn boss_phase_transition(
 
         spawn_boss_reinforcement_wave(
             &mut resources.commands,
-            &resources.assets,
-            &resources.catalog,
-            transform.translation,
-            resources.difficulty.current,
-            *resources.modifier,
+            BossReinforcementWaveContext {
+                assets: &resources.assets,
+                catalog: &resources.catalog,
+                origin: transform.translation,
+                difficulty: resources.difficulty.current,
+                modifier: *resources.modifier,
+                chapter: resources.active_chapter.0,
+            },
             boss_phase_two_reinforcements(),
         );
         combat_events.write(CombatEvent {
-            text: boss_phase_two_event_text(BOSS_ENRAGE_DELAY_SECS),
+            text: boss_phase_two_event_text_for(resources.active_chapter.0, BOSS_ENRAGE_DELAY_SECS),
         });
     }
 }
 
 fn spawn_boss_reinforcement_wave(
     commands: &mut Commands,
-    assets: &GameAssets,
-    catalog: &EnemyCatalog,
-    origin: Vec3,
-    difficulty: Difficulty,
-    modifier: ChapterModifier,
+    context: BossReinforcementWaveContext<'_>,
     wave: impl IntoIterator<Item = BossReinforcementWaveSpec>,
 ) {
     for reinforcement in wave {
         spawn_boss_reinforcement(
             commands,
-            assets,
-            catalog,
+            context.assets,
+            context.catalog,
             BossReinforcementSpec {
-                difficulty,
-                modifier,
-                id: reinforcement.id,
-                position: origin + reinforcement.offset,
+                difficulty: context.difficulty,
+                modifier: context.modifier,
+                id: chapter_enemy_id(context.chapter, reinforcement.id),
+                position: context.origin + reinforcement.offset,
                 affixes: reinforcement.affixes,
             },
         );
@@ -2509,11 +2544,7 @@ fn spawn_boss_reinforcement(
     let Some(tuning) = catalog.get(spec.id) else {
         return;
     };
-    let scene = match tuning.model.as_str() {
-        "cultist.glb" => assets.cultist.clone(),
-        "butcher.glb" => assets.butcher.clone(),
-        _ => assets.skeleton.clone(),
-    };
+    let scene = enemy_scene(assets, &tuning.model);
     spawn_enemy(
         commands,
         assets,
@@ -2540,6 +2571,15 @@ struct BossReinforcementWaveSpec {
     id: &'static str,
     offset: Vec3,
     affixes: Vec<EnemyAffix>,
+}
+
+struct BossReinforcementWaveContext<'a> {
+    assets: &'a GameAssets,
+    catalog: &'a EnemyCatalog,
+    origin: Vec3,
+    difficulty: Difficulty,
+    modifier: ChapterModifier,
+    chapter: ChapterId,
 }
 
 fn boss_phase_two_reinforcements() -> [BossReinforcementWaveSpec; 3] {
@@ -2599,37 +2639,63 @@ fn boss_enrage_should_trigger(phase: &BossPhase) -> bool {
     phase.phase_two_started && !phase.enrage_started && phase.enrage_timer.is_finished()
 }
 
+#[cfg(test)]
 pub fn boss_pressure_summary(health: &Health, phase: &BossPhase) -> String {
+    boss_pressure_summary_for(ChapterId::AshenReliquary, health, phase)
+}
+
+pub fn boss_pressure_summary_for(chapter: ChapterId, health: &Health, phase: &BossPhase) -> String {
+    let boss = chapter.boss_short_name();
     let health_percent = if health.max > 0.0 {
         (health.current.max(0.0) / health.max * 100.0).round()
     } else {
         0.0
     };
     if phase.enrage_started {
-        return format!(
-            "Malrec: Ashen Enrage {:.0}% | kite burning floor",
-            health_percent
-        );
+        return match chapter {
+            ChapterId::AshenReliquary => {
+                format!("{boss}: Ashen Enrage {health_percent:.0}% | kite burning floor")
+            }
+            ChapterId::HollowBastion => {
+                format!("{boss}: Hollow Crescendo {health_percent:.0}% | kite soul fissures")
+            }
+        };
     }
     if phase.phase_two_started {
         return format!(
-            "Malrec: phase two {:.0}% | break before enrage {:.0}s",
+            "{boss}: phase two {:.0}% | break before enrage {:.0}s",
             health_percent,
             phase.enrage_timer.remaining_secs()
         );
     }
-    format!("Malrec: phase one {:.0}%", health_percent)
+    format!("{boss}: phase one {:.0}%", health_percent)
 }
 
+#[cfg(test)]
 fn boss_phase_two_event_text(enrage_delay_secs: f32) -> String {
+    boss_phase_two_event_text_for(ChapterId::AshenReliquary, enrage_delay_secs)
+}
+
+fn boss_phase_two_event_text_for(chapter: ChapterId, enrage_delay_secs: f32) -> String {
     format!(
-        "Boss Phase II: BREAK MALREC before enrage {:.0}s | stagger opens EXECUTE WINDOW | kill stalker, marksman, brute",
+        "Boss Phase II: BREAK {} before enrage {:.0}s | stagger opens EXECUTE WINDOW | kill stalker, marksman, brute",
+        chapter.boss_short_name().to_ascii_uppercase(),
         enrage_delay_secs.max(0.0)
     )
 }
 
 fn boss_enrage_event_text() -> &'static str {
     "Ashen Enrage: floor burning | Primal cache downgraded | clear marksman/brute Arcane/Jailer/Desecrator pressure"
+}
+
+fn boss_enrage_event_text_for(chapter: ChapterId) -> String {
+    match chapter {
+        ChapterId::AshenReliquary => boss_enrage_event_text().to_string(),
+        ChapterId::HollowBastion => {
+            "Hollow Crescendo: soul fissures erupt | Primal cache downgraded | clear choir/reaver pressure"
+                .to_string()
+        }
+    }
 }
 
 pub fn boss_stagger_summary(

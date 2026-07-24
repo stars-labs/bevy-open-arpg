@@ -44,10 +44,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-  actions: read
+  contents: read
 
 env:
   APP_NAME: bevy-open-arpg
@@ -57,30 +54,36 @@ jobs:
     name: Build WebAssembly package
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     env:
       CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || (github.event.inputs.checkout_ref != '' && github.event.inputs.checkout_ref) || github.ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Record source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-targets: true
           cache-on-failure: false
 
       - name: Cache wasm tool binaries
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/bin/wasm-bindgen
@@ -109,26 +112,34 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           (cd web && zip -r -q ../artifacts/web-dist.zip .)
-          sha256sum artifacts/web-dist.zip > artifacts/web-dist.zip.sha256
+          (
+            cd artifacts
+            sha256sum web-dist.zip > web-dist.zip.sha256
+            sha256sum -c web-dist.zip.sha256
+          )
           ls -la artifacts/web-dist.zip
           sha256sum artifacts/web-dist.zip
 
       - name: Build web release manifest
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
           web_hash="$(cut -d' ' -f1 artifacts/web-dist.zip.sha256)"
           web_size="$(stat -c %s artifacts/web-dist.zip)"
           web_sha_hash="$(sha256sum artifacts/web-dist.zip.sha256 | awk '{print $1}')"
-          manifest_size="$(stat -c %s artifacts/web-dist.zip.sha256)"
+          web_sha_size="$(stat -c %s artifacts/web-dist.zip.sha256)"
           {
-            echo "artifact,sha256,size_bytes"
-            printf 'web-dist.zip,%s,%s\n' "$web_hash" "$web_size"
-            printf 'web-dist.zip.sha256,%s,%s\n' "$web_sha_hash" "$manifest_size"
-            echo "run_ref,${{ github.sha }},0"
+            echo "field,value"
+            printf 'source_commit,%s\n' "$SOURCE_SHA"
+            printf 'web_dist_sha256,%s\n' "$web_hash"
+            printf 'web_dist_size_bytes,%s\n' "$web_size"
+            printf 'web_dist_checksum_sha256,%s\n' "$web_sha_hash"
+            printf 'web_dist_checksum_size_bytes,%s\n' "$web_sha_size"
           } > artifacts/web-release-manifest.csv
 
       - name: Upload web bundle (passes the build between jobs)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: web-dist-${{ github.sha }}
           path: |
@@ -173,20 +184,20 @@ jobs:
       RELEASE_TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_type == 'tag' && github.event.inputs.release_tag || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: stable
           target: ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           cache-targets: true
           cache-on-failure: false
@@ -229,24 +240,25 @@ jobs:
           staging_dir = package_dir / f"{APP_NAME}-{PLATFORM}"
           staging_dir.mkdir(parents=True, exist_ok=True)
           staging = [binary_path, Path("README.md"), Path("Cargo.toml"), Path("LICENSE")]
+          assets_path = Path("assets")
 
           for src in staging:
             if not src.is_file():
               raise SystemExit(f"missing staging file: {src}")
             shutil.copy2(src, staging_dir / src.name)
 
-          staging_items = sorted(staging_dir.iterdir())
-          if not staging_items:
-            raise SystemExit("missing staging files")
+          if not assets_path.is_dir():
+            raise SystemExit(f"missing runtime assets directory: {assets_path}")
+          shutil.copytree(assets_path, staging_dir / assets_path.name)
 
           if PACKAGE_TYPE == "zip":
             with zipfile.ZipFile(artifact_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-              for item in staging_items:
-                zf.write(item, arcname=item.name)
+              for item in sorted(path for path in staging_dir.rglob("*") if path.is_file()):
+                relative = item.relative_to(staging_dir)
+                zf.write(item, arcname=Path(staging_dir.name) / relative)
           elif PACKAGE_TYPE == "tar.gz":
             with tarfile.open(artifact_path, "w:gz") as tf:
-              for item in staging_items:
-                tf.add(item, arcname=item.name)
+              tf.add(staging_dir, arcname=staging_dir.name)
           else:
             raise SystemExit(f"Unsupported package type: {PACKAGE_TYPE}")
 
@@ -268,7 +280,7 @@ jobs:
           PACKAGE_TYPE: ${{ matrix.package_type }}
 
       - name: Upload native release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bevy-open-arpg-native-${{ env.RELEASE_TAG_NAME }}-${{ matrix.platform }}-${{ github.sha }}
           path: |
@@ -286,21 +298,39 @@ jobs:
       - build-native
     # Keep release publishing alive for preview builds when native is intentionally skipped,
     # but still fail closed for native release requests if native builds fail.
-    if: github.event_name != 'pull_request' &&
-      needs['build-native'].result != 'failure' &&
-      needs['build-native'].result != 'cancelled'
+    if: |
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs['build-web'].result == 'success' &&
+      (needs['build-native'].result == 'success' || needs['build-native'].result == 'skipped')
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
+      source_sha: ${{ needs.build-web.outputs.source_sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.build-web.outputs.source_sha }}
           persist-credentials: false
 
       - name: Determine release tag
         id: meta
         run: |
           set -euo pipefail
+          write_meta() {
+            {
+              echo "tag=$1"
+              echo "prerelease=$2"
+              echo "is_tag_release=$3"
+              echo "make_latest=$4"
+            } >> "$GITHUB_OUTPUT"
+          }
+
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             release_type="${{ github.event.inputs.release_type }}"
             release_tag="${{ github.event.inputs.release_tag }}"
@@ -310,29 +340,17 @@ jobs:
                 echo "error: release_type=tag requires release_tag to start with 'v' (e.g. v0.1.0)." >&2
                 exit 1
               fi
-              echo "tag=${release_tag}" >> "$GITHUB_OUTPUT"
-              echo "prerelease=false" >> "$GITHUB_OUTPUT"
-              echo "is_tag_release=true" >> "$GITHUB_OUTPUT"
-              echo "make_latest=true" >> "$GITHUB_OUTPUT"
+              write_meta "$release_tag" false true true
             else
               if [[ -n "${release_tag}" ]]; then
                 echo "warning: release_type=preview ignores release_tag=${release_tag}." >&2
               fi
-              echo "tag=web-latest" >> "$GITHUB_OUTPUT"
-              echo "prerelease=true" >> "$GITHUB_OUTPUT"
-              echo "is_tag_release=false" >> "$GITHUB_OUTPUT"
-              echo "make_latest=false" >> "$GITHUB_OUTPUT"
+              write_meta web-latest true false false
             fi
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "is_tag_release=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+            write_meta "${GITHUB_REF#refs/tags/}" false true true
           else
-            echo "tag=web-latest" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "is_tag_release=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+            write_meta web-latest true false false
           fi
 
       - name: Validate release metadata
@@ -360,14 +378,14 @@ jobs:
           fi
 
       - name: Download web bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: web-dist-${{ github.sha }}
           path: .
 
       - name: Download native bundle on tagged release
         if: steps.meta.outputs.is_tag_release == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: bevy-open-arpg-native-${{ steps.meta.outputs.tag }}-*
           path: .
@@ -410,9 +428,9 @@ jobs:
             done
           fi
 
-          # Emit a stable checksum/size manifest for every attached artifact.
-          # This mirrors the Bevy release metadata pattern for end-to-end reproducibility.
+          # Emit a stable checksum/size manifest for every payload artifact.
           checksum_manifest="release-asset-manifest.csv"
+          manifest_checksum="${checksum_manifest}.sha256"
           printf 'artifact,sha256,size_bytes\n' > "$checksum_manifest"
           while IFS= read -r asset; do
             [ -n "$asset" ] || continue
@@ -425,10 +443,9 @@ jobs:
             printf '%s,%s,%s\n' "$asset" "$asset_sha" "$asset_size" >> "$checksum_manifest"
           done < "$asset_list"
 
-          manifest_sha="$(sha256sum "$checksum_manifest" | awk '{print $1}')"
-          manifest_size="$(stat -c %s "$checksum_manifest")"
-          printf '%s,%s,%s\n' "$checksum_manifest" "$manifest_sha" "$manifest_size" >> "$checksum_manifest"
+          sha256sum "$checksum_manifest" > "$manifest_checksum"
           append "$checksum_manifest"
+          append "$manifest_checksum"
 
           if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
             required_native=(
@@ -454,10 +471,10 @@ jobs:
           {
             echo "## bevy-open-arpg ${{ steps.meta.outputs.tag }}"
             echo
-            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- commit: \`${{ needs.build-web.outputs.source_sha }}\`"
             echo "- release type: $release_kind"
             echo "- web bundle: \`web-dist.zip\`"
-            echo "- checksums: \`release-asset-manifest.csv\`"
+            echo "- checksums: \`release-asset-manifest.csv\` and detached SHA-256"
             if [[ "${{ steps.meta.outputs.is_tag_release }}" == "true" ]]; then
               echo "- native bundles: \`linux-x86_64\`, \`windows-x86_64\`, \`macos-x86_64\`"
             fi
@@ -476,11 +493,12 @@ jobs:
             done < "$checksum_manifest"
           } > "$release_body"
 
-          echo "files<<EOF" >> "$GITHUB_OUTPUT"
-          cat "$asset_list" >> "$GITHUB_OUTPUT"
-          echo "$checksum_manifest" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "body_path=$release_body" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            cat "$asset_list"
+            echo "EOF"
+            echo "body_path=$release_body"
+          } >> "$GITHUB_OUTPUT"
           if [ -s "$asset_list" ]; then
             echo "Release assets:"
             cat "$asset_list"
@@ -488,17 +506,43 @@ jobs:
           echo "Release checksums:"
           cat "$checksum_manifest"
 
+      - name: Attest release artifacts
+        uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35 # v4
+        with:
+          subject-path: ${{ steps.assets.outputs.files }}
+
+      - name: Move rolling preview tag to the built commit
+        if: steps.meta.outputs.is_tag_release != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.build-web.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/web-latest" >/dev/null 2>&1; then
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/web-latest" \
+              -f sha="$SOURCE_SHA" \
+              -F force=true >/dev/null
+          else
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/web-latest" \
+              -f sha="$SOURCE_SHA" >/dev/null
+          fi
+
       - name: Publish release with the web bundle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: bevy-open-arpg ${{ steps.meta.outputs.tag }}
           prerelease: ${{ steps.meta.outputs.prerelease }}
           make_latest: ${{ steps.meta.outputs.make_latest }}
           overwrite_files: true
-          # Move the rolling tag to the current commit on main pushes.
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.build-web.outputs.source_sha }}
           files: ${{ steps.assets.outputs.files }}
+          fail_on_unmatched_files: true
           body_path: ${{ steps.assets.outputs.body_path }}
           generate_release_notes: ${{ steps.meta.outputs.is_tag_release == 'true' }}
         env:
@@ -510,10 +554,25 @@ jobs:
     timeout-minutes: 15
     needs: release-web
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      - name: Verify Pages uses the GitHub Actions publishing source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          build_type="$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type')"
+          if [[ "$build_type" != "workflow" ]]; then
+            echo "::error::GitHub Pages publishing source is '$build_type'; select GitHub Actions in Settings > Pages."
+            exit 1
+          fi
+
       - name: Download released bundle
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -532,13 +591,62 @@ jobs:
           find web-dist -maxdepth 1 -type f \( -name '.gitkeep' -o -name '.nojekyll' \) -delete || true
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
       - name: Upload Pages bundle
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: web-dist
 
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
+
+      - name: Verify deployed files match the released bundle
+        env:
+          PAGE_URL: ${{ steps.deploy.outputs.page_url }}
+          SOURCE_SHA: ${{ needs.release-web.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          page_root="${PAGE_URL%/}"
+          cache_key="${SOURCE_SHA}-${GITHUB_RUN_ATTEMPT}"
+          verify_files=(
+            "index.html"
+            "pkg/bevy_open_arpg.js"
+            "pkg/bevy_open_arpg_bg.wasm.gz"
+            "assets/models/hollow_matron.glb"
+          )
+
+          for attempt in $(seq 1 20); do
+            matched=true
+            for relative_path in "${verify_files[@]}"; do
+              mkdir -p "deployed/$(dirname "$relative_path")"
+              if ! curl -fsSL \
+                --connect-timeout 10 \
+                --max-time 60 \
+                -H "Cache-Control: no-cache" \
+                "${page_root}/${relative_path}?release=${cache_key}-${attempt}" \
+                -o "deployed/${relative_path}"; then
+                matched=false
+                break
+              fi
+
+              expected="$(sha256sum "web-dist/${relative_path}" | awk '{print $1}')"
+              actual="$(sha256sum "deployed/${relative_path}" | awk '{print $1}')"
+              if [[ "$actual" != "$expected" ]]; then
+                echo "Attempt ${attempt}: ${relative_path} is still stale (${actual} != ${expected})."
+                matched=false
+                break
+              fi
+            done
+
+            if [[ "$matched" == "true" ]]; then
+              echo "GitHub Pages matches the released web bundle at ${SOURCE_SHA}."
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::GitHub Pages did not converge to the released bundle after 20 attempts."
+          exit 1

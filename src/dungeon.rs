@@ -1,7 +1,9 @@
 use crate::{
     GameState, RunStats,
     assets::GameAssets,
-    chapter::{ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed},
+    chapter::{
+        ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed,
+    },
     feedback::CombatEvent,
     not_paused,
     ordeal::ChapterModifier,
@@ -320,10 +322,24 @@ fn spawn_dungeon(
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<GameAssets>,
     modifier: Res<ChapterModifier>,
+    active_chapter: Res<ActiveChapter>,
 ) {
+    let chapter = active_chapter.0;
+    let (outer_floor_color, sanctum_floor_color, wall_color) = match chapter {
+        ChapterId::AshenReliquary => (
+            Color::srgb(0.12, 0.105, 0.12),
+            Color::srgb(0.135, 0.10, 0.105),
+            Color::srgb(0.20, 0.19, 0.22),
+        ),
+        ChapterId::HollowBastion => (
+            Color::srgb(0.055, 0.085, 0.10),
+            Color::srgb(0.045, 0.065, 0.095),
+            Color::srgb(0.13, 0.18, 0.21),
+        ),
+    };
     let floor_mesh = meshes.add(Cuboid::new(26.0, 0.25, 18.0));
     let floor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.12, 0.105, 0.12),
+        base_color: outer_floor_color,
         perceptual_roughness: 0.92,
         ..default()
     });
@@ -332,12 +348,15 @@ fn spawn_dungeon(
         MeshMaterial3d(floor_mat.clone()),
         Transform::from_xyz(0.0, -0.13, 0.0),
         DungeonEntity,
-        Name::new("Reliquary Outer Floor"),
+        Name::new(match chapter {
+            ChapterId::AshenReliquary => "Reliquary Outer Floor",
+            ChapterId::HollowBastion => "Hollow Bastion Crossing",
+        }),
     ));
     // Inner sanctum chamber to the north, joined through the sealed gate.
     let sanctum_floor_mesh = meshes.add(Cuboid::new(22.0, 0.25, 16.0));
     let sanctum_floor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.135, 0.10, 0.105),
+        base_color: sanctum_floor_color,
         perceptual_roughness: 0.90,
         ..default()
     });
@@ -346,12 +365,15 @@ fn spawn_dungeon(
         MeshMaterial3d(sanctum_floor_mat),
         Transform::from_xyz(0.0, -0.13, -17.0),
         DungeonEntity,
-        Name::new("Inner Sanctum Floor"),
+        Name::new(match chapter {
+            ChapterId::AshenReliquary => "Inner Sanctum Floor",
+            ChapterId::HollowBastion => "Bell Crypt Floor",
+        }),
     ));
 
     let wall_mesh = meshes.add(Cuboid::new(1.0, 2.4, 1.0));
     let wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.20, 0.19, 0.22),
+        base_color: wall_color,
         perceptual_roughness: 0.85,
         ..default()
     });
@@ -414,9 +436,13 @@ fn spawn_dungeon(
     // The sealed gate itself: ember-lit slabs blocking the doorway until the
     // outer objectives crack the seal.
     let gate_mesh = meshes.add(Cuboid::new(1.0, 2.2, 0.9));
+    let (gate_color, gate_emissive) = match chapter {
+        ChapterId::AshenReliquary => (Color::srgb(0.32, 0.10, 0.08), Color::srgb(0.9, 0.22, 0.08)),
+        ChapterId::HollowBastion => (Color::srgb(0.06, 0.20, 0.26), Color::srgb(0.05, 0.72, 0.90)),
+    };
     let gate_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.10, 0.08),
-        emissive: Color::srgb(0.9, 0.22, 0.08).into(),
+        base_color: gate_color,
+        emissive: gate_emissive.into(),
         perceptual_roughness: 0.55,
         ..default()
     });
@@ -439,7 +465,10 @@ fn spawn_dungeon(
             Some(InteractableKind::Cache),
         ),
         (
-            assets.altar.clone(),
+            match chapter {
+                ChapterId::AshenReliquary => assets.altar.clone(),
+                ChapterId::HollowBastion => assets.soul_font.clone(),
+            },
             Vec3::new(6.0, 0.0, -20.5),
             1.2,
             Some(InteractableKind::Altar),
@@ -518,11 +547,19 @@ fn spawn_dungeon(
         "Renewal Well",
     );
 
-    for (name, position) in [
-        ("Steward's Warning", Vec3::new(-10.2, 0.0, 5.8)),
-        ("Acolyte's Oath", Vec3::new(3.1, 0.0, -6.3)),
-        ("Malrec's Pact", Vec3::new(9.2, 0.0, 5.7)),
-    ] {
+    let lore_pages = match chapter {
+        ChapterId::AshenReliquary => [
+            ("Steward's Warning", Vec3::new(-10.2, 0.0, 5.8)),
+            ("Acolyte's Oath", Vec3::new(3.1, 0.0, -6.3)),
+            ("Malrec's Pact", Vec3::new(9.2, 0.0, 5.7)),
+        ],
+        ChapterId::HollowBastion => [
+            ("The Last Bell", Vec3::new(-10.2, 0.0, 5.8)),
+            ("Choir Litany", Vec3::new(3.1, 0.0, -6.3)),
+            ("Nyxara's Lament", Vec3::new(9.2, 0.0, 5.7)),
+        ],
+    };
+    for (name, position) in lore_pages {
         commands.spawn((
             WorldAssetRoot(assets.lore_page.clone()),
             Transform::from_translation(position),
@@ -608,7 +645,11 @@ fn spawn_dungeon(
         Vec3::new(-5.6, 0.0, -1.0),
         1.15,
         11.0 * modifier.hazard_damage_multiplier(),
-        "Ember vent",
+        match chapter {
+            ChapterId::AshenReliquary => "Ember vent",
+            ChapterId::HollowBastion => "Soul fissure",
+        },
+        chapter,
     );
     spawn_hazard(
         &mut commands,
@@ -616,7 +657,11 @@ fn spawn_dungeon(
         Vec3::new(1.7, 0.0, -3.2),
         1.05,
         10.0 * modifier.hazard_damage_multiplier(),
-        "Ember vent",
+        match chapter {
+            ChapterId::AshenReliquary => "Ember vent",
+            ChapterId::HollowBastion => "Soul fissure",
+        },
+        chapter,
     );
     spawn_hazard(
         &mut commands,
@@ -624,7 +669,11 @@ fn spawn_dungeon(
         Vec3::new(6.7, 0.0, 1.2),
         1.25,
         13.0 * modifier.hazard_damage_multiplier(),
-        "Keeper's flame vent",
+        match chapter {
+            ChapterId::AshenReliquary => "Keeper's flame vent",
+            ChapterId::HollowBastion => "Matron's soul fissure",
+        },
+        chapter,
     );
 }
 
@@ -716,9 +765,13 @@ fn spawn_hazard(
     radius: f32,
     damage: f32,
     label: &'static str,
+    chapter: ChapterId,
 ) {
     commands.spawn((
-        WorldAssetRoot(assets.ember_vent.clone()),
+        WorldAssetRoot(match chapter {
+            ChapterId::AshenReliquary => assets.ember_vent.clone(),
+            ChapterId::HollowBastion => assets.soul_fissure.clone(),
+        }),
         Transform::from_translation(position).with_scale(hazard_visual_scale(radius)),
         DungeonEntity,
         DungeonHazard {

@@ -1,6 +1,6 @@
 use crate::{
     GameState,
-    chapter::{InteractableKind, InteractableUsed},
+    chapter::{ChapterId, ChapterProgress, InteractableKind, InteractableUsed},
     feedback::CombatEvent,
     not_paused,
 };
@@ -14,6 +14,9 @@ pub enum LoreEntryId {
     StewardWarning,
     AcolyteOath,
     MalrecPact,
+    LastBell,
+    ChoirLitany,
+    NyxaraLament,
 }
 
 impl LoreEntryId {
@@ -22,6 +25,9 @@ impl LoreEntryId {
             Self::StewardWarning => "Steward's Warning",
             Self::AcolyteOath => "Acolyte's Oath",
             Self::MalrecPact => "Malrec's Pact",
+            Self::LastBell => "The Last Bell",
+            Self::ChoirLitany => "Choir Litany",
+            Self::NyxaraLament => "Nyxara's Lament",
         }
     }
 
@@ -30,6 +36,13 @@ impl LoreEntryId {
             Self::StewardWarning => "The reliquary was sealed when ash began to answer prayer.",
             Self::AcolyteOath => "We trade names for embers and keep watch until Malrec wakes.",
             Self::MalrecPact => "Blood opens the keeper's gate; only a relic blade can close it.",
+            Self::LastBell => "When the bastion bell fell silent, every buried oath began to sing.",
+            Self::ChoirLitany => {
+                "We lend Nyxara our final breath so the Hollow Choir may never end."
+            }
+            Self::NyxaraLament => {
+                "Malrec stole the first seal. I will drown the second in a thousand voices."
+            }
         }
     }
 }
@@ -97,6 +110,7 @@ fn reset_lore(mut journal: ResMut<LoreJournal>) {
 
 fn collect_lore(
     mut interactions: MessageReader<InteractableUsed>,
+    progress: Res<ChapterProgress>,
     mut journal: ResMut<LoreJournal>,
     mut combat_events: MessageWriter<CombatEvent>,
 ) {
@@ -104,7 +118,7 @@ fn collect_lore(
         if event.kind != InteractableKind::LorePage {
             continue;
         }
-        if let Some(entry) = lore_entry_for_position(event.position)
+        if let Some(entry) = lore_entry_for_chapter_position(progress.chapter_id(), event.position)
             && journal.discover(entry)
         {
             combat_events.write(CombatEvent {
@@ -114,14 +128,27 @@ fn collect_lore(
     }
 }
 
+#[cfg(test)]
 pub fn lore_entry_for_position(position: Vec3) -> Option<LoreEntryId> {
-    [
-        (Vec3::new(-10.2, 0.0, 5.8), LoreEntryId::StewardWarning),
-        (Vec3::new(3.1, 0.0, -6.3), LoreEntryId::AcolyteOath),
-        (Vec3::new(9.2, 0.0, 5.7), LoreEntryId::MalrecPact),
-    ]
-    .into_iter()
-    .find_map(|(anchor, entry)| (position.distance(anchor) <= 0.2).then_some(entry))
+    lore_entry_for_chapter_position(ChapterId::AshenReliquary, position)
+}
+
+pub fn lore_entry_for_chapter_position(chapter: ChapterId, position: Vec3) -> Option<LoreEntryId> {
+    let entries = match chapter {
+        ChapterId::AshenReliquary => [
+            (Vec3::new(-10.2, 0.0, 5.8), LoreEntryId::StewardWarning),
+            (Vec3::new(3.1, 0.0, -6.3), LoreEntryId::AcolyteOath),
+            (Vec3::new(9.2, 0.0, 5.7), LoreEntryId::MalrecPact),
+        ],
+        ChapterId::HollowBastion => [
+            (Vec3::new(-10.2, 0.0, 5.8), LoreEntryId::LastBell),
+            (Vec3::new(3.1, 0.0, -6.3), LoreEntryId::ChoirLitany),
+            (Vec3::new(9.2, 0.0, 5.7), LoreEntryId::NyxaraLament),
+        ],
+    };
+    entries
+        .into_iter()
+        .find_map(|(anchor, entry)| (position.distance(anchor) <= 0.2).then_some(entry))
 }
 
 #[cfg(test)]
