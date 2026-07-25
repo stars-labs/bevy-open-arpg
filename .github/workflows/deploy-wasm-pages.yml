@@ -553,7 +553,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: release-web
-    if: github.event_name != 'pull_request'
+    # release-web intentionally tolerates the native job being skipped for
+    # rolling web previews. Use always() here as well so that skipped
+    # transitive dependency does not suppress an otherwise valid Pages deploy.
+    if: |
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs['release-web'].result == 'success'
     permissions:
       contents: read
       id-token: write
