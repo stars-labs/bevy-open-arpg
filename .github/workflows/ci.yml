@@ -67,7 +67,7 @@ jobs:
             libxrandr-dev \
             pkg-config
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
@@ -115,7 +115,7 @@ jobs:
             libxrandr-dev \
             pkg-config
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
@@ -144,7 +144,7 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
