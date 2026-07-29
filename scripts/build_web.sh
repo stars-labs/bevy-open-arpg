@@ -101,8 +101,32 @@ WASM_OPT_BIN="$(resolve_wasm_opt || true)"
 export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--cfg getrandom_backend=\"wasm_js\""
 
 # The default feature set includes native-only Bevy integrations (accesskit_unix,
-# basis-universal, raw_vulkan_init) that hard-fail on wasm — hence
-# --no-default-features here; `webgpu` re-adds the web runtime.
+# basis-universal, PCSS, and the extended PBR texture set) that either fail to
+# compile or exceed WebGPU limits — hence --no-default-features here; `webgpu`
+# re-adds the web runtime.
+web_pbr_features="$(
+  cargo tree \
+    --locked \
+    --target wasm32-unknown-unknown \
+    --no-default-features \
+    --features webgpu \
+    --edges features \
+    --invert bevy_pbr
+)"
+for feature in \
+  experimental_pbr_pcss \
+  pbr_anisotropy_texture \
+  pbr_clustered_decals \
+  pbr_light_textures \
+  pbr_multi_layer_material_textures \
+  pbr_specular_textures \
+  pbr_transmission_textures; do
+  if grep -Fq "bevy_pbr feature \"$feature\"" <<< "$web_pbr_features"; then
+    echo "ERROR: native-only Bevy feature '$feature' leaked into the WebGPU build." >&2
+    exit 1
+  fi
+done
+
 cargo build --release --locked --target wasm32-unknown-unknown --no-default-features --features webgpu
 
 rm -rf web/pkg web/assets

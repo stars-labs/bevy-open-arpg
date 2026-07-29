@@ -78,13 +78,6 @@ bevy = { version = "0.19", default-features = false, features = [
     "webp",
     "zlib",
     "zstd_rust",
-    "experimental_pbr_pcss",
-    "pbr_anisotropy_texture",
-    "pbr_clustered_decals",
-    "pbr_light_textures",
-    "pbr_multi_layer_material_textures",
-    "pbr_specular_textures",
-    "pbr_transmission_textures",
 ] }
 bevy_render = { version = "0.19", default-features = false, features = ["gles"] }
 rand = "0.9"
