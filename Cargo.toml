@@ -110,7 +110,6 @@ native = [
     "bevy/accesskit_unix",
     "bevy/basis-universal",
     "bevy/compressed_image_saver",
-    "bevy/raw_vulkan_init",
     # PCSS soft shadows sample the blue-noise texture inside non-uniform
     # control flow, which WGSL rejects ("textureSample must only be called
     # from uniform control flow") — native-only until upstream fixes it.
