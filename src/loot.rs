@@ -116,7 +116,6 @@ struct DeathRemains {
     timer: Timer,
     duration_secs: f32,
     base_scale: Vec3,
-    base_alpha: f32,
 }
 
 #[derive(Component)]
@@ -168,7 +167,6 @@ struct DeathRemainsStyle {
     height: f32,
     lifetime_secs: f32,
     lift: f32,
-    alpha: f32,
     color: Color,
     emissive: Color,
 }
@@ -2870,7 +2868,6 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
             height: 0.035,
             lifetime_secs: 3.2,
             lift: 0.018,
-            alpha: 0.42,
             color: Color::srgb(0.13, 0.018, 0.012),
             emissive: Color::srgb(0.02, 0.004, 0.002),
         },
@@ -2879,7 +2876,6 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
             height: 0.035,
             lifetime_secs: 3.8,
             lift: 0.02,
-            alpha: 0.48,
             color: Color::srgb(0.36, 0.32, 0.25),
             emissive: Color::srgb(0.035, 0.025, 0.018),
         },
@@ -2888,7 +2884,6 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
             height: 0.045,
             lifetime_secs: 5.2,
             lift: 0.024,
-            alpha: 0.56,
             color: Color::srgb(0.42, 0.025, 0.012),
             emissive: Color::srgb(0.16, 0.018, 0.006),
         },
@@ -2897,7 +2892,6 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
             height: 0.04,
             lifetime_secs: 4.6,
             lift: 0.022,
-            alpha: 0.54,
             color: Color::srgb(0.72, 0.42, 0.08),
             emissive: Color::srgb(0.18, 0.09, 0.018),
         },
@@ -2906,7 +2900,6 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
             height: 0.055,
             lifetime_secs: 7.4,
             lift: 0.03,
-            alpha: 0.64,
             color: Color::srgb(0.62, 0.055, 0.018),
             emissive: Color::srgb(0.32, 0.036, 0.012),
         },
@@ -2962,12 +2955,9 @@ fn death_burst_light_factor(progress: f32) -> f32 {
 
 fn death_remains_scale_factor(progress: f32) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
-    1.0 + progress * 0.16
-}
-
-fn death_remains_alpha_factor(progress: f32) -> f32 {
-    let progress = progress.clamp(0.0, 1.0);
-    (1.0 - progress).powf(1.35)
+    let expansion = 1.0 + progress * 0.16;
+    let collapse = ((1.0 - progress) / 0.15).clamp(0.0, 1.0);
+    expansion * collapse * collapse
 }
 
 fn spawn_death_burst_vfx(
@@ -3055,7 +3045,7 @@ fn spawn_death_remains(
     let style = death_remains_style(kind);
     let base_scale = Vec3::new(1.0, 1.0, 1.0);
     let material = materials.add(StandardMaterial {
-        base_color: style.color.with_alpha(style.alpha),
+        base_color: style.color,
         emissive: style.emissive.into(),
         alpha_mode: AlphaMode::Opaque,
         perceptual_roughness: 0.92,
@@ -3070,7 +3060,6 @@ fn spawn_death_remains(
             timer: Timer::from_seconds(style.lifetime_secs, TimerMode::Once),
             duration_secs: style.lifetime_secs,
             base_scale,
-            base_alpha: style.alpha,
         },
         Name::new("Death Remains"),
     ));
@@ -4265,23 +4254,12 @@ fn update_death_burst_vfx(
 fn update_death_remains(
     time: Res<Time>,
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut remains: Query<(
-        Entity,
-        &mut DeathRemains,
-        &mut Transform,
-        &MeshMaterial3d<StandardMaterial>,
-    )>,
+    mut remains: Query<(Entity, &mut DeathRemains, &mut Transform)>,
 ) {
-    for (entity, mut remains, mut transform, material) in &mut remains {
+    for (entity, mut remains, mut transform) in &mut remains {
         remains.timer.tick(time.delta());
         let progress = (remains.timer.elapsed_secs() / remains.duration_secs).clamp(0.0, 1.0);
         transform.scale = remains.base_scale * death_remains_scale_factor(progress);
-        if let Some(mut material) = materials.get_mut(&material.0) {
-            material.base_color = material
-                .base_color
-                .with_alpha(remains.base_alpha * death_remains_alpha_factor(progress));
-        }
         if remains.timer.is_finished()
             && let Ok(mut entity_commands) = commands.get_entity(entity)
         {
@@ -4657,7 +4635,6 @@ mod tests {
                     timer: Timer::from_seconds(0.1, TimerMode::Once),
                     duration_secs: 0.1,
                     base_scale: Vec3::ONE,
-                    base_alpha: 1.0,
                 },
             ))
             .id();
@@ -4842,16 +4819,15 @@ mod tests {
         assert!(treasure.radius > ash.radius);
         assert!(boss.radius > elite.radius);
         assert!(boss.lifetime_secs > elite.lifetime_secs);
-        assert!(boss.alpha > ash.alpha);
+        assert!(boss.height > ash.height);
     }
 
     #[test]
-    fn death_remains_animation_expands_as_it_fades() {
+    fn death_remains_animation_expands_then_collapses_without_blending() {
         assert_eq!(death_remains_scale_factor(0.0), 1.0);
         assert!(death_remains_scale_factor(0.8) > death_remains_scale_factor(0.2));
-        assert_eq!(death_remains_alpha_factor(0.0), 1.0);
-        assert!(death_remains_alpha_factor(0.5) < death_remains_alpha_factor(0.1));
-        assert_eq!(death_remains_alpha_factor(1.0), 0.0);
+        assert!(death_remains_scale_factor(0.95) < death_remains_scale_factor(0.8));
+        assert_eq!(death_remains_scale_factor(1.0), 0.0);
     }
 
     #[test]

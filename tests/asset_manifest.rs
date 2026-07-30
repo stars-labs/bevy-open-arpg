@@ -107,6 +107,14 @@ fn chapter_runtime_assets_exist() {
         "assets/images/generated/ui/skill-icons-reliquary.png",
         "assets/images/generated/ui/slot-frame-reliquary.png",
         "assets/images/generated/ui/talent-sigils-reliquary.png",
+        "assets/images/generated/world/ashen-ground-albedo.jpg",
+        "assets/images/generated/world/ashen-road-albedo.jpg",
+        "assets/images/generated/world/hollow-ground-albedo.jpg",
+        "assets/images/generated/world/hollow-road-albedo.jpg",
+        "assets/textures/materials/bone-detail.jpg",
+        "assets/textures/materials/cloth-detail.jpg",
+        "assets/textures/materials/metal-detail.jpg",
+        "assets/textures/materials/stone-detail.jpg",
     ] {
         assert!(Path::new(path).exists(), "missing runtime asset: {path}");
     }
@@ -138,33 +146,33 @@ fn generated_ui_pngs_have_expected_ihdr() {
         ),
         (
             "assets/images/generated/ui/panel-frame-reliquary.png",
-            1_536,
-            1_024,
+            768,
+            512,
         ),
         (
             "assets/images/generated/ui/slot-frame-reliquary.png",
-            1_254,
-            1_254,
+            627,
+            627,
         ),
         (
             "assets/images/generated/ui/talent-sigils-reliquary.png",
-            2_172,
-            724,
+            1_086,
+            362,
         ),
         (
             "assets/images/generated/ui/skill-icons-reliquary.png",
-            1_536,
-            1_024,
+            768,
+            512,
         ),
         (
             "assets/images/generated/ui/gear-icons-reliquary.png",
-            1_776,
             888,
+            444,
         ),
         (
             "assets/images/generated/ui/resource-orb-frame-reliquary.png",
-            1_254,
-            1_254,
+            627,
+            627,
         ),
     ] {
         let bytes = fs::read(path).unwrap();
@@ -195,9 +203,32 @@ fn generated_ui_pngs_have_expected_ihdr() {
             matches!(color_type, 2 | 6),
             "{path} must be RGB or RGBA, found PNG color type {color_type}"
         );
-        if path.ends_with("resource-orb-frame-reliquary.png") {
+        if !path.ends_with("main-menu-reliquary-v2.png") {
             assert_eq!(color_type, 6, "{path} must preserve its alpha channel");
         }
+    }
+}
+
+#[test]
+fn generated_world_and_material_textures_are_compact_jpegs() {
+    for path in [
+        "assets/images/generated/world/ashen-ground-albedo.jpg",
+        "assets/images/generated/world/ashen-road-albedo.jpg",
+        "assets/images/generated/world/hollow-ground-albedo.jpg",
+        "assets/images/generated/world/hollow-road-albedo.jpg",
+        "assets/textures/materials/bone-detail.jpg",
+        "assets/textures/materials/cloth-detail.jpg",
+        "assets/textures/materials/metal-detail.jpg",
+        "assets/textures/materials/stone-detail.jpg",
+    ] {
+        let bytes = fs::read(path).unwrap();
+        assert!(bytes.len() > 8_000, "{path} is unexpectedly small");
+        assert_eq!(&bytes[..2], b"\xff\xd8", "{path} is not a JPEG");
+        assert_eq!(
+            &bytes[bytes.len() - 2..],
+            b"\xff\xd9",
+            "{path} has a truncated JPEG trailer"
+        );
     }
 }
 
@@ -361,6 +392,63 @@ fn boss_skill_models_keep_readable_effect_nodes() {
 }
 
 #[test]
+fn core_characters_and_bosses_embed_detail_textures_and_cull_backfaces() {
+    for path in [
+        "assets/models/hero.glb",
+        "assets/models/skeleton.glb",
+        "assets/models/ashbone_guard.glb",
+        "assets/models/cultist.glb",
+        "assets/models/butcher.glb",
+        "assets/models/bone_stalker.glb",
+        "assets/models/ashen_marksman.glb",
+        "assets/models/treasure_imp.glb",
+        "assets/models/seal_warden.glb",
+        "assets/models/keeper.glb",
+        "assets/models/nemesis.glb",
+        "assets/models/hollow_thrall.glb",
+        "assets/models/hollow_stalker.glb",
+        "assets/models/choir_acolyte.glb",
+        "assets/models/choir_marksman.glb",
+        "assets/models/hollow_reaver.glb",
+        "assets/models/bell_warden.glb",
+        "assets/models/hollow_matron.glb",
+    ] {
+        let json = glb_json(path);
+        assert!(
+            json.contains("\"images\":[{") && json.contains("\"textures\":[{"),
+            "{path} must embed at least one detail image and glTF texture"
+        );
+        assert!(
+            json.contains("\"mimeType\":\"image/jpeg\"")
+                && json.contains("\"bufferView\":")
+                && !json.contains("\"uri\":"),
+            "{path} detail images must be embedded JPEG buffer views"
+        );
+        assert!(
+            json.contains("\"baseColorTexture\":"),
+            "{path} must connect detail to a PBR baseColorTexture"
+        );
+        assert!(
+            !json.contains("\"doubleSided\":true"),
+            "{path} is a closed character and must cull backfaces"
+        );
+    }
+}
+
+#[test]
+fn keeper_cleaver_wave_stays_untextured_double_sided_vfx() {
+    let json = glb_json("assets/models/keeper_cleaver_wave.glb");
+    assert!(
+        !json.contains("\"baseColorTexture\":"),
+        "keeper cleaver wave has intentionally degenerate UVs and must stay texture-free"
+    );
+    assert!(
+        json.contains("\"doubleSided\":true"),
+        "keeper cleaver wave is a thin gameplay telegraph and must stay double-sided"
+    );
+}
+
+#[test]
 fn combat_vfx_models_keep_readable_effect_nodes() {
     for (path, marker) in [
         ("assets/models/slash_arc.glb", "slash crescent core"),
@@ -470,4 +558,32 @@ fn contains_ascii(bytes: &[u8], needle: &str) -> bool {
     bytes
         .windows(needle.len())
         .any(|window| window == needle.as_bytes())
+}
+
+fn glb_json(path: &str) -> String {
+    let bytes = fs::read(path).unwrap();
+    assert!(bytes.len() >= 20, "{path} is too short to be a GLB");
+    assert_eq!(&bytes[..4], b"glTF", "{path} has an invalid GLB magic");
+    assert_eq!(
+        u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+        2,
+        "{path} must use glTF 2.0"
+    );
+    let declared_length = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    assert_eq!(
+        declared_length,
+        bytes.len(),
+        "{path} has an invalid declared GLB length"
+    );
+    let json_length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    assert_eq!(
+        &bytes[16..20],
+        b"JSON",
+        "{path} must start with a JSON chunk"
+    );
+    assert!(
+        20 + json_length <= bytes.len(),
+        "{path} JSON chunk exceeds its file length"
+    );
+    String::from_utf8(bytes[20..20 + json_length].to_vec()).unwrap()
 }

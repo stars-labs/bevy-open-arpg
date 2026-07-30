@@ -5,15 +5,52 @@
 Run:
 
 ```bash
-blender --background --python tools/blender/generate_assets.py
-blender --background --python tools/blender/generate_hollow_bastion.py
-blender --background --python tools/blender/generate_enemy_roster.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_assets.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_hollow_bastion.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_enemy_roster.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/postprocess_glb_materials.py
 ```
 
 `generate_enemy_roster.py` produces unique silhouettes for the Ashbone
 Vanguard, both chapter stalkers and marksmen, the treasure imp, wardens,
 nemesis, and Keeper, plus the Keeper and Hollow Matron boss-skill VFX. It is
 the reproducible fallback when Blender MCP is unavailable.
+
+## Deterministic material post-processing
+
+Always run `postprocess_glb_materials.py` after any generator. It processes
+every runtime GLB in sorted order and embeds the 512 px grayscale detail maps
+from `assets/textures/materials/`. Stable authored material names select bone,
+cloth, metal, or stone detail; any unknown non-emissive name fails validation
+until it is classified. The node graph exports as
+`baseColorTexture * baseColorFactor`, so each original color remains the tint.
+Emissive materials and the explicit `VFX_GLBS` whitelist in the script stay
+texture-free.
+
+Closed characters and props enable back-face culling. Only the named
+burst/ring/trail, affix, portal, and Boss-skill VFX whitelist remains
+double-sided. `keeper_cleaver_wave.glb` is intentionally on that list: its
+procedural arc has degenerate UVs, but it is an opaque emissive gameplay
+telegraph and never receives a sampled detail texture.
+
+Use Blender 5.1 and verify repeatability after changing the pipeline:
+
+```bash
+nix develop -c blender --version
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/postprocess_glb_materials.py
+find assets/models -name '*.glb' -print0 | sort -z | xargs -0 sha256sum \
+  > /tmp/glb-material-pass-1.sha256
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/postprocess_glb_materials.py
+find assets/models -name '*.glb' -print0 | sort -z | xargs -0 sha256sum \
+  > /tmp/glb-material-pass-2.sha256
+diff -u /tmp/glb-material-pass-1.sha256 /tmp/glb-material-pass-2.sha256
+```
 
 Asset rules:
 - Export `.glb` files to `assets/models/`.
@@ -23,8 +60,9 @@ Asset rules:
   forward direction.
 - Export one embedded GLB scene at index zero (`#Scene0`) with transforms
   applied and Y-up conversion enabled.
-- Keep character and VFX materials fully opaque. Use emissive color for glow;
-  do not enable alpha blending on exported PBR materials.
+- Keep materials fully opaque. Use emissive color for glow; do not enable
+  alpha blending on exported PBR materials. Run the material post-processor
+  to apply the repository's texture and culling policy.
 - Use original dark fantasy silhouettes; do not recreate proprietary Diablo assets.
 - Character exports include named hit bones plus hidden contact-zone markers for head, chest, weapon, left, and right VFX placement.
 - Preserve `hit_bones`, `hit_head`, `hit_chest`, `hit_weapon`, `hit_left`, and

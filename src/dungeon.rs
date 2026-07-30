@@ -12,6 +12,7 @@ use crate::{
         apply_player_damage_with_evade, fortune_gold_reward, mitigated_damage, total_armor,
     },
 };
+use bevy::math::Affine2;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -396,26 +397,35 @@ fn spawn_dungeon(
 ) {
     let chapter = active_chapter.0;
     let layout = chapter_world_layout(chapter);
-    let (highland_color, road_color) = match chapter {
+    let (highland_texture, road_texture) = match chapter {
         ChapterId::AshenReliquary => (
-            Color::srgb(0.145, 0.105, 0.085),
-            Color::srgb(0.21, 0.155, 0.105),
+            assets.ashen_ground_albedo.clone(),
+            assets.ashen_road_albedo.clone(),
         ),
         ChapterId::HollowBastion => (
-            Color::srgb(0.055, 0.105, 0.115),
-            Color::srgb(0.09, 0.17, 0.18),
+            assets.hollow_ground_albedo.clone(),
+            assets.hollow_road_albedo.clone(),
         ),
+    };
+    let stone_detail = assets.stone_detail.clone();
+    let (highland_color, road_color) = match chapter {
+        ChapterId::AshenReliquary => (Color::srgb(0.88, 0.78, 0.68), Color::srgb(0.92, 0.80, 0.66)),
+        ChapterId::HollowBastion => (Color::srgb(0.66, 0.84, 0.88), Color::srgb(0.76, 0.88, 0.92)),
     };
 
     let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let clearing_mesh = meshes.add(Cylinder::new(1.0, 1.0));
     let highland_material = materials.add(StandardMaterial {
         base_color: highland_color,
+        base_color_texture: Some(highland_texture),
+        uv_transform: Affine2::from_scale(Vec2::splat(3.6)),
         perceptual_roughness: 0.94,
         ..default()
     });
     let road_material = materials.add(StandardMaterial {
         base_color: road_color,
+        base_color_texture: Some(road_texture),
+        uv_transform: Affine2::from_scale(Vec2::new(3.0, 10.0)),
         perceptual_roughness: 0.91,
         ..default()
     });
@@ -474,6 +484,8 @@ fn spawn_dungeon(
     };
     let gate_mat = materials.add(StandardMaterial {
         base_color: gate_color,
+        base_color_texture: Some(stone_detail),
+        uv_transform: Affine2::from_scale(Vec2::splat(2.0)),
         emissive: gate_emissive.into(),
         perceptual_roughness: 0.55,
         ..default()
@@ -1219,7 +1231,7 @@ fn use_interactables(
 
     let mut selected = None;
     for (entity, transform, interactable) in &mut interactables {
-        if !interactable_available(&interactable) {
+        if !interactable_available(&progress, &interactable) {
             continue;
         }
         let distance = player_transform.translation.distance(transform.translation);
@@ -1242,7 +1254,7 @@ fn use_interactables(
     };
 
     if let Ok((_, _, mut interactable)) = interactables.get_mut(selected.entity)
-        && interactable_available(&interactable)
+        && interactable_available(&progress, &interactable)
     {
         if !interactable.reusable {
             interactable.used = true;
@@ -1263,8 +1275,16 @@ struct InteractableActivation {
     rank: u8,
 }
 
-fn interactable_available(interactable: &Interactable) -> bool {
-    !interactable.used || interactable.reusable
+fn interactable_available(progress: &ChapterProgress, interactable: &Interactable) -> bool {
+    if interactable.used && !interactable.reusable {
+        return false;
+    }
+
+    match interactable.kind {
+        InteractableKind::Cache => progress.phase == ChapterPhase::Cache,
+        InteractableKind::Altar => progress.phase == ChapterPhase::Ritual,
+        _ => true,
+    }
 }
 
 fn interactable_activation_rank(progress: &ChapterProgress, interactable: &Interactable) -> u8 {
@@ -1939,6 +1959,86 @@ mod tests {
         assert_eq!(interactable_activation_rank(&progress, &merchant), 1);
     }
 
+    fn run_mainline_interaction(
+        phase: ChapterPhase,
+        kind: InteractableKind,
+    ) -> (bool, Vec<InteractableKind>) {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default())
+            .insert_resource(ChapterProgress { phase, ..default() })
+            .add_message::<InteractableUsed>()
+            .add_systems(Update, use_interactables);
+
+        app.world_mut().spawn((Player, Transform::default()));
+        let interactable_entity = app
+            .world_mut()
+            .spawn((
+                Interactable {
+                    kind,
+                    radius: 2.0,
+                    used: false,
+                    reusable: false,
+                },
+                Transform::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+
+        app.update();
+
+        let used = app
+            .world()
+            .get::<Interactable>(interactable_entity)
+            .unwrap()
+            .used;
+        let messages = app.world().resource::<Messages<InteractableUsed>>();
+        let mut cursor = messages.get_cursor();
+        let emitted = cursor.read(messages).map(|event| event.kind).collect();
+        (used, emitted)
+    }
+
+    #[test]
+    fn early_mainline_interactions_do_not_consume_or_emit() {
+        let phases = [
+            ChapterPhase::Breach,
+            ChapterPhase::Cache,
+            ChapterPhase::Sanctum,
+            ChapterPhase::Ritual,
+            ChapterPhase::Boss,
+            ChapterPhase::Victory,
+        ];
+        for (kind, required_phase) in [
+            (InteractableKind::Cache, ChapterPhase::Cache),
+            (InteractableKind::Altar, ChapterPhase::Ritual),
+        ] {
+            for phase in phases {
+                if phase == required_phase {
+                    continue;
+                }
+                let (used, emitted) = run_mainline_interaction(phase, kind);
+                assert!(!used, "{kind:?} was consumed during {phase:?}");
+                assert!(
+                    emitted.is_empty(),
+                    "{kind:?} emitted InteractableUsed during {phase:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mainline_interactions_consume_and_emit_in_required_phase() {
+        for (phase, kind) in [
+            (ChapterPhase::Cache, InteractableKind::Cache),
+            (ChapterPhase::Ritual, InteractableKind::Altar),
+        ] {
+            let (used, emitted) = run_mainline_interaction(phase, kind);
+            assert!(used, "{kind:?} was not consumed during {phase:?}");
+            assert_eq!(emitted, vec![kind]);
+        }
+    }
+
     #[test]
     fn interaction_selection_uses_nearest_target_with_same_priority() {
         let progress = ChapterProgress::default();
@@ -1980,11 +2080,14 @@ mod tests {
 
         assert_eq!(selected.entity, near_entity);
         assert_eq!(selected.kind, InteractableKind::HealingWell);
-        assert!(interactable_available(&well));
-        assert!(!interactable_available(&Interactable {
-            used: true,
-            ..shrine
-        }));
+        assert!(interactable_available(&progress, &well));
+        assert!(!interactable_available(
+            &progress,
+            &Interactable {
+                used: true,
+                ..shrine
+            }
+        ));
     }
 
     #[test]

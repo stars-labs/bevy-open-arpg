@@ -276,7 +276,7 @@ pub fn phase_label(phase: ChapterPhase) -> &'static str {
         ChapterPhase::Cache => "Cache",
         ChapterPhase::Sanctum => "Sanctum",
         ChapterPhase::Ritual => "Ritual",
-        ChapterPhase::Boss => "Keeper",
+        ChapterPhase::Boss => "Boss",
         ChapterPhase::Victory => "Victory",
     }
 }

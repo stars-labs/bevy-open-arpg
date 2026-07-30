@@ -1,8 +1,32 @@
-use crate::GameState;
-use bevy::asset::LoadState;
+use crate::{GameState, HeadlessSmokeExit};
+use bevy::asset::{LoadState, UntypedAssetId, UntypedHandle};
+use bevy::image::{
+    ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
+};
 use bevy::prelude::*;
 use bevy::time::{Timer, TimerMode};
 use bevy::world_serialization::WorldAsset;
+
+/// Loads a color texture with a WebGPU-safe, linearly filtered repeat sampler.
+///
+/// World materials use UV transforms larger than one so the artwork keeps a
+/// consistent texel density instead of stretching once across an entire
+/// streamed chunk.
+pub fn load_repeating_texture(asset_server: &AssetServer, path: &'static str) -> Handle<Image> {
+    asset_server
+        .load_builder()
+        .with_settings(|settings: &mut ImageLoaderSettings| {
+            settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                address_mode_u: ImageAddressMode::Repeat,
+                address_mode_v: ImageAddressMode::Repeat,
+                mag_filter: ImageFilterMode::Linear,
+                min_filter: ImageFilterMode::Linear,
+                mipmap_filter: ImageFilterMode::Linear,
+                ..default()
+            });
+        })
+        .load(path)
+}
 
 #[derive(Resource)]
 pub struct GameAssets {
@@ -82,6 +106,20 @@ pub struct GameAssets {
     pub affix_frost_aura: Handle<WorldAsset>,
     pub affix_blood_aura: Handle<WorldAsset>,
     pub affix_ward_aura: Handle<WorldAsset>,
+    pub ashen_ground_albedo: Handle<Image>,
+    pub hollow_ground_albedo: Handle<Image>,
+    pub ashen_road_albedo: Handle<Image>,
+    pub hollow_road_albedo: Handle<Image>,
+    pub stone_detail: Handle<Image>,
+    pub ui_main_menu: Handle<Image>,
+    pub ui_panel_frame: Handle<Image>,
+    pub ui_slot_frame: Handle<Image>,
+    pub ui_resource_orb_frame: Handle<Image>,
+    pub ui_skill_icons: Handle<Image>,
+    pub ui_gear_icons: Handle<Image>,
+    pub ui_talent_sigils: Handle<Image>,
+    pub ui_font_regular: Handle<Font>,
+    pub ui_font_bold: Handle<Font>,
 }
 
 #[derive(Resource, Default)]
@@ -230,12 +268,40 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         affix_frost_aura: asset_server.load("models/affix_frost_aura.glb#Scene0"),
         affix_blood_aura: asset_server.load("models/affix_blood_aura.glb#Scene0"),
         affix_ward_aura: asset_server.load("models/affix_ward_aura.glb#Scene0"),
+        ashen_ground_albedo: load_repeating_texture(
+            &asset_server,
+            "images/generated/world/ashen-ground-albedo.jpg",
+        ),
+        hollow_ground_albedo: load_repeating_texture(
+            &asset_server,
+            "images/generated/world/hollow-ground-albedo.jpg",
+        ),
+        ashen_road_albedo: load_repeating_texture(
+            &asset_server,
+            "images/generated/world/ashen-road-albedo.jpg",
+        ),
+        hollow_road_albedo: load_repeating_texture(
+            &asset_server,
+            "images/generated/world/hollow-road-albedo.jpg",
+        ),
+        stone_detail: load_repeating_texture(&asset_server, "textures/materials/stone-detail.jpg"),
+        ui_main_menu: asset_server.load("images/generated/ui/main-menu-reliquary-v2.png"),
+        ui_panel_frame: asset_server.load("images/generated/ui/panel-frame-reliquary.png"),
+        ui_slot_frame: asset_server.load("images/generated/ui/slot-frame-reliquary.png"),
+        ui_resource_orb_frame: asset_server
+            .load("images/generated/ui/resource-orb-frame-reliquary.png"),
+        ui_skill_icons: asset_server.load("images/generated/ui/skill-icons-reliquary.png"),
+        ui_gear_icons: asset_server.load("images/generated/ui/gear-icons-reliquary.png"),
+        ui_talent_sigils: asset_server.load("images/generated/ui/talent-sigils-reliquary.png"),
+        ui_font_regular: asset_server.load("fonts/FiraSans-Regular.ttf"),
+        ui_font_bold: asset_server.load("fonts/FiraSans-Bold.ttf"),
     });
 }
 
 fn finish_loading(
     assets: Option<Res<GameAssets>>,
     asset_server: Res<AssetServer>,
+    headless_smoke: Option<Res<HeadlessSmokeExit>>,
     time: Res<Time>,
     mut loading_progress: ResMut<AssetLoadingProgress>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -245,6 +311,15 @@ fn finish_loading(
     };
 
     loading_progress.tick(time.delta());
+    if headless_smoke.is_some() {
+        // The logic smoke intentionally has no renderer. Textured GLBs can
+        // continue decoding in the asset task pool, but gameplay validation
+        // must not depend on how much wall time those workers receive during a
+        // fixed number of extremely fast headless updates.
+        info!("headless asset handles registered, entering MainMenu");
+        next_state.set(GameState::MainMenu);
+        return;
+    }
     let summary = game_assets_load_summary(&asset_server, &assets);
 
     if summary.ready() {
@@ -368,56 +443,86 @@ fn collect_game_asset_handles(assets: &GameAssets) -> Vec<Handle<WorldAsset>> {
     ]
 }
 
-fn asset_has_failed(asset_server: &AssetServer, handle: &Handle<WorldAsset>) -> bool {
-    let root_failed = matches!(
-        asset_server.get_load_state(handle),
-        Some(LoadState::Failed(_))
+fn collect_visual_asset_handles(assets: &GameAssets) -> Vec<UntypedHandle> {
+    vec![
+        assets.ashen_ground_albedo.clone().untyped(),
+        assets.hollow_ground_albedo.clone().untyped(),
+        assets.ashen_road_albedo.clone().untyped(),
+        assets.hollow_road_albedo.clone().untyped(),
+        assets.stone_detail.clone().untyped(),
+        assets.ui_main_menu.clone().untyped(),
+        assets.ui_panel_frame.clone().untyped(),
+        assets.ui_slot_frame.clone().untyped(),
+        assets.ui_resource_orb_frame.clone().untyped(),
+        assets.ui_skill_icons.clone().untyped(),
+        assets.ui_gear_icons.clone().untyped(),
+        assets.ui_talent_sigils.clone().untyped(),
+        assets.ui_font_regular.clone().untyped(),
+        assets.ui_font_bold.clone().untyped(),
+    ]
+}
+
+fn asset_has_failed(asset_server: &AssetServer, id: UntypedAssetId) -> bool {
+    let root_failed = matches!(asset_server.get_load_state(id), Some(LoadState::Failed(_)));
+    let dep_failed = matches!(
+        asset_server.get_dependency_load_state(id),
+        Some(state) if state.is_failed()
     );
-    let dep_failed =
-        matches!(asset_server.get_dependency_load_state(handle), Some(state) if state.is_failed());
     let rec_dep_failed = matches!(
-        asset_server.get_recursive_dependency_load_state(handle),
+        asset_server.get_recursive_dependency_load_state(id),
         Some(state) if state.is_failed()
     );
     root_failed || dep_failed || rec_dep_failed
+}
+
+fn record_asset_load_state(
+    asset_server: &AssetServer,
+    id: UntypedAssetId,
+    summary: &mut AssetLoadSummary,
+) {
+    if asset_server.is_loaded_with_dependencies(id) {
+        summary.loaded += 1;
+        return;
+    }
+
+    if asset_has_failed(asset_server, id) {
+        summary.failed += 1;
+        return;
+    }
+
+    if matches!(
+        asset_server.get_load_state(id),
+        Some(state) if state.is_loading()
+    ) || matches!(
+        asset_server.get_dependency_load_state(id),
+        Some(state) if state.is_loading()
+    ) || matches!(
+        asset_server.get_recursive_dependency_load_state(id),
+        Some(state) if state.is_loading()
+    ) {
+        summary.loading += 1;
+        return;
+    }
+
+    summary.not_loaded += 1;
 }
 
 pub fn game_assets_load_summary(
     asset_server: &AssetServer,
     assets: &GameAssets,
 ) -> AssetLoadSummary {
-    let handles = collect_game_asset_handles(assets);
+    let world_handles = collect_game_asset_handles(assets);
+    let visual_handles = collect_visual_asset_handles(assets);
     let mut summary = AssetLoadSummary {
-        total: handles.len(),
+        total: world_handles.len() + visual_handles.len(),
         ..Default::default()
     };
 
-    for handle in &handles {
-        if asset_server.is_loaded_with_dependencies(handle) {
-            summary.loaded += 1;
-            continue;
-        }
-
-        if asset_has_failed(asset_server, handle) {
-            summary.failed += 1;
-            continue;
-        }
-
-        if matches!(
-            asset_server.get_load_state(handle),
-            Some(state) if state.is_loading()
-        ) || matches!(
-            asset_server.get_dependency_load_state(handle),
-            Some(state) if state.is_loading()
-        ) || matches!(
-            asset_server.get_recursive_dependency_load_state(handle),
-            Some(state) if state.is_loading()
-        ) {
-            summary.loading += 1;
-            continue;
-        }
-
-        summary.not_loaded += 1;
+    for handle in world_handles {
+        record_asset_load_state(asset_server, handle.id().untyped(), &mut summary);
+    }
+    for handle in visual_handles {
+        record_asset_load_state(asset_server, handle.id(), &mut summary);
     }
 
     summary
@@ -425,85 +530,5 @@ pub fn game_assets_load_summary(
 
 #[allow(dead_code)]
 pub fn game_assets_ready(asset_server: &AssetServer, assets: &GameAssets) -> bool {
-    let handles = [
-        &assets.hero,
-        &assets.skeleton,
-        &assets.ashbone_guard,
-        &assets.cultist,
-        &assets.butcher,
-        &assets.bone_stalker,
-        &assets.ashen_marksman,
-        &assets.treasure_imp,
-        &assets.seal_warden,
-        &assets.keeper,
-        &assets.nemesis,
-        &assets.hollow_thrall,
-        &assets.hollow_stalker,
-        &assets.choir_acolyte,
-        &assets.choir_marksman,
-        &assets.hollow_reaver,
-        &assets.bell_warden,
-        &assets.hollow_matron,
-        &assets.sword,
-        &assets.chest,
-        &assets.altar,
-        &assets.soul_font,
-        &assets.quartermaster,
-        &assets.fortune_shrine,
-        &assets.storm_shrine,
-        &assets.healing_well,
-        &assets.cursed_shrine,
-        &assets.blood_obelisk,
-        &assets.reliquary_vault,
-        &assets.ember_rift_prop,
-        &assets.ashen_pylon,
-        &assets.lore_page,
-        &assets.breakable_urn,
-        &assets.breakable_coffer,
-        &assets.slash_arc,
-        &assets.hit_spark,
-        &assets.bone_shatter,
-        &assets.bone_impact,
-        &assets.blood_spray,
-        &assets.execution_burst,
-        &assets.arcane_impact,
-        &assets.holy_impact,
-        &assets.ember_impact,
-        &assets.frost_impact,
-        &assets.void_impact,
-        &assets.frenzy_impact,
-        &assets.vampiric_siphon,
-        &assets.desecrator_burst,
-        &assets.guard_clash,
-        &assets.armor_break,
-        &assets.soul_ward_hit,
-        &assets.hit_bone_rune,
-        &assets.hit_bone_lock,
-        &assets.marrow_flash,
-        &assets.bone_fracture_echo,
-        &assets.elite_affix_break,
-        &assets.shadow_burst,
-        &assets.headshot_burst,
-        &assets.crit_bone_crown,
-        &assets.crit_burst,
-        &assets.stagger_burst,
-        &assets.shadow_trail,
-        &assets.loot_prism,
-        &assets.objective_sigil,
-        &assets.ember_vent,
-        &assets.soul_fissure,
-        &assets.boss_summon_portal,
-        &assets.keeper_cleaver_wave,
-        &assets.keeper_chain_cage,
-        &assets.matron_soul_lance,
-        &assets.matron_crescendo,
-        &assets.affix_ember_aura,
-        &assets.affix_arcane_aura,
-        &assets.affix_frost_aura,
-        &assets.affix_blood_aura,
-        &assets.affix_ward_aura,
-    ];
-    handles
-        .into_iter()
-        .all(|handle| asset_server.is_loaded_with_dependencies(handle))
+    game_assets_load_summary(asset_server, assets).ready()
 }

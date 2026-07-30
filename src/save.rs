@@ -21,7 +21,7 @@ use crate::{
         SurgeBuff, Talents, TownPortal, configure_elixir_buff, potion_cooldown_secs_for_capacity,
     },
     rift::EmberRift,
-    story::{StoryBeat, StoryLog},
+    story::{StoryBeat, StoryDialogueEvent, StoryLog, StoryPresentationReset, dialogue_events_for},
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -41,6 +41,10 @@ pub struct PendingLoadGame {
 impl PendingLoadGame {
     pub fn request(&mut self) {
         self.requested = true;
+    }
+
+    pub fn is_requested(&self) -> bool {
+        self.requested
     }
 
     fn take(&mut self) -> bool {
@@ -733,6 +737,8 @@ struct LoadGameInputs<'w, 's> {
     interactables: LoadInteractableQuery<'w, 's>,
     breakables: LoadBreakableQuery<'w, 's>,
     events: MessageWriter<'w, CombatEvent>,
+    dialogue_events: MessageWriter<'w, StoryDialogueEvent>,
+    presentation_resets: MessageWriter<'w, StoryPresentationReset>,
 }
 
 #[derive(SystemParam)]
@@ -834,9 +840,12 @@ fn load_game(
     mut pending: ResMut<PendingLoadGame>,
     mut inputs: LoadGameInputs,
 ) {
-    if !keyboard.just_pressed(KeyCode::F9) && !pending.take() {
+    let keyboard_requested = keyboard.just_pressed(KeyCode::F9);
+    let pending_requested = pending.take();
+    if !keyboard_requested && !pending_requested {
         return;
     }
+    inputs.presentation_resets.write(StoryPresentationReset);
     let (
         mut stats,
         mut difficulty,
@@ -853,7 +862,7 @@ fn load_game(
         mut rift,
         mut story,
     ) = inputs.resources;
-    match read_save(SAVE_PATH).and_then(|save| {
+    let load_result = read_save(SAVE_PATH).and_then(|save| {
         apply_save(
             &save,
             ApplyResources {
@@ -891,14 +900,20 @@ fn load_game(
                 commands: &mut inputs.commands,
             },
         )
-    }) {
-        Ok(()) => inputs.events.write(CombatEvent {
-            text: "Loaded slot 1".to_string(),
-        }),
-        Err(err) => inputs.events.write(CombatEvent {
-            text: format!("Load failed: {err}"),
-        }),
+    });
+    let status = match load_result {
+        Ok(()) => "Loaded slot 1".to_string(),
+        Err(err) => format!("Load failed: {err}"),
     };
+    // Resetting the presentation is necessary even when loading fails so stale
+    // dialogue cannot survive a menu transition. Replaying the current log
+    // afterwards keeps the chapter opening visible on that failure path.
+    if let Some(beat) = story.beats.last().copied() {
+        for event in dialogue_events_for(beat) {
+            inputs.dialogue_events.write(event);
+        }
+    };
+    inputs.events.write(CombatEvent { text: status });
 }
 
 struct SnapshotInputs<'a, 'w, 's> {
@@ -1833,9 +1848,12 @@ mod tests {
     fn pending_load_game_consumes_one_request() {
         let mut pending = PendingLoadGame::default();
 
+        assert!(!pending.is_requested());
         assert!(!pending.take());
         pending.request();
+        assert!(pending.is_requested());
         assert!(pending.take());
+        assert!(!pending.is_requested());
         assert!(!pending.take());
     }
 

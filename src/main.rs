@@ -22,6 +22,7 @@ mod procedural_world;
 mod rift;
 mod save;
 mod story;
+mod story_content;
 mod ui;
 
 use assets::GameAssetsPlugin;
@@ -50,7 +51,7 @@ use bevy::diagnostic::{
 use bevy::ecs::system::SystemParam;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gizmos_render::GizmoRenderPlugin;
-use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats};
+use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats, ImageLoader};
 #[cfg(feature = "dev_tools")]
 use bevy::input::mouse::MouseButton;
 #[cfg(not(target_arch = "wasm32"))]
@@ -664,7 +665,7 @@ pub fn not_paused(pause: Res<PauseState>) -> bool {
     !pause.paused
 }
 
-fn main() {
+fn main() -> AppExit {
     let mut config = OpenArpgRuntimeConfig::from_env();
     let display_present = open_arpg_display_is_present();
 
@@ -690,7 +691,7 @@ fn main() {
     log_startup_window_diagnostic(config);
 
     let mut app = build_app(config);
-    app.run();
+    app.run()
 }
 
 fn should_fallback_to_headless_smoke(config: OpenArpgRuntimeConfig, display_present: bool) -> bool {
@@ -910,7 +911,11 @@ fn init_headless_smoke_assets(app: &mut App) {
     app.init_asset::<Shader>()
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<ScatteringMedium>();
+        .init_asset::<ScatteringMedium>()
+        // TexturePlugin normally installs this loader after GPU capability
+        // discovery. Headless smoke disables that plugin, but textured GLBs
+        // still need their embedded PNG/JPEG dependencies decoded on the CPU.
+        .register_asset_loader(ImageLoader::new(CompressedImageFormats::NONE));
 }
 
 fn open_arpg_watch_for_changes_override() -> Option<bool> {
@@ -951,8 +956,9 @@ fn headless_smoke_runner(mut app: App) -> AppExit {
     app.cleanup();
 
     let smoke = app
-        .world_mut()
-        .remove_resource::<HeadlessSmokeExit>()
+        .world()
+        .get_resource::<HeadlessSmokeExit>()
+        .copied()
         .unwrap_or(HeadlessSmokeExit {
             frames_remaining: 0,
             chapter: None,

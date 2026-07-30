@@ -56,7 +56,8 @@ use crate::{
         town_portal_seconds_remaining, unequip_gear_piece,
     },
     rift::{EmberRift, RiftState, rift_summary},
-    story::{StoryBeat, StoryLog, story_recap, story_summary},
+    story::{StoryDialogueEvent, StoryLog, StoryPresentationReset, story_recap, story_summary},
+    story_content::{chapter_ending_summary, story_scene},
     valor_summary,
 };
 use bevy::ecs::system::SystemParam;
@@ -64,6 +65,7 @@ use bevy::prelude::*;
 use bevy::ui::{UiGlobalTransform, widget::NodeImageMode};
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::Path;
@@ -1248,12 +1250,14 @@ impl Default for RewardToastState {
 #[derive(Resource)]
 struct StoryCommsState {
     timer: Timer,
+    queue: VecDeque<StoryComms>,
 }
 
 impl Default for StoryCommsState {
     fn default() -> Self {
         Self {
             timer: Timer::from_seconds(0.0, TimerMode::Once),
+            queue: VecDeque::new(),
         }
     }
 }
@@ -2123,6 +2127,7 @@ const MINIMAP_MAP_BOTTOM: f32 = 20.0;
 const MINIMAP_VISIBLE_RADIUS_X: f32 = 64.0;
 const MINIMAP_VISIBLE_RADIUS_Z: f32 = 52.0;
 const MAIN_MENU_BACKGROUND_IMAGE: &str = "images/generated/ui/main-menu-reliquary-v2.png";
+const MAIN_MENU_BACKGROUND_SIZE: Vec2 = Vec2::new(1_672.0, 941.0);
 const UI_PANEL_FRAME_IMAGE: &str = "images/generated/ui/panel-frame-reliquary.png";
 const UI_SLOT_FRAME_IMAGE: &str = "images/generated/ui/slot-frame-reliquary.png";
 const UI_RESOURCE_ORB_FRAME_IMAGE: &str = "images/generated/ui/resource-orb-frame-reliquary.png";
@@ -2131,12 +2136,17 @@ const UI_GEAR_ICONS_IMAGE: &str = "images/generated/ui/gear-icons-reliquary.png"
 const UI_TALENT_SIGILS_IMAGE: &str = "images/generated/ui/talent-sigils-reliquary.png";
 const UI_FONT_REGULAR: &str = "fonts/FiraSans-Regular.ttf";
 const UI_FONT_BOLD: &str = "fonts/FiraSans-Bold.ttf";
+const UI_PANEL_SLICE_BORDER: f32 = 59.0;
+const UI_SLOT_SLICE_BORDER: f32 = 85.0;
+const UI_SKILL_ICON_CELL: f32 = 256.0;
+const UI_GEAR_ICON_CELL: f32 = 222.0;
+const UI_TALENT_SIGIL_CELL: f32 = 362.0;
 
 fn panel_image_node(asset_server: &AssetServer) -> ImageNode {
     ImageNode {
         image: asset_server.load(UI_PANEL_FRAME_IMAGE),
         image_mode: NodeImageMode::Sliced(TextureSlicer {
-            border: BorderRect::all(118.0),
+            border: BorderRect::all(UI_PANEL_SLICE_BORDER),
             center_scale_mode: SliceScaleMode::Stretch,
             sides_scale_mode: SliceScaleMode::Stretch,
             max_corner_scale: 1.0,
@@ -2149,7 +2159,7 @@ fn slot_frame_image_node(asset_server: &AssetServer) -> ImageNode {
     ImageNode {
         image: asset_server.load(UI_SLOT_FRAME_IMAGE),
         image_mode: NodeImageMode::Sliced(TextureSlicer {
-            border: BorderRect::all(170.0),
+            border: BorderRect::all(UI_SLOT_SLICE_BORDER),
             center_scale_mode: SliceScaleMode::Stretch,
             sides_scale_mode: SliceScaleMode::Stretch,
             max_corner_scale: 1.0,
@@ -2234,7 +2244,10 @@ impl Plugin for HudPlugin {
                 Update,
                 ensure_main_menu_ui.run_if(in_state(GameState::MainMenu)),
             )
-            .add_systems(Update, update_menu.run_if(in_state(GameState::MainMenu)))
+            .add_systems(
+                Update,
+                (update_menu, update_main_menu_backdrop_crop).run_if(in_state(GameState::MainMenu)),
+            )
             .add_systems(OnExit(GameState::MainMenu), despawn_menu)
             .add_systems(
                 OnEnter(GameState::InGame),
@@ -2453,6 +2466,44 @@ fn ensure_main_menu_ui(
     );
 }
 
+fn update_main_menu_backdrop_crop(
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut images: Query<&mut ImageNode, With<MainMenuBackdropArt>>,
+) {
+    let Ok(window) = window.single() else {
+        return;
+    };
+    let viewport = Vec2::new(window.resolution.width(), window.resolution.height());
+    let crop = main_menu_cover_rect(viewport);
+    for mut image in &mut images {
+        image.rect = Some(crop);
+    }
+}
+
+fn main_menu_cover_rect(viewport: Vec2) -> Rect {
+    if viewport.x <= f32::EPSILON || viewport.y <= f32::EPSILON {
+        return Rect::from_corners(Vec2::ZERO, MAIN_MENU_BACKGROUND_SIZE);
+    }
+
+    let source_aspect = MAIN_MENU_BACKGROUND_SIZE.x / MAIN_MENU_BACKGROUND_SIZE.y;
+    let viewport_aspect = viewport.x / viewport.y;
+    if viewport_aspect > source_aspect {
+        let visible_height = MAIN_MENU_BACKGROUND_SIZE.x / viewport_aspect;
+        let top = (MAIN_MENU_BACKGROUND_SIZE.y - visible_height) * 0.5;
+        Rect::from_corners(
+            Vec2::new(0.0, top),
+            Vec2::new(MAIN_MENU_BACKGROUND_SIZE.x, top + visible_height),
+        )
+    } else {
+        let visible_width = MAIN_MENU_BACKGROUND_SIZE.y * viewport_aspect;
+        let left = (MAIN_MENU_BACKGROUND_SIZE.x - visible_width) * 0.5;
+        Rect::from_corners(
+            Vec2::new(left, 0.0),
+            Vec2::new(left + visible_width, MAIN_MENU_BACKGROUND_SIZE.y),
+        )
+    }
+}
+
 fn spawn_main_menu(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -2534,7 +2585,7 @@ fn spawn_main_menu(
                             atlas_image_node(
                                 asset_server,
                                 UI_TALENT_SIGILS_IMAGE,
-                                atlas_rect(724.0, 724.0, 3, 0),
+                                atlas_rect(UI_TALENT_SIGIL_CELL, UI_TALENT_SIGIL_CELL, 3, 0),
                             ),
                             Node {
                                 width: Val::Px(58.0),
@@ -3119,6 +3170,14 @@ fn spawn_victory(mut commands: Commands, resources: VictoryResources) {
                     ..default()
                 },
                 TextColor(Color::srgb(0.84, 0.76, 0.52)),
+            ));
+            parent.spawn((
+                Text::new(chapter_ending_summary(progress.chapter_id())),
+                TextFont {
+                    font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.86, 0.80, 0.68)),
             ));
             spawn_victory_command_panel(
                 parent,
@@ -4992,7 +5051,7 @@ fn chapter_quest_board_text(
         format!(
             "Main: {} | Route {} | Now {}",
             compact_label(&main_quest_status(progress, stats), 34),
-            chapter_route_nodes_compact(progress.phase),
+            chapter_route_nodes_compact(progress),
             compact_label(&progress.objective, 34)
         ),
         format!(
@@ -6092,7 +6151,7 @@ fn chapter_route_nodes(phase: ChapterPhase) -> String {
         (ChapterPhase::Cache, "Cache"),
         (ChapterPhase::Sanctum, "Sanctum"),
         (ChapterPhase::Ritual, "Ritual"),
-        (ChapterPhase::Boss, "Keeper"),
+        (ChapterPhase::Boss, "Boss"),
         (ChapterPhase::Victory, "Cleansed"),
     ]
     .iter()
@@ -6107,17 +6166,21 @@ fn chapter_route_nodes(phase: ChapterPhase) -> String {
     .join(" -> ")
 }
 
-fn chapter_route_nodes_compact(phase: ChapterPhase) -> String {
+fn chapter_route_nodes_compact(progress: &ChapterProgress) -> String {
+    let boss_label = match progress.chapter_id() {
+        ChapterId::AshenReliquary => "M",
+        ChapterId::HollowBastion => "N",
+    };
     [
         (ChapterPhase::Breach, "B"),
         (ChapterPhase::Cache, "C"),
         (ChapterPhase::Sanctum, "S"),
         (ChapterPhase::Ritual, "R"),
-        (ChapterPhase::Boss, "K"),
+        (ChapterPhase::Boss, boss_label),
     ]
     .iter()
     .map(|(node_phase, label)| {
-        if *node_phase == phase {
+        if *node_phase == progress.phase {
             format!("[{label}]")
         } else {
             (*label).to_string()
@@ -6621,7 +6684,12 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 atlas_image_node(
                                     &asset_server,
                                     UI_SKILL_ICONS_IMAGE,
-                                    atlas_rect(512.0, 512.0, 3, skill_icon_index(slot)),
+                                    atlas_rect(
+                                        UI_SKILL_ICON_CELL,
+                                        UI_SKILL_ICON_CELL,
+                                        3,
+                                        skill_icon_index(slot),
+                                    ),
                                 ),
                                 Node {
                                     position_type: PositionType::Absolute,
@@ -6851,7 +6919,7 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 atlas_image_node(
                                     &asset_server,
                                     UI_GEAR_ICONS_IMAGE,
-                                    atlas_rect(444.0, 444.0, 4, 7),
+                                    atlas_rect(UI_GEAR_ICON_CELL, UI_GEAR_ICON_CELL, 4, 7),
                                 ),
                                 Node {
                                     width: Val::Px(52.0),
@@ -6975,8 +7043,8 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                                                                     &asset_server,
                                                                     UI_GEAR_ICONS_IMAGE,
                                                                     atlas_rect(
-                                                                        444.0,
-                                                                        444.0,
+                                                                        UI_GEAR_ICON_CELL,
+                                                                        UI_GEAR_ICON_CELL,
                                                                         4,
                                                                         gear_icon_index(*slot),
                                                                     ),
@@ -7099,7 +7167,12 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                                                     atlas_image_node(
                                                         &asset_server,
                                                         UI_GEAR_ICONS_IMAGE,
-                                                        atlas_rect(444.0, 444.0, 4, 0),
+                                                        atlas_rect(
+                                                            UI_GEAR_ICON_CELL,
+                                                            UI_GEAR_ICON_CELL,
+                                                            4,
+                                                            0,
+                                                        ),
                                                     ),
                                                     Node {
                                                         position_type: PositionType::Absolute,
@@ -7219,8 +7292,8 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                                                 &asset_server,
                                                 UI_TALENT_SIGILS_IMAGE,
                                                 atlas_rect(
-                                                    724.0,
-                                                    724.0,
+                                                    UI_TALENT_SIGIL_CELL,
+                                                    UI_TALENT_SIGIL_CELL,
                                                     3,
                                                     talent_icon_index(branch),
                                                 ),
@@ -8119,35 +8192,41 @@ fn update_reward_toast(
 fn update_story_comms(
     time: Res<Time>,
     mut state: ResMut<StoryCommsState>,
-    mut events: MessageReader<CombatEvent>,
+    mut resets: MessageReader<StoryPresentationReset>,
+    mut events: MessageReader<StoryDialogueEvent>,
     mut banner: Query<(&mut Text, &mut Visibility), With<StoryCommsText>>,
 ) {
     let Ok((mut text, mut visibility)) = banner.single_mut() else {
         return;
     };
 
-    for event in events.read() {
-        let Some(comms) = story_comms_from_event(&event.text) else {
-            continue;
-        };
-        state.timer = Timer::from_seconds(comms.duration_secs, TimerMode::Once);
-        state.timer.reset();
-        **text = comms.copy;
-        *visibility = Visibility::Visible;
-    }
-
-    if state.timer.is_finished() {
-        if !text.is_empty() {
-            **text = String::new();
-        }
-        *visibility = Visibility::Hidden;
-        return;
-    }
-
-    state.timer.tick(time.delta());
-    if state.timer.is_finished() {
+    if resets.read().count() > 0 {
+        state.queue.clear();
+        state.timer = Timer::from_seconds(0.0, TimerMode::Once);
         **text = String::new();
         *visibility = Visibility::Hidden;
+    }
+
+    for event in events.read() {
+        state.queue.push_back(story_comms_from_dialogue(event));
+    }
+
+    if !state.timer.is_finished() {
+        state.timer.tick(time.delta());
+    }
+
+    if state.timer.is_finished() {
+        if let Some(comms) = state.queue.pop_front() {
+            state.timer = Timer::from_seconds(comms.duration_secs, TimerMode::Once);
+            state.timer.reset();
+            **text = comms.copy;
+            *visibility = Visibility::Visible;
+        } else {
+            if !text.is_empty() {
+                **text = String::new();
+            }
+            *visibility = Visibility::Hidden;
+        }
     }
 }
 
@@ -8164,108 +8243,19 @@ struct StoryComms {
     duration_secs: f32,
 }
 
-fn story_comms_from_event(text: &str) -> Option<StoryComms> {
-    let beat = story_beat_from_event_text(text)?;
-    let speaker = story_beat_speaker(beat);
-    let action = story_beat_action_hint(beat);
-    let line = text
-        .split_once(": ")
-        .map(|(_, line)| line)
-        .unwrap_or_else(|| beat.line());
-
-    Some(StoryComms {
-        copy: format!("{speaker}\n{}\nNext: {action}", compact_label(line, 86)),
-        duration_secs: story_comms_duration(beat),
-    })
-}
-
-fn story_beat_from_event_text(text: &str) -> Option<StoryBeat> {
-    [
-        StoryBeat::Arrival,
-        StoryBeat::CacheRevealed,
-        StoryBeat::SealRecovered,
-        StoryBeat::SanctumOpened,
-        StoryBeat::SealWardenSlain,
-        StoryBeat::AltarDemand,
-        StoryBeat::KeeperAwakened,
-        StoryBeat::KeeperBloodied,
-        StoryBeat::Victory,
-        StoryBeat::HollowArrival,
-        StoryBeat::ChoirCacheRevealed,
-        StoryBeat::ChoirSealRecovered,
-        StoryBeat::BellCryptOpened,
-        StoryBeat::BellWardenSlain,
-        StoryBeat::SoulFontDemand,
-        StoryBeat::MatronAwakened,
-        StoryBeat::MatronBloodied,
-        StoryBeat::BastionVictory,
-        StoryBeat::CursedShrine,
-        StoryBeat::BloodObelisk,
-        StoryBeat::ReliquaryVault,
-        StoryBeat::EmberRift,
-        StoryBeat::AshenPylon,
-    ]
-    .into_iter()
-    .find(|beat| text.starts_with(&format!("{}: ", beat.title())))
-}
-
-fn story_beat_speaker(beat: StoryBeat) -> &'static str {
-    match beat {
-        StoryBeat::KeeperAwakened | StoryBeat::KeeperBloodied => "Malrec, Keeper of Ash",
-        StoryBeat::MatronAwakened | StoryBeat::MatronBloodied => "Nyxara, Hollow Matron",
-        StoryBeat::HollowArrival
-        | StoryBeat::ChoirCacheRevealed
-        | StoryBeat::ChoirSealRecovered
-        | StoryBeat::BellCryptOpened
-        | StoryBeat::BellWardenSlain
-        | StoryBeat::SoulFontDemand => "Steward Edda",
-        StoryBeat::CursedShrine | StoryBeat::BloodObelisk | StoryBeat::EmberRift => {
-            "Reliquary Whisper"
-        }
-        StoryBeat::ReliquaryVault | StoryBeat::AshenPylon => "Quartermaster Vey",
-        StoryBeat::Victory | StoryBeat::BastionVictory => "Steward Edda",
-        _ => "Steward Edda",
+fn story_comms_from_dialogue(event: &StoryDialogueEvent) -> StoryComms {
+    let mut copy = format!(
+        "{} — {}\n{}",
+        event.speaker,
+        event.beat.title(),
+        compact_label(event.text, 104)
+    );
+    if let Some(action) = event.next_action {
+        copy.push_str(&format!("\nNext: {action}"));
     }
-}
-
-fn story_beat_action_hint(beat: StoryBeat) -> &'static str {
-    match beat {
-        StoryBeat::Arrival => "breach the outer guards",
-        StoryBeat::CacheRevealed => "open the sealed cache",
-        StoryBeat::SealRecovered => "push into the inner sanctum",
-        StoryBeat::SanctumOpened => "survive the ambush and find Vhal",
-        StoryBeat::SealWardenSlain => "take the second seal to the altar",
-        StoryBeat::AltarDemand => "extinguish the final seal",
-        StoryBeat::KeeperAwakened => "choose a boon and break Malrec",
-        StoryBeat::KeeperBloodied => "save burst for the stagger window",
-        StoryBeat::Victory => "claim rewards and plan the next run",
-        StoryBeat::HollowArrival => "break the Hollowbound vanguard",
-        StoryBeat::ChoirCacheRevealed => "open the choir reliquary",
-        StoryBeat::ChoirSealRecovered => "enter the bell crypt",
-        StoryBeat::BellCryptOpened => "silence Vesper and the choir",
-        StoryBeat::BellWardenSlain => "carry the second seal to the soul font",
-        StoryBeat::SoulFontDemand => "shatter the font and wake Nyxara",
-        StoryBeat::MatronAwakened => "choose a boon and break Nyxara",
-        StoryBeat::MatronBloodied => "break her before the crescendo",
-        StoryBeat::BastionVictory => "claim the campaign cache and push difficulty",
-        StoryBeat::CursedShrine => "kill all ambushers for the offering",
-        StoryBeat::BloodObelisk => "finish the rite before it turns",
-        StoryBeat::ReliquaryVault => "loot the vault and spend at town",
-        StoryBeat::EmberRift => "seal the rift before the timer breaks",
-        StoryBeat::AshenPylon => "chain kills while the pylon burns",
-    }
-}
-
-fn story_comms_duration(beat: StoryBeat) -> f32 {
-    match beat {
-        StoryBeat::KeeperAwakened
-        | StoryBeat::KeeperBloodied
-        | StoryBeat::Victory
-        | StoryBeat::MatronAwakened
-        | StoryBeat::MatronBloodied
-        | StoryBeat::BastionVictory => 5.2,
-        StoryBeat::CursedShrine | StoryBeat::BloodObelisk | StoryBeat::EmberRift => 4.6,
-        _ => 4.0,
+    StoryComms {
+        copy,
+        duration_secs: event.duration_secs,
     }
 }
 
@@ -9081,7 +9071,7 @@ fn valor_banner_chase(stacks: u32) -> &'static str {
 fn chapter_banner_text(phase: ChapterPhase) -> &'static str {
     match phase {
         ChapterPhase::Breach => {
-            "Breach the Ashen Reliquary\nNext: kill guards | Reward: cache path"
+            "CHAPTER I — THE ASHEN RELIQUARY\nNext: Breach outer guard | Reward: cache path"
         }
         ChapterPhase::Cache => {
             "Seal Fragment: Reliquary Cache\nNext: open cache | Reward: outer seal"
@@ -9107,7 +9097,7 @@ fn chapter_banner_text_for(progress: &ChapterProgress) -> String {
     }
     match progress.phase {
         ChapterPhase::Breach => {
-            "Enter the Hollow Bastion\nNext: break the vanguard | Reward: choir path"
+            "CHAPTER II — THE HOLLOW BASTION\nBreak the vanguard | Next: choir path"
         }
         ChapterPhase::Cache => {
             "Seal Fragment: Choir Reliquary\nNext: open reliquary | Reward: choir seal"
@@ -9474,6 +9464,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     if let Ok(mut text) = texts.9.single_mut() {
         let quest_board =
             chapter_quest_board_text(&progress, &stats, &bounty, &obelisk, &rift, &story);
+        let campaign_journal = campaign_journal_text(&quest_board, &story, &journal);
         let pause_summary = format!(
             "{}\nLore: {}\nProgress: {}\nBestiary: {} | {}",
             quest_board,
@@ -9485,7 +9476,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         let (journal_text, display) = journal_panel_text(
             journal_open.open,
             pause.paused,
-            &journal.open_text(),
+            &campaign_journal,
             &pause_summary,
         );
         **text = journal_text;
@@ -10433,6 +10424,33 @@ fn journal_panel_text(
     } else {
         (String::new(), Display::None)
     }
+}
+
+fn campaign_journal_text(quest_board: &str, story: &StoryLog, lore: &LoreJournal) -> String {
+    let recent_story = story
+        .beats
+        .iter()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|beat| {
+            let scene = story_scene(*beat);
+            let exchange = scene
+                .lines
+                .iter()
+                .map(|line| format!("{}: {}", line.speaker, line.text))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("{} — {}\n{}", beat.title(), beat.line(), exchange)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!(
+        "{quest_board}\n\nSTORY RECORD — RECENT SCENES\n{recent_story}\n\nLORE CODEX\n{}",
+        lore.open_text()
+    )
 }
 
 fn visibility_from_display(display: Display) -> Visibility {
@@ -12403,7 +12421,12 @@ fn update_inventory_slot_icons(
             *visibility = Visibility::Hidden;
             continue;
         };
-        image.rect = Some(atlas_rect(444.0, 444.0, 4, gear_icon_index(item.slot)));
+        image.rect = Some(atlas_rect(
+            UI_GEAR_ICON_CELL,
+            UI_GEAR_ICON_CELL,
+            4,
+            gear_icon_index(item.slot),
+        ));
         *visibility = Visibility::Inherited;
     }
 }
@@ -13007,7 +13030,7 @@ fn hud_objective_text(
     format!(
         "Q{:.0}% {}{} | {} {}/{} | Next {} | {} | {}",
         chapter_mainline_percent(progress),
-        chapter_route_nodes_compact(progress.phase),
+        chapter_route_nodes_compact(progress),
         priority,
         phase_label(progress.phase),
         progress.seal_fragments,
@@ -15190,7 +15213,7 @@ mod tests {
 
         assert!(!text.contains(&progress.title));
         assert!(text.starts_with("Q73%"));
-        assert!(text.contains("B>C>S>[R]>K"));
+        assert!(text.contains("B>C>S>[R]>M"));
         let altar = chapter_world_layout(progress.chapter_id()).altar;
         assert!(text.contains(&format!(
             "Altar {:.0}m {}",
@@ -16552,6 +16575,22 @@ mod tests {
             journal_panel_text(false, true, "Journal full", "Pause summary");
         assert_eq!(pause_text, "Pause summary");
         assert_eq!(pause_display, Display::Flex);
+    }
+
+    #[test]
+    fn campaign_journal_combines_quests_story_dialogue_and_lore() {
+        let mut story = StoryLog::default();
+        story.record(crate::story::StoryBeat::CacheRevealed);
+        let mut lore = LoreJournal::default();
+        lore.discover(crate::lore::LoreEntryId::StewardWarning);
+
+        let text = campaign_journal_text("QUEST BOARD | Main 20%", &story, &lore);
+
+        assert!(text.contains("QUEST BOARD | Main 20%"));
+        assert!(text.contains("STORY RECORD — RECENT SCENES"));
+        assert!(text.contains("Steward Edda:"));
+        assert!(text.contains("LORE CODEX"));
+        assert!(text.contains("Steward's Warning"));
     }
 
     #[test]
@@ -21592,11 +21631,13 @@ mod tests {
         assert!((chapter_mainline_percent(&breach) - 13.333).abs() < 0.01);
         assert_eq!(chapter_mainline_percent(&boss), 80.0);
         assert_eq!(chapter_mainline_percent(&victory), 100.0);
-        assert!(chapter_route_nodes(ChapterPhase::Boss).contains(">Keeper<"));
-        assert_eq!(
-            chapter_route_nodes_compact(ChapterPhase::Boss),
-            "B>C>S>R>[K]"
-        );
+        assert!(chapter_route_nodes(ChapterPhase::Boss).contains(">Boss<"));
+        assert_eq!(chapter_route_nodes_compact(&boss), "B>C>S>R>[M]");
+        let hollow_boss = ChapterProgress {
+            title: ChapterId::HollowBastion.title().to_string(),
+            ..boss
+        };
+        assert_eq!(chapter_route_nodes_compact(&hollow_boss), "B>C>S>R>[N]");
     }
 
     #[test]
@@ -23123,49 +23164,47 @@ mod tests {
     }
 
     #[test]
-    fn story_comms_turn_story_beats_into_tactical_dialogue() {
-        let cache = story_comms_from_event(&format!(
-            "{}: {}",
-            crate::story::StoryBeat::CacheRevealed.title(),
-            crate::story::StoryBeat::CacheRevealed.line()
-        ))
-        .expect("story beat should create comms");
-
-        assert!(cache.copy.contains("Steward Edda"));
-        assert!(cache.copy.contains("Next: open the sealed cache"));
-        assert_eq!(cache.copy.lines().count(), 3);
-        assert_eq!(
-            story_beat_from_event_text(&cache.copy),
-            None,
-            "rendered comms should not feed itself back as a story event"
+    fn story_comms_turn_story_scenes_into_queued_tactical_dialogue() {
+        let cache_events =
+            crate::story::dialogue_events_for(crate::story::StoryBeat::CacheRevealed);
+        assert_eq!(cache_events.len(), 2);
+        assert_eq!(cache_events[0].next_action, None);
+        let cache = story_comms_from_dialogue(
+            cache_events
+                .last()
+                .expect("cache scene should contain dialogue"),
         );
 
-        let boss = story_comms_from_event(&format!(
-            "{}: {}",
-            crate::story::StoryBeat::KeeperBloodied.title(),
-            crate::story::StoryBeat::KeeperBloodied.line()
-        ))
-        .expect("boss story beat should create comms");
-        assert!(boss.copy.contains("Malrec, Keeper of Ash"));
+        assert!(cache.copy.contains("Quartermaster Vey"));
+        assert!(cache.copy.contains("Next: open the sealed cache"));
+        assert_eq!(cache.copy.lines().count(), 3);
+
+        let boss_events =
+            crate::story::dialogue_events_for(crate::story::StoryBeat::KeeperBloodied);
+        let boss = story_comms_from_dialogue(
+            boss_events
+                .last()
+                .expect("boss scene should contain dialogue"),
+        );
+        assert!(boss.copy.contains("Steward Edda"));
         assert!(
             boss.copy
                 .contains("Next: save burst for the stagger window")
         );
         assert!(boss.duration_secs > cache.duration_secs);
 
-        let rift = story_comms_from_event(&format!(
-            "{}: {}",
-            crate::story::StoryBeat::EmberRift.title(),
-            crate::story::StoryBeat::EmberRift.line()
-        ))
-        .expect("optional story beat should create comms");
+        let rift_events = crate::story::dialogue_events_for(crate::story::StoryBeat::EmberRift);
+        let rift = story_comms_from_dialogue(
+            rift_events
+                .last()
+                .expect("optional scene should contain dialogue"),
+        );
         assert!(rift.copy.contains("Reliquary Whisper"));
         assert!(
             rift.copy
                 .contains("Next: seal the rift before the timer breaks")
         );
 
-        assert!(story_comms_from_event("Picked up legendary Iron Fang").is_none());
         assert!(
             reward_toast_from_event(&format!(
                 "{}: {}",
@@ -23961,5 +24000,20 @@ mod tests {
             boss_boon_summary(Some(&arcane)),
             "Empowered Boon Arcane +fury/economy | Momentum 4x"
         );
+    }
+
+    #[test]
+    fn main_menu_background_uses_center_crop_without_stretching() {
+        let ultrawide = main_menu_cover_rect(Vec2::new(2_560.0, 1_080.0));
+        assert_eq!(ultrawide.min.x, 0.0);
+        assert_eq!(ultrawide.max.x, MAIN_MENU_BACKGROUND_SIZE.x);
+        assert!(ultrawide.min.y > 0.0);
+        assert!(((ultrawide.width() / ultrawide.height()) - (2_560.0 / 1_080.0)).abs() < 0.001);
+
+        let portrait = main_menu_cover_rect(Vec2::new(720.0, 1_280.0));
+        assert_eq!(portrait.min.y, 0.0);
+        assert_eq!(portrait.max.y, MAIN_MENU_BACKGROUND_SIZE.y);
+        assert!(portrait.min.x > 0.0);
+        assert!(((portrait.width() / portrait.height()) - (720.0 / 1_280.0)).abs() < 0.001);
     }
 }

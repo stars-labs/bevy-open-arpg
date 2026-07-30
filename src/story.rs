@@ -6,6 +6,8 @@ use crate::{
     enemy::{BossPhase, Enemy, EnemyKilled},
     feedback::CombatEvent,
     not_paused,
+    save::PendingLoadGame,
+    story_content::{chapter_story_beats, story_scene},
 };
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -133,6 +135,18 @@ impl StoryBeat {
     }
 }
 
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
+pub struct StoryDialogueEvent {
+    pub beat: StoryBeat,
+    pub speaker: &'static str,
+    pub text: &'static str,
+    pub next_action: Option<&'static str>,
+    pub duration_secs: f32,
+}
+
+#[derive(Message, Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct StoryPresentationReset;
+
 #[derive(Resource, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoryLog {
     pub beats: Vec<StoryBeat>,
@@ -207,6 +221,8 @@ pub struct StoryPlugin;
 impl Plugin for StoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StoryLog>()
+            .add_message::<StoryDialogueEvent>()
+            .add_message::<StoryPresentationReset>()
             .add_systems(OnEnter(GameState::InGame), reset_story)
             .add_systems(
                 Update,
@@ -215,8 +231,24 @@ impl Plugin for StoryPlugin {
     }
 }
 
-fn reset_story(active_chapter: Res<ActiveChapter>, mut story: ResMut<StoryLog>) {
+fn reset_story(
+    active_chapter: Res<ActiveChapter>,
+    pending_load: Res<PendingLoadGame>,
+    mut story: ResMut<StoryLog>,
+    mut combat_events: MessageWriter<CombatEvent>,
+    mut dialogue_events: MessageWriter<StoryDialogueEvent>,
+) {
     *story = StoryLog::for_chapter(active_chapter.0);
+    if pending_load.is_requested() {
+        return;
+    }
+    combat_events.write(CombatEvent {
+        text: story.latest.clone(),
+    });
+    emit_story_scene(
+        chapter_story_beats(active_chapter.0)[0],
+        &mut dialogue_events,
+    );
 }
 
 fn update_story_log(
@@ -226,10 +258,9 @@ fn update_story_log(
     boss_phases: Query<(&Enemy, &BossPhase)>,
     mut story: ResMut<StoryLog>,
     mut combat_events: MessageWriter<CombatEvent>,
+    mut dialogue_events: MessageWriter<StoryDialogueEvent>,
 ) {
-    record_progress_beats(&progress, &mut story, &mut combat_events);
     let chapter = progress.chapter_id();
-    record_boss_phase_beats(chapter, &boss_phases, &mut story, &mut combat_events);
 
     for interaction in interactions.read() {
         match interaction.kind {
@@ -241,6 +272,7 @@ fn update_story_log(
                     },
                     &mut story,
                     &mut combat_events,
+                    &mut dialogue_events,
                 );
             }
             InteractableKind::Altar => {
@@ -251,22 +283,48 @@ fn update_story_log(
                     },
                     &mut story,
                     &mut combat_events,
+                    &mut dialogue_events,
                 );
             }
             InteractableKind::CursedShrine => {
-                record_story_beat(StoryBeat::CursedShrine, &mut story, &mut combat_events);
+                record_story_beat(
+                    StoryBeat::CursedShrine,
+                    &mut story,
+                    &mut combat_events,
+                    &mut dialogue_events,
+                );
             }
             InteractableKind::BloodObelisk => {
-                record_story_beat(StoryBeat::BloodObelisk, &mut story, &mut combat_events);
+                record_story_beat(
+                    StoryBeat::BloodObelisk,
+                    &mut story,
+                    &mut combat_events,
+                    &mut dialogue_events,
+                );
             }
             InteractableKind::ReliquaryVault => {
-                record_story_beat(StoryBeat::ReliquaryVault, &mut story, &mut combat_events);
+                record_story_beat(
+                    StoryBeat::ReliquaryVault,
+                    &mut story,
+                    &mut combat_events,
+                    &mut dialogue_events,
+                );
             }
             InteractableKind::EmberRift => {
-                record_story_beat(StoryBeat::EmberRift, &mut story, &mut combat_events);
+                record_story_beat(
+                    StoryBeat::EmberRift,
+                    &mut story,
+                    &mut combat_events,
+                    &mut dialogue_events,
+                );
             }
             InteractableKind::AshenPylon => {
-                record_story_beat(StoryBeat::AshenPylon, &mut story, &mut combat_events);
+                record_story_beat(
+                    StoryBeat::AshenPylon,
+                    &mut story,
+                    &mut combat_events,
+                    &mut dialogue_events,
+                );
             }
             _ => {}
         }
@@ -281,6 +339,7 @@ fn update_story_log(
                 },
                 &mut story,
                 &mut combat_events,
+                &mut dialogue_events,
             );
         }
         if kill.enemy_id == chapter.boss_id() {
@@ -291,9 +350,26 @@ fn update_story_log(
                 },
                 &mut story,
                 &mut combat_events,
+                &mut dialogue_events,
             );
         }
     }
+
+    // Gameplay messages are handled first so a cache, warden, altar, or boss
+    // exchange is queued before the phase narration it unlocks.
+    record_progress_beats(
+        &progress,
+        &mut story,
+        &mut combat_events,
+        &mut dialogue_events,
+    );
+    record_boss_phase_beats(
+        chapter,
+        &boss_phases,
+        &mut story,
+        &mut combat_events,
+        &mut dialogue_events,
+    );
 }
 
 fn record_boss_phase_beats(
@@ -301,13 +377,14 @@ fn record_boss_phase_beats(
     boss_phases: &Query<(&Enemy, &BossPhase)>,
     story: &mut StoryLog,
     combat_events: &mut MessageWriter<CombatEvent>,
+    dialogue_events: &mut MessageWriter<StoryDialogueEvent>,
 ) {
     for (enemy, phase) in boss_phases.iter() {
         if enemy.id != chapter.boss_id() {
             continue;
         }
         if let Some(beat) = boss_phase_story_beat_for(chapter, phase.phase_two_started()) {
-            record_story_beat(beat, story, combat_events);
+            record_story_beat(beat, story, combat_events, dialogue_events);
         }
     }
 }
@@ -328,6 +405,7 @@ fn record_progress_beats(
     progress: &ChapterProgress,
     story: &mut StoryLog,
     combat_events: &mut MessageWriter<CombatEvent>,
+    dialogue_events: &mut MessageWriter<StoryDialogueEvent>,
 ) {
     let beat = match (progress.chapter_id(), progress.phase) {
         (_, ChapterPhase::Breach) => None,
@@ -343,7 +421,7 @@ fn record_progress_beats(
         (ChapterId::HollowBastion, ChapterPhase::Victory) => Some(StoryBeat::BastionVictory),
     };
     if let Some(beat) = beat {
-        record_story_beat(beat, story, combat_events);
+        record_story_beat(beat, story, combat_events, dialogue_events);
     }
 }
 
@@ -351,12 +429,37 @@ fn record_story_beat(
     beat: StoryBeat,
     story: &mut StoryLog,
     combat_events: &mut MessageWriter<CombatEvent>,
+    dialogue_events: &mut MessageWriter<StoryDialogueEvent>,
 ) {
     if story.record(beat) {
         combat_events.write(CombatEvent {
             text: story.latest.clone(),
         });
+        emit_story_scene(beat, dialogue_events);
     }
+}
+
+fn emit_story_scene(beat: StoryBeat, dialogue_events: &mut MessageWriter<StoryDialogueEvent>) {
+    for event in dialogue_events_for(beat) {
+        dialogue_events.write(event);
+    }
+}
+
+pub fn dialogue_events_for(beat: StoryBeat) -> Vec<StoryDialogueEvent> {
+    let scene = story_scene(beat);
+    let last_line = scene.lines.len().saturating_sub(1);
+    scene
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| StoryDialogueEvent {
+            beat,
+            speaker: line.speaker,
+            text: line.text,
+            next_action: (index == last_line).then_some(scene.next_action),
+            duration_secs: scene.line_duration_secs,
+        })
+        .collect()
 }
 
 pub fn story_summary(story: &StoryLog) -> String {
@@ -427,5 +530,32 @@ mod tests {
     fn boss_phase_story_beat_records_keeper_bloodied_once_phase_two_starts() {
         assert_eq!(boss_phase_story_beat(false), None);
         assert_eq!(boss_phase_story_beat(true), Some(StoryBeat::KeeperBloodied));
+        assert_eq!(
+            boss_phase_story_beat_for(ChapterId::HollowBastion, true),
+            Some(StoryBeat::MatronBloodied)
+        );
+    }
+
+    #[test]
+    fn dialogue_events_preserve_scene_order_and_end_with_the_objective() {
+        for chapter in [ChapterId::AshenReliquary, ChapterId::HollowBastion] {
+            for beat in crate::story_content::chapter_story_beats(chapter) {
+                let events = dialogue_events_for(*beat);
+                assert!(!events.is_empty(), "{beat:?} should publish dialogue");
+                assert!(
+                    events[..events.len() - 1]
+                        .iter()
+                        .all(|event| event.next_action.is_none()),
+                    "{beat:?} should not show the objective before its final line"
+                );
+                assert!(
+                    events
+                        .last()
+                        .is_some_and(|event| event.next_action.is_some()),
+                    "{beat:?} should end with an actionable objective"
+                );
+                assert!(events.iter().all(|event| event.beat == *beat));
+            }
+        }
     }
 }

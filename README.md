@@ -16,6 +16,8 @@ The playable campaign has two connected chapters:
 
 Each chapter anchors its main quest in a hand-authored origin region, then streams a deterministic procedural wilderness without a hard map edge. The world loads 48 m terrain chunks around the hero, unloads distant chunks, and recreates the same biome, rocks, deadwood, crystals, ruins, and chapter-specific enemy formation whenever a seed and chunk coordinate are revisited. Distant packs gain measured threat while their size and affixes follow the selected difficulty. The minimap is a player-centered local radar; the objective compass leads back to distant story landmarks.
 
+The campaign narrative is data-driven across 18 mainline scenes, nine per chapter. Ordered, multi-character dialogue covers exploration, the pre-Boss confrontation, the half-health phase change, the aftermath, and a final victory resolution. The `J` journal combines current tasks, story history, and recovered lore. Loading clears transient dialogue presentation state and restores recorded story progress without replaying stale queued lines.
+
 Continuing from Chapter I carries the hero's level, equipment, inventory, talents, runes, codex, gems, armory, potion upgrades, and companion into Chapter II. Completing Chapter II advances the difficulty and begins the next campaign cycle.
 
 ## Running
@@ -260,7 +262,7 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `Space`: interact with chapter objectives and the quartermaster
 - `I`: open inventory (click a bag slot to equip it; click a worn paper-doll piece to stow it)
 - `K`: open build and talent panel
-- `J`: open lore journal
+- `J`: open the task, story, and lore journal
 - `M`: mute or restore generated combat audio
 - Gamepad north: mute or restore generated combat audio
 - `F2`: toggle clean or tactical HUD density
@@ -411,12 +413,19 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 Run the Blender generators after changing model scripts:
 
 ```bash
-blender --background --python tools/blender/generate_assets.py
-blender --background --python tools/blender/generate_hollow_bastion.py
-blender --background --python tools/blender/generate_enemy_roster.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_assets.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_hollow_bastion.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/generate_enemy_roster.py
+nix develop -c blender --background --factory-startup \
+  --python tools/blender/postprocess_glb_materials.py
 ```
 
-The roster generator reproducibly rebuilds the differentiated enemy silhouettes and the Malrec/Nyxara signature-skill VFX in `assets/models/`.
+The roster generator reproducibly rebuilds the differentiated enemy silhouettes and the Malrec/Nyxara signature-skill VFX in `assets/models/`. Always run the Blender 5.1 material post-processor last. It embeds the 512 px `bone`, `cloth`, `metal`, and `stone` detail maps from `assets/textures/materials/` into the 18 core character/Boss GLBs, enables back-face culling on closed meshes, and preserves the explicit double-sided VFX whitelist. To rebuild selected files, append `-- --only hero.glb keeper.glb hollow_matron.glb`; repeatability verification is documented in `tools/blender/README.md`.
+
+The runtime imagegen assets are committed under `assets/images/generated/`: `world/` contains the Ashen and Hollow ground/road albedos, while `ui/` contains `main-menu-reliquary-v2.png` and the six panel, slot, resource-orb, skill, gear, and talent atlases. Terrain and roads repeat-sample their chapter-specific textures. The six atlases use transparent RGBA at half source resolution, and the main-menu background uses an aspect-preserving cover crop. In windowed builds, these UI, terrain, detail, font, model, and VFX handles participate in the `Loading` gate before the menu opens. Headless gameplay smoke registers the same handles but skips asynchronous visual readiness so a fixed frame budget tests gameplay rather than worker timing.
 
 Regenerate local audio cues after changing sound scripts:
 
