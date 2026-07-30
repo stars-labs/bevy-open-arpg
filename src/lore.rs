@@ -1,6 +1,7 @@
 use crate::{
     GameState,
     chapter::{ChapterId, ChapterProgress, InteractableKind, InteractableUsed},
+    dungeon::chapter_world_layout,
     feedback::CombatEvent,
     not_paused,
 };
@@ -136,18 +137,20 @@ pub fn lore_entry_for_position(position: Vec3) -> Option<LoreEntryId> {
 pub fn lore_entry_for_chapter_position(chapter: ChapterId, position: Vec3) -> Option<LoreEntryId> {
     let entries = match chapter {
         ChapterId::AshenReliquary => [
-            (Vec3::new(-10.2, 0.0, 5.8), LoreEntryId::StewardWarning),
-            (Vec3::new(3.1, 0.0, -6.3), LoreEntryId::AcolyteOath),
-            (Vec3::new(9.2, 0.0, 5.7), LoreEntryId::MalrecPact),
+            LoreEntryId::StewardWarning,
+            LoreEntryId::AcolyteOath,
+            LoreEntryId::MalrecPact,
         ],
         ChapterId::HollowBastion => [
-            (Vec3::new(-10.2, 0.0, 5.8), LoreEntryId::LastBell),
-            (Vec3::new(3.1, 0.0, -6.3), LoreEntryId::ChoirLitany),
-            (Vec3::new(9.2, 0.0, 5.7), LoreEntryId::NyxaraLament),
+            LoreEntryId::LastBell,
+            LoreEntryId::ChoirLitany,
+            LoreEntryId::NyxaraLament,
         ],
     };
-    entries
+    chapter_world_layout(chapter)
+        .lore_pages
         .into_iter()
+        .zip(entries)
         .find_map(|(anchor, entry)| (position.distance(anchor) <= 0.2).then_some(entry))
 }
 
@@ -167,10 +170,20 @@ mod tests {
 
     #[test]
     fn lore_positions_map_to_entries() {
+        let ashen = chapter_world_layout(ChapterId::AshenReliquary);
+        let hollow = chapter_world_layout(ChapterId::HollowBastion);
+
+        for (position, expected) in ashen.lore_pages.into_iter().zip([
+            LoreEntryId::StewardWarning,
+            LoreEntryId::AcolyteOath,
+            LoreEntryId::MalrecPact,
+        ]) {
+            assert_eq!(lore_entry_for_position(position), Some(expected));
+        }
         assert_eq!(
-            lore_entry_for_position(Vec3::new(3.1, 0.0, -6.3)),
-            Some(LoreEntryId::AcolyteOath)
+            lore_entry_for_chapter_position(ChapterId::HollowBastion, hollow.lore_pages[2]),
+            Some(LoreEntryId::NyxaraLament)
         );
-        assert_eq!(lore_entry_for_position(Vec3::ZERO), None);
+        assert_eq!(lore_entry_for_position(ashen.lore_pages[1] + Vec3::X), None);
     }
 }

@@ -76,9 +76,92 @@ fn chapter_runtime_assets_exist() {
         "assets/audio/utility.wav",
         "assets/audio/victory.wav",
         "assets/audio/defeat.wav",
+        "assets/fonts/FiraSans-Bold.ttf",
+        "assets/fonts/FiraSans-Regular.ttf",
+        "assets/fonts/FiraSans-License.txt",
         "assets/images/generated/bevy-open-arpg-concept.png",
+        "assets/images/generated/ui/gear-icons-reliquary.png",
+        "assets/images/generated/ui/main-menu-reliquary-v2.png",
+        "assets/images/generated/ui/panel-frame-reliquary.png",
+        "assets/images/generated/ui/resource-orb-frame-reliquary.png",
+        "assets/images/generated/ui/skill-icons-reliquary.png",
+        "assets/images/generated/ui/slot-frame-reliquary.png",
+        "assets/images/generated/ui/talent-sigils-reliquary.png",
     ] {
         assert!(Path::new(path).exists(), "missing runtime asset: {path}");
+    }
+}
+
+#[test]
+fn generated_ui_pngs_have_expected_ihdr() {
+    for (path, expected_width, expected_height) in [
+        (
+            "assets/images/generated/ui/main-menu-reliquary-v2.png",
+            1_672,
+            941,
+        ),
+        (
+            "assets/images/generated/ui/panel-frame-reliquary.png",
+            1_536,
+            1_024,
+        ),
+        (
+            "assets/images/generated/ui/slot-frame-reliquary.png",
+            1_254,
+            1_254,
+        ),
+        (
+            "assets/images/generated/ui/talent-sigils-reliquary.png",
+            2_172,
+            724,
+        ),
+        (
+            "assets/images/generated/ui/skill-icons-reliquary.png",
+            1_536,
+            1_024,
+        ),
+        (
+            "assets/images/generated/ui/gear-icons-reliquary.png",
+            1_776,
+            888,
+        ),
+        (
+            "assets/images/generated/ui/resource-orb-frame-reliquary.png",
+            1_254,
+            1_254,
+        ),
+    ] {
+        let bytes = fs::read(path).unwrap();
+        assert!(
+            bytes.len() >= 33,
+            "{path} is too short to contain a PNG IHDR"
+        );
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "{path} is not a PNG");
+        assert_eq!(
+            u32::from_be_bytes(bytes[8..12].try_into().unwrap()),
+            13,
+            "{path} has an invalid IHDR length"
+        );
+        assert_eq!(&bytes[12..16], b"IHDR", "{path} does not start with IHDR");
+
+        let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+        let bit_depth = bytes[24];
+        let color_type = bytes[25];
+
+        assert_eq!(
+            (width, height),
+            (expected_width, expected_height),
+            "{path} has unexpected dimensions"
+        );
+        assert_eq!(bit_depth, 8, "{path} must use 8-bit color channels");
+        assert!(
+            matches!(color_type, 2 | 6),
+            "{path} must be RGB or RGBA, found PNG color type {color_type}"
+        );
+        if path.ends_with("resource-orb-frame-reliquary.png") {
+            assert_eq!(color_type, 6, "{path} must preserve its alpha channel");
+        }
     }
 }
 

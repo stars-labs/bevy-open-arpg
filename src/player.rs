@@ -1,9 +1,10 @@
 use crate::{
     CARNAGE_MASTER_STREAK, GameState, LAST_STAND_HEALTH_RATIO, RunStats, SET_ADEPT_KILLS,
     assets::GameAssets,
-    chapter::{ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed},
+    chapter::{ActiveChapter, ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed},
     companion::CompanionBond,
     data::PlayerTuning,
+    dungeon::chapter_world_layout,
     enemy::{Enemy, EnemyKilled, SpawnNemesis, enemy_cursor_pick_radius},
     feedback::{CombatEvent, FloatingCombatTextEvent, ScreenShakeEvent},
     not_paused, register_massacre_kill,
@@ -569,6 +570,7 @@ impl Equipment {
         self.worn_sum(|item| item.crit_chance)
     }
 
+    #[cfg(test)]
     pub fn worn_health_bonus(&self) -> f32 {
         self.worn_sum(|item| item.health_bonus)
     }
@@ -1811,6 +1813,7 @@ impl Talents {
         }
     }
 
+    #[cfg(test)]
     pub fn summary(&self) -> String {
         format!(
             "Talent points: {} | 1 Wrath {} (+dmg) | 2 Vigor {} (+hp) | 3 Focus {} (-cd)",
@@ -1820,6 +1823,7 @@ impl Talents {
 
     /// Mastery progress line for the build panel, e.g.
     /// "Wrath 5/8 [Bloodrush] | Vigor 2/4 | Focus 8/8 [Flow+Tempest]".
+    #[cfg(test)]
     pub fn mastery_summary(&self) -> String {
         let line = |name: &str, points: u32, first: &str, second: &str| match talent_tier(points) {
             2 => format!("{name} {points} [{first}+{second}]"),
@@ -2670,6 +2674,7 @@ fn capture_campaign_hero(
 
 fn restore_campaign_hero(
     carryover: Res<CampaignHeroCarryover>,
+    active_chapter: Option<Res<ActiveChapter>>,
     mut core: RestoreCampaignHeroCoreQuery,
     mut build: RestoreCampaignHeroBuildQuery,
 ) {
@@ -2723,8 +2728,11 @@ fn restore_campaign_hero(
     elixirs.max = hero.elixir_max.max(1);
     elixirs.current = elixirs.max;
     elixirs.selected = hero.selected_elixir;
+    let active_chapter = active_chapter
+        .map(|active_chapter| active_chapter.0)
+        .unwrap_or_default();
     *death_ward = DeathWard {
-        checkpoint: Vec3::new(0.0, 0.0, 4.0),
+        checkpoint: chapter_world_layout(active_chapter).player_spawn,
         revives_used: 0,
         max_revives: hero.death_ward.max_revives,
         gold_penalty: hero.death_ward.gold_penalty,
@@ -2750,9 +2758,11 @@ fn spawn_player(
     mut commands: Commands,
     assets: Res<GameAssets>,
     tuning: Res<PlayerTuning>,
+    active_chapter: Res<ActiveChapter>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let world_layout = chapter_world_layout(active_chapter.0);
     let mut cooldowns = SkillCooldowns {
         dash: Timer::from_seconds(tuning.dash_cooldown, TimerMode::Once),
         nova: Timer::from_seconds(tuning.nova_cooldown, TimerMode::Once),
@@ -2785,7 +2795,7 @@ fn spawn_player(
 
     commands
         .spawn((
-            Transform::from_xyz(0.0, 0.0, 4.0).with_scale(Vec3::splat(1.0)),
+            Transform::from_translation(world_layout.player_spawn).with_scale(Vec3::splat(1.0)),
             Visibility::Inherited,
             Player,
             Health {
@@ -2907,11 +2917,11 @@ fn spawn_player(
             },
             TownPortal {
                 cooldown: Timer::from_seconds(0.0, TimerMode::Once),
-                destination: Vec3::new(-4.8, 0.0, 4.4),
+                destination: world_layout.camp,
                 return_position: None,
             },
             DeathWard {
-                checkpoint: Vec3::new(0.0, 0.0, 4.0),
+                checkpoint: world_layout.player_spawn,
                 revives_used: 0,
                 max_revives: 2,
                 gold_penalty: 60,
@@ -5757,9 +5767,16 @@ fn camera_follow(
     let Ok(mut camera_transform) = camera.single_mut() else {
         return;
     };
-    let target = player_transform.translation + Vec3::new(-9.0, 12.0, 13.0);
-    camera_transform.translation = camera_transform.translation.lerp(target, 0.08);
+    camera_transform.translation =
+        camera_follow_translation(camera_transform.translation, player_transform.translation);
     camera_transform.look_at(player_transform.translation, Vec3::Y);
+}
+
+fn camera_follow_translation(current: Vec3, player: Vec3) -> Vec3 {
+    const CAMERA_OFFSET: Vec3 = Vec3::new(-9.0, 12.0, 13.0);
+    const CAMERA_FOLLOW_RESPONSE: f32 = 0.08;
+
+    current.lerp(player + CAMERA_OFFSET, CAMERA_FOLLOW_RESPONSE)
 }
 
 fn check_player_death(
@@ -5970,7 +5987,8 @@ mod tests {
         };
 
         let mut app = App::new();
-        app.init_resource::<CampaignHeroCarryover>()
+        app.insert_resource(ActiveChapter(crate::chapter::ChapterId::HollowBastion))
+            .init_resource::<CampaignHeroCarryover>()
             .add_schedule(Schedule::new(CaptureCampaignHeroTest))
             .add_schedule(Schedule::new(RestoreCampaignHeroTest))
             .add_systems(CaptureCampaignHeroTest, capture_campaign_hero)
@@ -6131,7 +6149,8 @@ mod tests {
         assert_eq!(
             *world.get::<DeathWard>(target).unwrap(),
             DeathWard {
-                checkpoint: Vec3::new(0.0, 0.0, 4.0),
+                checkpoint: chapter_world_layout(crate::chapter::ChapterId::HollowBastion)
+                    .player_spawn,
                 revives_used: 0,
                 max_revives: death_ward.max_revives,
                 gold_penalty: death_ward.gold_penalty,
@@ -7323,6 +7342,17 @@ mod tests {
     }
 
     #[test]
+    fn camera_follow_pans_toward_player_with_stable_world_offset() {
+        let player = Vec3::new(32.0, 0.0, -48.0);
+        let desired = player + Vec3::new(-9.0, 12.0, 13.0);
+        let current = desired + Vec3::new(-10.0, 4.0, 20.0);
+        let followed = camera_follow_translation(current, player);
+
+        assert!(followed.distance(desired) < current.distance(desired));
+        assert_eq!(followed, current.lerp(desired, 0.08));
+    }
+
+    #[test]
     fn click_move_attack_target_stops_before_enemy_center() {
         let stop_radius = click_attack_stop_radius(2.2);
         let current = Vec3::ZERO;
@@ -7343,23 +7373,29 @@ mod tests {
     }
 
     #[test]
-    fn click_move_targets_clamp_to_playable_bounds() {
+    fn click_move_targets_are_unbounded_while_the_story_pass_stays_sealed() {
         let open_layout = crate::dungeon::DungeonLayout {
             sanctum_gate_open: true,
         };
-        // Far north-east lands inside the sanctum bounds once the gate opens.
-        let clamped = clamp_player_translation(&open_layout, Vec3::new(40.0, 3.0, -40.0));
-        assert_eq!(clamped.x, 9.5);
-        assert_eq!(clamped.y, 3.0);
-        assert_eq!(clamped.z, -23.5);
+        let distant = Vec3::new(140.0, 3.0, -160.0);
+        let clamped = clamp_player_translation(&open_layout, distant);
+        assert_eq!(clamped, crate::dungeon::clamp_world_translation(distant));
+        assert_eq!(clamped.y, distant.y);
 
-        // While sealed, the same click stops at the outer hall's north wall.
         let sealed = crate::dungeon::DungeonLayout {
             sanctum_gate_open: false,
         };
-        let blocked = clamp_player_translation(&sealed, Vec3::new(40.0, 3.0, -40.0));
-        assert_eq!(blocked.x, 11.5);
-        assert_eq!(blocked.z, -7.5);
+        assert_eq!(clamp_player_translation(&sealed, distant), distant);
+
+        let local_pass = Vec3::new(2.0, 3.0, -28.0);
+        let blocked = clamp_player_translation(&sealed, local_pass);
+        let sealed_north = crate::dungeon::chapter_world_position(
+            crate::chapter::ChapterId::AshenReliquary,
+            Vec3::new(0.0, 0.0, -7.5),
+        )
+        .z;
+        assert_eq!(blocked.x, local_pass.x);
+        assert_eq!(blocked.z, sealed_north);
     }
 
     #[test]

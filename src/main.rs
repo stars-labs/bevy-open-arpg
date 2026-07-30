@@ -17,6 +17,7 @@ mod milestone;
 mod obelisk;
 mod ordeal;
 mod player;
+mod procedural_world;
 mod rift;
 mod save;
 mod story;
@@ -100,7 +101,7 @@ use chapter::{ActiveChapter, ChapterId, ChapterPlugin, ChapterProgress};
 use combat::CombatPlugin;
 use companion::CompanionPlugin;
 use data::GameDataPlugin;
-use dungeon::DungeonPlugin;
+use dungeon::{DungeonPlugin, Interactable, OutdoorScenery};
 use enemy::{EnemyKilled, EnemyPlugin, SpawnAshenThreatWave};
 use feedback::{CombatEvent, FeedbackPlugin};
 use loot::LootPlugin;
@@ -110,6 +111,7 @@ use milestone::MilestonePlugin;
 use obelisk::ObeliskPlugin;
 use ordeal::{ChapterModifier, modifier_for_run};
 use player::{Player, PlayerPlugin};
+use procedural_world::{CHUNK_SIZE, ProceduralChunk, ProceduralWorldPlugin};
 use rift::RiftPlugin;
 use save::{PendingLoadGame, SavePlugin, prepare_load_request};
 use serde::{Deserialize, Serialize};
@@ -379,6 +381,11 @@ impl AudioSettings {
 #[derive(Resource, Default)]
 pub struct DebugVisuals {
     pub enabled: bool,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+struct OpenWorldEnvironmentFollower {
+    offset: Vec3,
 }
 
 /// Player-facing runtime preferences persisted by Bevy Settings and exposed to Bevy Remote tooling.
@@ -779,6 +786,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         ChallengePlugin,
         ChapterPlugin,
         DungeonPlugin,
+        ProceduralWorldPlugin,
         PlayerPlugin,
         CompanionPlugin,
     ));
@@ -803,6 +811,10 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     .add_systems(Update, toggle_audio)
     .add_systems(Update, toggle_debug_visuals)
     .add_systems(Update, toggle_ui_debug_overlay)
+    .add_systems(
+        Update,
+        follow_open_world_environment.run_if(in_state(GameState::InGame)),
+    )
     .add_systems(Update, copy_runtime_summary_to_clipboard)
     .add_systems(Update, save_user_settings_on_close)
     .add_systems(
@@ -815,8 +827,12 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     )
     .add_systems(Update, victory_input.run_if(in_state(GameState::Victory)))
     .add_systems(Update, toggle_pause.run_if(in_state(GameState::InGame)))
-    .add_systems(Update, toggle_inventory.run_if(in_state(GameState::InGame)))
-    .add_systems(Update, toggle_build.run_if(in_state(GameState::InGame)))
+    .add_systems(
+        Update,
+        (toggle_inventory, toggle_build)
+            .chain()
+            .run_if(in_state(GameState::InGame)),
+    )
     .add_systems(Update, toggle_journal.run_if(in_state(GameState::InGame)))
     .add_systems(
         Update,
@@ -942,19 +958,38 @@ fn validate_headless_smoke_result(app: &mut App, chapter: Option<ChapterId>) -> 
         && world
             .get_resource::<ChapterProgress>()
             .is_some_and(|progress| progress.chapter_id() == chapter);
-    let player_count = world
-        .query_filtered::<Entity, With<Player>>()
+    let player_positions = world
+        .query_filtered::<&Transform, With<Player>>()
+        .iter(world)
+        .map(|transform| transform.translation)
+        .collect::<Vec<_>>();
+    let player_count = player_positions.len();
+    let player_in_world = player_positions
+        .first()
+        .is_some_and(|position| position.is_finite());
+    let procedural_chunk_count = world
+        .query_filtered::<Entity, With<ProceduralChunk>>()
         .iter(world)
         .count();
-    if state_ready && chapter_ready && player_count == 1 {
+    let scenery_count = world
+        .query_filtered::<Entity, With<OutdoorScenery>>()
+        .iter(world)
+        .count();
+    let interactable_count = world
+        .query_filtered::<Entity, With<Interactable>>()
+        .iter(world)
+        .count();
+    let outdoor_world_ready =
+        procedural_chunk_count >= 25 && scenery_count >= 120 && interactable_count >= 12;
+    if state_ready && chapter_ready && player_count == 1 && player_in_world && outdoor_world_ready {
         info!(
-            "headless gameplay smoke complete: chapter={} players={player_count}",
-            chapter.title()
+            "headless gameplay smoke complete: chapter={} players={player_count} procedural_chunks={procedural_chunk_count} outdoor_scenery={scenery_count} interactables={interactable_count}",
+            chapter.title(),
         );
         AppExit::Success
     } else {
         error!(
-            "headless gameplay smoke failed: chapter={} state_ready={state_ready} chapter_ready={chapter_ready} players={player_count}",
+            "headless gameplay smoke failed: chapter={} state_ready={state_ready} chapter_ready={chapter_ready} players={player_count} player_in_world={player_in_world} procedural_chunks={procedural_chunk_count} outdoor_scenery={scenery_count} interactables={interactable_count} outdoor_world_ready={outdoor_world_ready}",
             chapter.title()
         );
         AppExit::error()
@@ -1453,8 +1488,8 @@ fn setup_camera_and_light(
             directional_light_color: Color::srgba(0.72, 0.34, 0.18, 0.24),
             directional_light_exponent: 28.0,
             falloff: FogFalloff::Linear {
-                start: 13.0,
-                end: 38.0,
+                start: 24.0,
+                end: 104.0,
             },
         },
         open_arpg_depth_of_field(),
@@ -1505,6 +1540,9 @@ fn setup_camera_and_light(
         },
         VolumetricLight,
         Transform::from_xyz(0.0, 4.0, -3.0),
+        OpenWorldEnvironmentFollower {
+            offset: Vec3::new(0.0, 4.0, -3.0),
+        },
         Name::new("Infernal Fill Light"),
     ));
 
@@ -1517,6 +1555,9 @@ fn setup_camera_and_light(
             range: 22.0,
         },
         Transform::from_xyz(-5.5, 3.3, -5.8).looking_at(Vec3::new(-1.0, 0.7, -1.2), Vec3::Y),
+        OpenWorldEnvironmentFollower {
+            offset: Vec3::new(-5.5, 3.3, -5.8),
+        },
         Name::new("Reliquary Brazier Area Light"),
     ));
 
@@ -1529,18 +1570,36 @@ fn setup_camera_and_light(
             range: 20.0,
         },
         Transform::from_xyz(6.4, 3.6, 4.8).looking_at(Vec3::new(1.5, 0.8, 1.2), Vec3::Y),
+        OpenWorldEnvironmentFollower {
+            offset: Vec3::new(6.4, 3.6, 4.8),
+        },
         Name::new("Moonlit Rift Area Light"),
     ));
 
     commands.spawn((
         FogVolume {
             fog_color: Color::srgb(0.36, 0.18, 0.12),
-            density_factor: 0.014,
+            density_factor: 0.009,
             ..default()
         },
-        Transform::from_xyz(0.0, 2.8, 0.0).with_scale(Vec3::new(34.0, 7.0, 24.0)),
-        Name::new("Low Reliquary Volumetric Haze"),
+        Transform::from_xyz(0.0, 3.4, 0.0).with_scale(Vec3::new(340.0, 10.0, 340.0)),
+        OpenWorldEnvironmentFollower {
+            offset: Vec3::new(0.0, 3.4, 0.0),
+        },
+        Name::new("Open World Volumetric Haze"),
     ));
+}
+
+fn follow_open_world_environment(
+    player: Query<&Transform, (With<Player>, Without<OpenWorldEnvironmentFollower>)>,
+    mut followers: Query<(&OpenWorldEnvironmentFollower, &mut Transform), Without<Player>>,
+) {
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    for (follower, mut transform) in &mut followers {
+        transform.translation = player_transform.translation + follower.offset;
+    }
 }
 
 fn open_arpg_depth_of_field() -> DepthOfField {
@@ -2002,21 +2061,31 @@ fn draw_debug_gizmos(
     }
 
     let floor_y = 0.08;
-    let min_x = -13.0;
-    let max_x = 13.0;
-    let min_z = -9.0;
-    let max_z = 9.0;
-    let a = Vec3::new(min_x, floor_y, min_z);
-    let b = Vec3::new(max_x, floor_y, min_z);
-    let c = Vec3::new(max_x, floor_y, max_z);
-    let d = Vec3::new(min_x, floor_y, max_z);
-    let arena_color = Color::srgba(0.34, 0.72, 1.0, 0.75);
-    gizmos.line(a, b, arena_color);
-    gizmos.line(b, c, arena_color);
-    gizmos.line(c, d, arena_color);
-    gizmos.line(d, a, arena_color);
-
     for transform in &players {
+        let chunk = IVec2::new(
+            (transform.translation.x / CHUNK_SIZE).floor() as i32,
+            (transform.translation.z / CHUNK_SIZE).floor() as i32,
+        );
+        let grid_color = Color::srgba(0.34, 0.72, 1.0, 0.42);
+        let min_x = (chunk.x - 3) as f32 * CHUNK_SIZE;
+        let max_x = (chunk.x + 4) as f32 * CHUNK_SIZE;
+        let min_z = (chunk.y - 3) as f32 * CHUNK_SIZE;
+        let max_z = (chunk.y + 4) as f32 * CHUNK_SIZE;
+        for offset in -3..=4 {
+            let x = (chunk.x + offset) as f32 * CHUNK_SIZE;
+            let z = (chunk.y + offset) as f32 * CHUNK_SIZE;
+            gizmos.line(
+                Vec3::new(x, floor_y, min_z),
+                Vec3::new(x, floor_y, max_z),
+                grid_color,
+            );
+            gizmos.line(
+                Vec3::new(min_x, floor_y, z),
+                Vec3::new(max_x, floor_y, z),
+                grid_color,
+            );
+        }
+
         let center = transform.translation + Vec3::Y * 0.35;
         let player_color = Color::srgb(1.0, 0.82, 0.24);
         gizmos.line(
@@ -2037,15 +2106,29 @@ fn draw_debug_gizmos(
     }
 }
 
-fn toggle_inventory(keyboard: Res<ButtonInput<KeyCode>>, mut inventory: ResMut<InventoryOpen>) {
+fn toggled_exclusive_panel(open: bool, sibling_open: bool) -> (bool, bool) {
+    let open = !open;
+    let sibling_open = if open { false } else { sibling_open };
+    (open, sibling_open)
+}
+
+fn toggle_inventory(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut inventory: ResMut<InventoryOpen>,
+    mut build: ResMut<BuildOpen>,
+) {
     if keyboard.just_pressed(KeyCode::KeyI) {
-        inventory.open = !inventory.open;
+        (inventory.open, build.open) = toggled_exclusive_panel(inventory.open, build.open);
     }
 }
 
-fn toggle_build(keyboard: Res<ButtonInput<KeyCode>>, mut build: ResMut<BuildOpen>) {
+fn toggle_build(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut inventory: ResMut<InventoryOpen>,
+    mut build: ResMut<BuildOpen>,
+) {
     if keyboard.just_pressed(KeyCode::KeyK) {
-        build.open = !build.open;
+        (build.open, inventory.open) = toggled_exclusive_panel(build.open, inventory.open);
     }
 }
 
@@ -2471,6 +2554,27 @@ mod tests {
             window_backend: None,
             explicit_windowed_request: false,
         }
+    }
+
+    #[test]
+    fn exclusive_panel_toggle_closes_the_open_sibling() {
+        assert_eq!(toggled_exclusive_panel(false, true), (true, false));
+        assert_eq!(toggled_exclusive_panel(false, false), (true, false));
+    }
+
+    #[test]
+    fn exclusive_panel_toggle_still_closes_the_selected_panel() {
+        assert_eq!(toggled_exclusive_panel(true, false), (false, false));
+        assert_eq!(toggled_exclusive_panel(true, true), (false, true));
+    }
+
+    #[test]
+    fn chained_inventory_and_build_toggles_remain_mutually_exclusive() {
+        let (inventory_open, build_open) = toggled_exclusive_panel(false, false);
+        let (build_open, inventory_open) = toggled_exclusive_panel(build_open, inventory_open);
+
+        assert!(!inventory_open);
+        assert!(build_open);
     }
 
     #[test]

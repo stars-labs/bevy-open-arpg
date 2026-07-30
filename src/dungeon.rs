@@ -17,6 +17,10 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct DungeonEntity;
 
+/// Programmatic opaque scenery used to dress the outdoor map.
+#[derive(Component)]
+pub struct OutdoorScenery;
+
 #[derive(Component)]
 pub struct Interactable {
     pub kind: InteractableKind,
@@ -32,6 +36,7 @@ pub enum ChapterZone {
     GildedVault,
     EmberAltar,
     QuartermasterNave,
+    Wilderness,
     #[default]
     ReliquaryCrossing,
 }
@@ -39,12 +44,13 @@ pub enum ChapterZone {
 impl ChapterZone {
     pub fn label(self) -> &'static str {
         match self {
-            Self::CacheOssuary => "Cache Ossuary",
-            Self::OuterSanctum => "Outer Sanctum",
-            Self::GildedVault => "Gilded Vault",
-            Self::EmberAltar => "Ember Altar",
-            Self::QuartermasterNave => "Quartermaster Nave",
-            Self::ReliquaryCrossing => "Reliquary Crossing",
+            Self::CacheOssuary => "Ashen Gravefield",
+            Self::OuterSanctum => "Northern Expanse",
+            Self::GildedVault => "Gilded Ruins",
+            Self::EmberAltar => "Ember Highlands",
+            Self::QuartermasterNave => "Wayfarer Camp",
+            Self::Wilderness => "Uncharted Wilds",
+            Self::ReliquaryCrossing => "Reliquary Wilds",
         }
     }
 
@@ -55,6 +61,7 @@ impl ChapterZone {
             Self::GildedVault => "vault, fortune shrine, breakables",
             Self::EmberAltar => "altar, obelisk, boss gate",
             Self::QuartermasterNave => "vendor, well, pylon, portal return",
+            Self::Wilderness => "explore the endless frontier; follow the compass home",
             Self::ReliquaryCrossing => "rotate between main and optional sites",
         }
     }
@@ -110,49 +117,94 @@ struct DungeonHazard {
     label: &'static str,
 }
 
-/// One slab of the sealed gate between the outer hall and the inner sanctum.
+/// One energized monolith or light belonging to the sealed mountain pass.
 #[derive(Component)]
 pub struct SanctumGate;
 
-/// Walkable-space state for the two-chamber reliquary.
+/// Converts the compact prototype coordinates into the authored origin-region scale.
+pub const WORLD_SCALE: f32 = 3.2;
+
+#[cfg(test)]
+const WORLD_MIN_X: f32 = -52.0;
+#[cfg(test)]
+const WORLD_MAX_X: f32 = 52.0;
+#[cfg(test)]
+const WORLD_MIN_Z: f32 = -84.0;
+#[cfg(test)]
+const WORLD_MAX_Z: f32 = 36.0;
+#[cfg(test)]
+const WORLD_CENTER_Z: f32 = (WORLD_MIN_Z + WORLD_MAX_Z) * 0.5;
+const SEALED_NORTH_LIMIT_Z: f32 = -7.5 * WORLD_SCALE;
+const SEALED_PASS_HALF_WIDTH: f32 = 5.2 * WORLD_SCALE;
+const SEALED_PASS_DEPTH: f32 = 2.6 * WORLD_SCALE;
+
+/// Chapter landmarks shared by spawning, navigation, and the minimap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChapterWorldLayout {
+    pub player_spawn: Vec3,
+    pub camp: Vec3,
+    pub cache: Vec3,
+    pub altar: Vec3,
+    pub weapon_shrine: Vec3,
+    pub boss: Vec3,
+    pub lore_pages: [Vec3; 3],
+}
+
+/// Maps a legacy encounter coordinate into the enlarged outdoor world.
+///
+/// Hollow Bastion mirrors the route along the x axis so that its landmarks
+/// and traversal read differently without changing chapter progression.
+pub fn chapter_world_position(chapter: ChapterId, legacy: Vec3) -> Vec3 {
+    let mirrored_x = match chapter {
+        ChapterId::AshenReliquary => legacy.x,
+        ChapterId::HollowBastion => -legacy.x,
+    };
+    Vec3::new(mirrored_x * WORLD_SCALE, legacy.y, legacy.z * WORLD_SCALE)
+}
+
+pub fn chapter_world_layout(chapter: ChapterId) -> ChapterWorldLayout {
+    ChapterWorldLayout {
+        player_spawn: chapter_world_position(chapter, Vec3::new(0.0, 0.0, 4.0)),
+        camp: chapter_world_position(chapter, Vec3::new(-4.8, 0.0, 5.9)),
+        cache: chapter_world_position(chapter, Vec3::new(-8.0, 0.0, -5.5)),
+        altar: chapter_world_position(chapter, Vec3::new(6.0, 0.0, -20.5)),
+        weapon_shrine: chapter_world_position(chapter, Vec3::new(0.0, 0.0, -6.8)),
+        boss: chapter_world_position(chapter, Vec3::new(0.0, 0.0, -20.0)),
+        lore_pages: [
+            chapter_world_position(chapter, Vec3::new(-10.2, 0.0, 5.8)),
+            chapter_world_position(chapter, Vec3::new(3.1, 0.0, -6.3)),
+            chapter_world_position(chapter, Vec3::new(9.2, 0.0, 5.7)),
+        ],
+    }
+}
+
+/// Compatibility hook for gameplay systems that previously clamped movement.
+///
+/// The procedural world is unbounded, so positions now pass through unchanged.
+pub fn clamp_world_translation(translation: Vec3) -> Vec3 {
+    translation
+}
+
+/// Walkable-space state for the outdoor reliquary.
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct DungeonLayout {
     pub sanctum_gate_open: bool,
 }
 
-/// Clamp a translation to the walkable dungeon: the outer hall, the inner
-/// sanctum, and — once the seal parts — the gate corridor joining them.
-pub fn clamp_dungeon_translation(layout: &DungeonLayout, mut translation: Vec3) -> Vec3 {
-    const OUTER_X: f32 = 11.5;
-    const OUTER_Z_MIN: f32 = -7.5;
-    const OUTER_Z_MAX: f32 = 7.5;
-    const SANCTUM_X: f32 = 9.5;
-    const SANCTUM_Z_MIN: f32 = -23.5;
-    const SANCTUM_Z_MAX: f32 = -10.5;
-    const CORRIDOR_X: f32 = 1.3;
-
-    if translation.z >= OUTER_Z_MIN {
-        translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
-        translation.z = translation.z.clamp(OUTER_Z_MIN, OUTER_Z_MAX);
-    } else if translation.z <= SANCTUM_Z_MAX {
-        if layout.sanctum_gate_open {
-            translation.x = translation.x.clamp(-SANCTUM_X, SANCTUM_X);
-            translation.z = translation.z.clamp(SANCTUM_Z_MIN, SANCTUM_Z_MAX);
-        } else {
-            translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
-            translation.z = OUTER_Z_MIN;
-        }
-    } else if layout.sanctum_gate_open {
-        // Inside the corridor band: stay within the doorway.
-        translation.x = translation.x.clamp(-CORRIDOR_X, CORRIDOR_X);
-    } else {
-        translation.x = translation.x.clamp(-OUTER_X, OUTER_X);
-        translation.z = OUTER_Z_MIN;
+/// Blocks only the authored mountain-pass seal while leaving the procedural
+/// wilderness unbounded. Players can explore around the story route.
+pub fn clamp_dungeon_translation(layout: &DungeonLayout, translation: Vec3) -> Vec3 {
+    let mut clamped = translation;
+    let inside_sealed_pass = translation.x.abs() <= SEALED_PASS_HALF_WIDTH
+        && translation.z < SEALED_NORTH_LIMIT_Z
+        && translation.z >= SEALED_NORTH_LIMIT_Z - SEALED_PASS_DEPTH;
+    if !layout.sanctum_gate_open && inside_sealed_pass {
+        clamped.z = clamped.z.max(SEALED_NORTH_LIMIT_Z);
     }
-    translation
+    clamped
 }
 
-/// Removes the gate slabs when the chapter cracks the seal.
+/// Removes the pass seal when the chapter cracks it.
 fn open_sanctum_gate(
     mut commands: Commands,
     layout: Res<DungeonLayout>,
@@ -171,7 +223,7 @@ fn open_sanctum_gate(
     }
     if opened {
         combat_events.write(CombatEvent {
-            text: "The seal parts: the inner sanctum lies open to the north".to_string(),
+            text: "The seal parts: the northern wilds lie open".to_string(),
         });
     }
 }
@@ -288,13 +340,19 @@ fn reset_chapter_zone(mut zone: ResMut<ChapterZoneState>) {
 
 fn update_chapter_zone(
     player: Query<&Transform, With<Player>>,
+    active_chapter: Res<ActiveChapter>,
     mut zone: ResMut<ChapterZoneState>,
     mut combat_events: MessageWriter<CombatEvent>,
 ) {
     let Ok(player_transform) = player.single() else {
         return;
     };
-    let current = chapter_zone_for_position(player_transform.translation);
+    let current = match active_chapter.0 {
+        ChapterId::AshenReliquary => chapter_zone_for_position(player_transform.translation),
+        ChapterId::HollowBastion => {
+            chapter_zone_for_chapter_position(active_chapter.0, player_transform.translation)
+        }
+    };
     if current == zone.current {
         return;
     }
@@ -306,7 +364,19 @@ fn update_chapter_zone(
 }
 
 pub fn chapter_zone_for_position(position: Vec3) -> ChapterZone {
-    match (position.x, position.z) {
+    chapter_zone_for_chapter_position(ChapterId::AshenReliquary, position)
+}
+
+pub fn chapter_zone_for_chapter_position(chapter: ChapterId, position: Vec3) -> ChapterZone {
+    let canonical_x = match chapter {
+        ChapterId::AshenReliquary => position.x,
+        ChapterId::HollowBastion => -position.x,
+    } / WORLD_SCALE;
+    let canonical_z = position.z / WORLD_SCALE;
+    if canonical_x.abs() > 15.0 || !(-24.0..=10.0).contains(&canonical_z) {
+        return ChapterZone::Wilderness;
+    }
+    match (canonical_x, canonical_z) {
         (x, z) if x <= -6.0 && z <= -1.2 => ChapterZone::CacheOssuary,
         (x, z) if x >= 6.2 && z <= -1.8 => ChapterZone::GildedVault,
         (_, z) if z <= -4.4 => ChapterZone::OuterSanctum,
@@ -325,117 +395,79 @@ fn spawn_dungeon(
     active_chapter: Res<ActiveChapter>,
 ) {
     let chapter = active_chapter.0;
-    let (outer_floor_color, sanctum_floor_color, wall_color) = match chapter {
+    let layout = chapter_world_layout(chapter);
+    let (highland_color, road_color) = match chapter {
         ChapterId::AshenReliquary => (
-            Color::srgb(0.12, 0.105, 0.12),
-            Color::srgb(0.135, 0.10, 0.105),
-            Color::srgb(0.20, 0.19, 0.22),
+            Color::srgb(0.145, 0.105, 0.085),
+            Color::srgb(0.21, 0.155, 0.105),
         ),
         ChapterId::HollowBastion => (
-            Color::srgb(0.055, 0.085, 0.10),
-            Color::srgb(0.045, 0.065, 0.095),
-            Color::srgb(0.13, 0.18, 0.21),
+            Color::srgb(0.055, 0.105, 0.115),
+            Color::srgb(0.09, 0.17, 0.18),
         ),
     };
-    let floor_mesh = meshes.add(Cuboid::new(26.0, 0.25, 18.0));
-    let floor_mat = materials.add(StandardMaterial {
-        base_color: outer_floor_color,
-        perceptual_roughness: 0.92,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(floor_mesh),
-        MeshMaterial3d(floor_mat.clone()),
-        Transform::from_xyz(0.0, -0.13, 0.0),
-        DungeonEntity,
-        Name::new(match chapter {
-            ChapterId::AshenReliquary => "Reliquary Outer Floor",
-            ChapterId::HollowBastion => "Hollow Bastion Crossing",
-        }),
-    ));
-    // Inner sanctum chamber to the north, joined through the sealed gate.
-    let sanctum_floor_mesh = meshes.add(Cuboid::new(22.0, 0.25, 16.0));
-    let sanctum_floor_mat = materials.add(StandardMaterial {
-        base_color: sanctum_floor_color,
-        perceptual_roughness: 0.90,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(sanctum_floor_mesh),
-        MeshMaterial3d(sanctum_floor_mat),
-        Transform::from_xyz(0.0, -0.13, -17.0),
-        DungeonEntity,
-        Name::new(match chapter {
-            ChapterId::AshenReliquary => "Inner Sanctum Floor",
-            ChapterId::HollowBastion => "Bell Crypt Floor",
-        }),
-    ));
 
-    let wall_mesh = meshes.add(Cuboid::new(1.0, 2.4, 1.0));
-    let wall_mat = materials.add(StandardMaterial {
-        base_color: wall_color,
-        perceptual_roughness: 0.85,
+    let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let clearing_mesh = meshes.add(Cylinder::new(1.0, 1.0));
+    let highland_material = materials.add(StandardMaterial {
+        base_color: highland_color,
+        perceptual_roughness: 0.94,
+        ..default()
+    });
+    let road_material = materials.add(StandardMaterial {
+        base_color: road_color,
+        perceptual_roughness: 0.91,
         ..default()
     });
 
-    // Dividing wall between the halls, with a gate opening at |x| <= 1.
-    for x in -13..=13 {
-        if !(-1..=1).contains(&x) {
-            spawn_wall(
-                &mut commands,
-                &wall_mesh,
-                &wall_mat,
-                Vec3::new(x as f32, 1.0, -9.0),
-            );
-        }
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(x as f32, 1.0, 9.0),
-        );
+    for (index, (position, radius)) in [
+        (layout.camp, Vec2::new(12.0, 9.0)),
+        (layout.cache, Vec2::new(10.0, 8.0)),
+        (layout.weapon_shrine, Vec2::new(11.0, 8.0)),
+        (layout.altar, Vec2::new(13.0, 10.0)),
+        (layout.boss, Vec2::new(16.0, 12.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        commands.spawn((
+            Mesh3d(clearing_mesh.clone()),
+            MeshMaterial3d(highland_material.clone()),
+            Transform::from_xyz(position.x, -0.035 - index as f32 * 0.001, position.z)
+                .with_scale(Vec3::new(radius.x, 0.08, radius.y)),
+            DungeonEntity,
+            Name::new("Outdoor Landmark Clearing"),
+        ));
     }
-    for z in -8..=8 {
-        spawn_wall(
+
+    let gate_approach = chapter_world_position(chapter, Vec3::new(0.0, 0.0, -7.5));
+    let fortune_position = chapter_world_position(chapter, Vec3::new(8.6, 0.0, -5.8));
+    for (index, (from, to, width)) in [
+        (layout.player_spawn, layout.camp, 4.8),
+        (layout.camp, layout.weapon_shrine, 4.4),
+        (layout.weapon_shrine, layout.cache, 3.6),
+        (layout.weapon_shrine, fortune_position, 3.6),
+        (layout.weapon_shrine, gate_approach, 4.2),
+        (gate_approach, layout.boss, 4.8),
+        (layout.boss, layout.altar, 4.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_outdoor_road(
             &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(-13.0, 1.0, z as f32),
-        );
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(13.0, 1.0, z as f32),
-        );
-    }
-    // Sanctum shell: side walls and the far northern wall.
-    for z in -24..=-10 {
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(-11.0, 1.0, z as f32),
-        );
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(11.0, 1.0, z as f32),
-        );
-    }
-    for x in -11..=11 {
-        spawn_wall(
-            &mut commands,
-            &wall_mesh,
-            &wall_mat,
-            Vec3::new(x as f32, 1.0, -25.0),
+            &unit_cube,
+            &road_material,
+            from,
+            to,
+            width,
+            index,
         );
     }
 
-    // The sealed gate itself: ember-lit slabs blocking the doorway until the
-    // outer objectives crack the seal.
-    let gate_mesh = meshes.add(Cuboid::new(1.0, 2.2, 0.9));
+    // A sparse ring of energized monoliths marks the mountain pass. The seal
+    // reads as a landmark rather than another solid room wall.
+    let gate_mesh = meshes.add(Cone::new(0.65, 5.4));
     let (gate_color, gate_emissive) = match chapter {
         ChapterId::AshenReliquary => (Color::srgb(0.32, 0.10, 0.08), Color::srgb(0.9, 0.22, 0.08)),
         ChapterId::HollowBastion => (Color::srgb(0.06, 0.20, 0.26), Color::srgb(0.05, 0.72, 0.90)),
@@ -446,21 +478,37 @@ fn spawn_dungeon(
         perceptual_roughness: 0.55,
         ..default()
     });
-    for x in -1..=1 {
+    for legacy_x in [-3.6, -1.8, 0.0, 1.8, 3.6] {
+        let position =
+            chapter_world_position(chapter, Vec3::new(legacy_x, 0.0, -9.0)) + Vec3::Y * 2.7;
         commands.spawn((
             Mesh3d(gate_mesh.clone()),
             MeshMaterial3d(gate_mat.clone()),
-            Transform::from_xyz(x as f32, 1.0, -9.0),
+            Transform::from_translation(position)
+                .with_rotation(Quat::from_rotation_z(legacy_x * 0.018)),
             DungeonEntity,
             SanctumGate,
-            Name::new("Sanctum Seal Gate"),
+            Name::new("Sanctum Pass Seal"),
         ));
     }
+    let gate_light = spawn_dungeon_light(
+        &mut commands,
+        chapter_world_position(chapter, Vec3::new(0.0, 0.0, -9.0)),
+        DungeonLightProfile {
+            color: gate_emissive,
+            intensity: 780.0,
+            range: 12.0,
+            pulse_amplitude: 260.0,
+            pulse_speed: 2.0,
+        },
+        "Sanctum Pass Light",
+    );
+    commands.entity(gate_light).insert(SanctumGate);
 
     for (scene, position, scale, interaction) in [
         (
             assets.chest.clone(),
-            Vec3::new(-8.0, 0.0, -5.5),
+            layout.cache,
             1.0,
             Some(InteractableKind::Cache),
         ),
@@ -469,13 +517,13 @@ fn spawn_dungeon(
                 ChapterId::AshenReliquary => assets.altar.clone(),
                 ChapterId::HollowBastion => assets.soul_font.clone(),
             },
-            Vec3::new(6.0, 0.0, -20.5),
+            layout.altar,
             1.2,
             Some(InteractableKind::Altar),
         ),
         (
             assets.sword.clone(),
-            Vec3::new(0.0, 0.0, -6.8),
+            layout.weapon_shrine,
             1.0,
             Some(InteractableKind::WeaponShrine),
         ),
@@ -501,7 +549,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.quartermaster.clone(),
-        Transform::from_xyz(-4.8, 0.0, 5.9),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(-4.8, 0.0, 5.9))),
         Interactable {
             kind: InteractableKind::Merchant,
             radius: 2.1,
@@ -513,7 +561,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.fortune_shrine.clone(),
-        Transform::from_xyz(8.6, 0.0, -5.8),
+        Transform::from_translation(fortune_position),
         Interactable {
             kind: InteractableKind::FortuneShrine,
             radius: 1.85,
@@ -525,7 +573,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.storm_shrine.clone(),
-        Transform::from_xyz(-2.8, 0.0, -7.1),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(-2.8, 0.0, -7.1))),
         Interactable {
             kind: InteractableKind::StormShrine,
             radius: 1.85,
@@ -537,7 +585,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.healing_well.clone(),
-        Transform::from_xyz(2.0, 0.0, 6.7),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(2.0, 0.0, 6.7))),
         Interactable {
             kind: InteractableKind::HealingWell,
             radius: 1.85,
@@ -547,19 +595,11 @@ fn spawn_dungeon(
         "Renewal Well",
     );
 
-    let lore_pages = match chapter {
-        ChapterId::AshenReliquary => [
-            ("Steward's Warning", Vec3::new(-10.2, 0.0, 5.8)),
-            ("Acolyte's Oath", Vec3::new(3.1, 0.0, -6.3)),
-            ("Malrec's Pact", Vec3::new(9.2, 0.0, 5.7)),
-        ],
-        ChapterId::HollowBastion => [
-            ("The Last Bell", Vec3::new(-10.2, 0.0, 5.8)),
-            ("Choir Litany", Vec3::new(3.1, 0.0, -6.3)),
-            ("Nyxara's Lament", Vec3::new(9.2, 0.0, 5.7)),
-        ],
+    let lore_page_names = match chapter {
+        ChapterId::AshenReliquary => ["Steward's Warning", "Acolyte's Oath", "Malrec's Pact"],
+        ChapterId::HollowBastion => ["The Last Bell", "Choir Litany", "Nyxara's Lament"],
     };
-    for (name, position) in lore_pages {
+    for (name, position) in lore_page_names.into_iter().zip(layout.lore_pages) {
         commands.spawn((
             WorldAssetRoot(assets.lore_page.clone()),
             Transform::from_translation(position),
@@ -577,7 +617,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.cursed_shrine.clone(),
-        Transform::from_xyz(-9.0, 0.0, 1.6),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(-9.0, 0.0, 1.6))),
         Interactable {
             kind: InteractableKind::CursedShrine,
             radius: 1.9,
@@ -589,7 +629,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.blood_obelisk.clone(),
-        Transform::from_xyz(10.2, 0.0, 2.9),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(10.2, 0.0, 2.9))),
         Interactable {
             kind: InteractableKind::BloodObelisk,
             radius: 1.9,
@@ -601,7 +641,8 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.reliquary_vault.clone(),
-        Transform::from_xyz(11.0, 0.0, -5.6).with_scale(Vec3::splat(1.08)),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(11.0, 0.0, -5.6)))
+            .with_scale(Vec3::splat(1.08)),
         Interactable {
             kind: InteractableKind::ReliquaryVault,
             radius: 2.0,
@@ -613,7 +654,8 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.ember_rift_prop.clone(),
-        Transform::from_xyz(-11.0, 0.0, -4.6).with_scale(Vec3::splat(1.18)),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(-11.0, 0.0, -4.6)))
+            .with_scale(Vec3::splat(1.18)),
         Interactable {
             kind: InteractableKind::EmberRift,
             radius: 2.05,
@@ -625,7 +667,7 @@ fn spawn_dungeon(
     spawn_interactable_scene(
         &mut commands,
         assets.ashen_pylon.clone(),
-        Transform::from_xyz(4.4, 0.0, 7.0),
+        Transform::from_translation(chapter_world_position(chapter, Vec3::new(4.4, 0.0, 7.0))),
         Interactable {
             kind: InteractableKind::AshenPylon,
             radius: 1.95,
@@ -635,14 +677,14 @@ fn spawn_dungeon(
         "Ashen Pylon",
     );
 
-    for spec in breakable_spawns() {
+    for spec in breakable_spawns(chapter) {
         spawn_breakable(&mut commands, &assets, spec);
     }
 
     spawn_hazard(
         &mut commands,
         &assets,
-        Vec3::new(-5.6, 0.0, -1.0),
+        chapter_world_position(chapter, Vec3::new(-5.6, 0.0, -1.0)),
         1.15,
         11.0 * modifier.hazard_damage_multiplier(),
         match chapter {
@@ -654,7 +696,7 @@ fn spawn_dungeon(
     spawn_hazard(
         &mut commands,
         &assets,
-        Vec3::new(1.7, 0.0, -3.2),
+        chapter_world_position(chapter, Vec3::new(1.7, 0.0, -3.2)),
         1.05,
         10.0 * modifier.hazard_damage_multiplier(),
         match chapter {
@@ -666,7 +708,7 @@ fn spawn_dungeon(
     spawn_hazard(
         &mut commands,
         &assets,
-        Vec3::new(6.7, 0.0, 1.2),
+        chapter_world_position(chapter, Vec3::new(6.7, 0.0, 1.2)),
         1.25,
         13.0 * modifier.hazard_damage_multiplier(),
         match chapter {
@@ -677,8 +719,204 @@ fn spawn_dungeon(
     );
 }
 
-fn breakable_spawns() -> [BreakableSpawn; BREAKER_TARGET_BREAKABLES as usize] {
-    [
+fn spawn_outdoor_road(
+    commands: &mut Commands,
+    mesh: &Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    from: Vec3,
+    to: Vec3,
+    width: f32,
+    index: usize,
+) {
+    let delta = to - from;
+    let length = Vec2::new(delta.x, delta.z).length();
+    if length <= f32::EPSILON {
+        return;
+    }
+    let yaw = delta.x.atan2(delta.z);
+    commands.spawn((
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation((from + to) * 0.5 + Vec3::Y * 0.015)
+            .with_rotation(Quat::from_rotation_y(yaw))
+            .with_scale(Vec3::new(width, 0.07, length)),
+        DungeonEntity,
+        Name::new(format!("Weathered Outdoor Road {index}")),
+    ));
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OutdoorDecorationKind {
+    RidgeRock,
+    DeadTree,
+    Crystal,
+    BrokenColumn,
+    RuinStone,
+    Waystone,
+    ArchPillar,
+    ArchLintel,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct OutdoorDecorationSpec {
+    kind: OutdoorDecorationKind,
+    position: Vec3,
+    scale: Vec3,
+    yaw: f32,
+}
+
+#[cfg(test)]
+fn outdoor_decoration_specs(chapter: ChapterId) -> Vec<OutdoorDecorationSpec> {
+    let mut specs = Vec::with_capacity(170);
+    let (phase, mirror) = match chapter {
+        ChapterId::AshenReliquary => (0.0, 1.0),
+        ChapterId::HollowBastion => (0.47, -1.0),
+    };
+
+    // Discontinuous boulder ridges imply distant terrain without enclosing the
+    // player in a continuous wall.
+    for index in 0..64 {
+        if index % 9 == 4 {
+            continue;
+        }
+        let angle = index as f32 * std::f32::consts::TAU / 64.0 + phase * 0.23;
+        let jitter = ((index * 17 % 11) as f32 - 5.0) * 0.28;
+        let scale = Vec3::new(
+            1.6 + (index % 5) as f32 * 0.22,
+            1.2 + (index % 7) as f32 * 0.18,
+            1.5 + (index % 3) as f32 * 0.3,
+        );
+        specs.push(OutdoorDecorationSpec {
+            kind: OutdoorDecorationKind::RidgeRock,
+            position: Vec3::new(
+                mirror * angle.cos() * (45.0 + jitter),
+                scale.y * 0.38,
+                WORLD_CENTER_Z + angle.sin() * (52.0 + jitter),
+            ),
+            scale,
+            yaw: angle * 1.7,
+        });
+    }
+
+    // A low-discrepancy spiral fills the valley with sparse silhouettes while
+    // leaving broad sightlines between landmark clearings.
+    for index in 0..64 {
+        let angle = index as f32 * 2.399_963_1 + phase;
+        let radius = 20.0 + (index * 17 % 19) as f32 * 1.32;
+        let x = mirror * angle.cos() * radius;
+        let z = WORLD_CENTER_Z + angle.sin() * radius * 1.12;
+        let dead_tree = match chapter {
+            ChapterId::AshenReliquary => index % 5 != 0,
+            ChapterId::HollowBastion => index % 4 == 0,
+        };
+        let (kind, scale, y) = if dead_tree {
+            let height = 2.8 + (index % 7) as f32 * 0.38;
+            (
+                OutdoorDecorationKind::DeadTree,
+                Vec3::new(
+                    0.26 + (index % 3) as f32 * 0.07,
+                    height,
+                    0.26 + (index % 4) as f32 * 0.045,
+                ),
+                height * 0.5,
+            )
+        } else {
+            let height = 1.1 + (index % 6) as f32 * 0.22;
+            (
+                OutdoorDecorationKind::Crystal,
+                Vec3::new(
+                    0.48 + (index % 3) as f32 * 0.09,
+                    height,
+                    0.48 + (index % 4) as f32 * 0.065,
+                ),
+                height,
+            )
+        };
+        specs.push(OutdoorDecorationSpec {
+            kind,
+            position: Vec3::new(x, y, z),
+            scale,
+            yaw: angle + index as f32 * 0.11,
+        });
+    }
+
+    let ruin_centers = [
+        Vec2::new(-31.0, -45.0),
+        Vec2::new(30.0, -51.0),
+        Vec2::new(-29.0, 7.0),
+        Vec2::new(27.0, 11.0),
+        Vec2::new(4.0, -70.0),
+    ];
+    for index in 0..30 {
+        let center = ruin_centers[index % ruin_centers.len()];
+        let angle = index as f32 * 1.73 + phase * 2.0;
+        let distance = 2.4 + (index % 6) as f32 * 0.72;
+        let kind = match index % 5 {
+            0 | 1 => OutdoorDecorationKind::BrokenColumn,
+            2 | 3 => OutdoorDecorationKind::RuinStone,
+            _ => OutdoorDecorationKind::Waystone,
+        };
+        let (scale, y) = match kind {
+            OutdoorDecorationKind::BrokenColumn => {
+                let height = 1.8 + (index % 5) as f32 * 0.55;
+                (Vec3::new(0.62, height, 0.62), height * 0.5)
+            }
+            OutdoorDecorationKind::Waystone => {
+                let height = 1.5 + (index % 4) as f32 * 0.3;
+                (Vec3::new(0.7, height, 0.5), height * 0.5)
+            }
+            _ => {
+                let height = 0.55 + (index % 3) as f32 * 0.24;
+                (
+                    Vec3::new(1.4 + (index % 4) as f32 * 0.3, height, 0.75),
+                    height * 0.5,
+                )
+            }
+        };
+        specs.push(OutdoorDecorationSpec {
+            kind,
+            position: Vec3::new(
+                mirror * (center.x + angle.cos() * distance),
+                y,
+                center.y + angle.sin() * distance,
+            ),
+            scale,
+            yaw: angle,
+        });
+    }
+
+    for (center, yaw) in [
+        (Vec2::new(-18.0, -38.0), 0.32 + phase),
+        (Vec2::new(23.0, -58.0), -0.48 + phase),
+        (Vec2::new(-11.0, 17.0), 0.71 + phase),
+        (Vec2::new(33.0, -13.0), -0.18 + phase),
+    ] {
+        let center = Vec2::new(mirror * center.x, center.y);
+        let right = Vec2::new(yaw.cos(), -yaw.sin());
+        for side in [-1.0, 1.0] {
+            let position = center + right * 2.25 * side;
+            specs.push(OutdoorDecorationSpec {
+                kind: OutdoorDecorationKind::ArchPillar,
+                position: Vec3::new(position.x, 2.2, position.y),
+                scale: Vec3::new(0.72, 4.4, 0.72),
+                yaw,
+            });
+        }
+        specs.push(OutdoorDecorationSpec {
+            kind: OutdoorDecorationKind::ArchLintel,
+            position: Vec3::new(center.x, 4.55, center.y),
+            scale: Vec3::new(5.4, 0.66, 0.82),
+            yaw,
+        });
+    }
+
+    specs
+}
+
+fn breakable_spawns(chapter: ChapterId) -> [BreakableSpawn; BREAKER_TARGET_BREAKABLES as usize] {
+    let mut spawns = [
         BreakableSpawn {
             position: Vec3::new(-7.4, 0.0, 1.8),
             gold: 9,
@@ -707,7 +945,11 @@ fn breakable_spawns() -> [BreakableSpawn; BREAKER_TARGET_BREAKABLES as usize] {
             fury: 12.0,
             label: "Sealed Grave Coffer",
         },
-    ]
+    ];
+    for spawn in &mut spawns {
+        spawn.position = chapter_world_position(chapter, spawn.position);
+    }
+    spawns
 }
 
 fn spawn_interactable_scene(
@@ -799,25 +1041,27 @@ fn spawn_dungeon_light(
     position: Vec3,
     profile: DungeonLightProfile,
     name: &'static str,
-) {
-    commands.spawn((
-        PointLight {
-            color: profile.color,
-            intensity: profile.intensity,
-            range: profile.range,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_translation(position + Vec3::Y * 1.15),
-        DungeonLightPulse {
-            base_intensity: profile.intensity,
-            amplitude: profile.pulse_amplitude,
-            speed: profile.pulse_speed,
-            phase: position.x * 0.37 + position.z * 0.19,
-        },
-        DungeonEntity,
-        Name::new(name),
-    ));
+) -> Entity {
+    commands
+        .spawn((
+            PointLight {
+                color: profile.color,
+                intensity: profile.intensity,
+                range: profile.range,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(position + Vec3::Y * 1.15),
+            DungeonLightPulse {
+                base_intensity: profile.intensity,
+                amplitude: profile.pulse_amplitude,
+                speed: profile.pulse_speed,
+                phase: position.x * 0.37 + position.z * 0.19,
+            },
+            DungeonEntity,
+            Name::new(name),
+        ))
+        .id()
 }
 
 fn update_dungeon_light_pulses(
@@ -946,21 +1190,6 @@ fn dungeon_hazard_light_profile(radius: f32) -> DungeonLightProfile {
         pulse_amplitude: 190.0 * radius.max(0.5),
         pulse_speed: 3.6,
     }
-}
-
-fn spawn_wall(
-    commands: &mut Commands,
-    mesh: &Handle<Mesh>,
-    material: &Handle<StandardMaterial>,
-    position: Vec3,
-) {
-    commands.spawn((
-        Mesh3d(mesh.clone()),
-        MeshMaterial3d(material.clone()),
-        Transform::from_translation(position),
-        DungeonEntity,
-        Name::new("Reliquary Wall"),
-    ));
 }
 
 fn despawn_dungeon(
@@ -1434,29 +1663,41 @@ mod tests {
 
     #[test]
     fn chapter_zone_for_position_names_major_route_areas() {
+        let world = |legacy| chapter_world_position(ChapterId::AshenReliquary, legacy);
         assert_eq!(
-            chapter_zone_for_position(Vec3::new(-8.0, 0.0, -5.5)),
+            chapter_zone_for_position(world(Vec3::new(-8.0, 0.0, -5.5))),
             ChapterZone::CacheOssuary
         );
         assert_eq!(
-            chapter_zone_for_position(Vec3::new(0.0, 0.0, -6.8)),
+            chapter_zone_for_position(world(Vec3::new(0.0, 0.0, -6.8))),
             ChapterZone::OuterSanctum
         );
         assert_eq!(
-            chapter_zone_for_position(Vec3::new(10.0, 0.0, -5.0)),
+            chapter_zone_for_position(world(Vec3::new(10.0, 0.0, -5.0))),
             ChapterZone::GildedVault
         );
         assert_eq!(
-            chapter_zone_for_position(Vec3::new(7.0, 0.0, 4.8)),
+            chapter_zone_for_position(world(Vec3::new(7.0, 0.0, 4.8))),
             ChapterZone::EmberAltar
         );
         assert_eq!(
-            chapter_zone_for_position(Vec3::new(0.0, 0.0, 6.7)),
+            chapter_zone_for_position(world(Vec3::new(0.0, 0.0, 6.7))),
             ChapterZone::QuartermasterNave
         );
         assert_eq!(
             chapter_zone_for_position(Vec3::ZERO),
             ChapterZone::ReliquaryCrossing
+        );
+        assert_eq!(
+            chapter_zone_for_position(Vec3::new(640.0, 0.0, -960.0)),
+            ChapterZone::Wilderness
+        );
+
+        let hollow_cache =
+            chapter_world_position(ChapterId::HollowBastion, Vec3::new(-8.0, 0.0, -5.5));
+        assert_eq!(
+            chapter_zone_for_chapter_position(ChapterId::HollowBastion, hollow_cache),
+            ChapterZone::CacheOssuary
         );
     }
 
@@ -1464,7 +1705,7 @@ mod tests {
     fn chapter_zone_labels_surface_tactical_route_roles() {
         let zone = ChapterZone::QuartermasterNave;
 
-        assert_eq!(zone.label(), "Quartermaster Nave");
+        assert_eq!(zone.label(), "Wayfarer Camp");
         assert!(zone.tactical_hint().contains("vendor"));
         assert!(zone.tactical_hint().contains("portal"));
     }
@@ -1567,7 +1808,10 @@ mod tests {
 
     #[test]
     fn breaker_target_matches_spawned_breakables() {
-        assert_eq!(breakable_spawns().len(), BREAKER_TARGET_BREAKABLES as usize);
+        assert_eq!(
+            breakable_spawns(ChapterId::AshenReliquary).len(),
+            BREAKER_TARGET_BREAKABLES as usize
+        );
     }
 
     #[test]
@@ -1964,34 +2208,100 @@ mod tests {
     }
 
     #[test]
-    fn sealed_gate_confines_the_player_to_the_outer_hall() {
+    fn sealed_gate_blocks_only_the_local_story_pass() {
         let closed = DungeonLayout {
             sanctum_gate_open: false,
         };
-        // Pushing north against the seal stops at the outer wall.
-        let stopped = clamp_dungeon_translation(&closed, Vec3::new(0.0, 0.0, -12.0));
-        assert_eq!(stopped.z, -7.5);
-        // The corridor band is also blocked while sealed.
-        let corridor = clamp_dungeon_translation(&closed, Vec3::new(0.5, 0.0, -8.4));
-        assert_eq!(corridor.z, -7.5);
-        // Ordinary outer-hall movement is untouched.
-        let free = clamp_dungeon_translation(&closed, Vec3::new(3.0, 0.0, 2.0));
-        assert_eq!(free, Vec3::new(3.0, 0.0, 2.0));
+        let stopped = clamp_dungeon_translation(&closed, Vec3::new(8.0, 3.0, -28.0));
+        assert_eq!(stopped.z, SEALED_NORTH_LIMIT_Z);
+        assert_eq!(stopped.y, 3.0);
+
+        let around_pass = Vec3::new(32.0, 0.0, -28.0);
+        assert_eq!(clamp_dungeon_translation(&closed, around_pass), around_pass);
+
+        let deep_wilderness = Vec3::new(0.0, 0.0, -300.0);
+        assert_eq!(
+            clamp_dungeon_translation(&closed, deep_wilderness),
+            deep_wilderness
+        );
     }
 
     #[test]
-    fn open_gate_admits_the_sanctum_through_the_doorway() {
+    fn open_gate_admits_the_full_outdoor_world() {
         let open = DungeonLayout {
             sanctum_gate_open: true,
         };
-        // The corridor funnels through the doorway gap.
-        let corridor = clamp_dungeon_translation(&open, Vec3::new(4.0, 0.0, -8.4));
-        assert!(corridor.x.abs() <= 1.3);
-        assert_eq!(corridor.z, -8.4);
-        // Sanctum interior is walkable and bounded.
-        let sanctum = clamp_dungeon_translation(&open, Vec3::new(-30.0, 0.0, -40.0));
-        assert_eq!(sanctum, Vec3::new(-9.5, 0.0, -23.5));
-        let mid = clamp_dungeon_translation(&open, Vec3::new(5.0, 0.0, -18.0));
-        assert_eq!(mid, Vec3::new(5.0, 0.0, -18.0));
+        let northern_basin = Vec3::new(28.0, 0.0, -58.0);
+        assert_eq!(
+            clamp_dungeon_translation(&open, northern_basin),
+            northern_basin
+        );
+
+        let beyond_edge = Vec3::new(110.0, 7.0, 95.0);
+        assert_eq!(clamp_dungeon_translation(&open, beyond_edge), beyond_edge);
+    }
+
+    #[test]
+    fn authored_region_is_not_a_world_boundary() {
+        assert_eq!(WORLD_MAX_X - WORLD_MIN_X, 104.0);
+        assert_eq!(WORLD_MAX_Z - WORLD_MIN_Z, 120.0);
+        assert_eq!(WORLD_SCALE, 3.2);
+
+        let far_wilderness = Vec3::new(12_000.0, 9.0, -9_000.0);
+        assert_eq!(clamp_world_translation(far_wilderness), far_wilderness);
+    }
+
+    #[test]
+    fn chapter_landmarks_are_mirrored_and_inside_the_world() {
+        let ashen = chapter_world_layout(ChapterId::AshenReliquary);
+        let hollow = chapter_world_layout(ChapterId::HollowBastion);
+        assert_eq!(ashen.cache.x, -hollow.cache.x);
+        assert_eq!(ashen.altar.x, -hollow.altar.x);
+        assert_eq!(
+            ashen.camp,
+            chapter_world_position(ChapterId::AshenReliquary, Vec3::new(-4.8, 0.0, 5.9))
+        );
+
+        for layout in [ashen, hollow] {
+            for landmark in [
+                layout.player_spawn,
+                layout.camp,
+                layout.cache,
+                layout.altar,
+                layout.weapon_shrine,
+                layout.boss,
+                layout.lore_pages[0],
+                layout.lore_pages[1],
+                layout.lore_pages[2],
+            ] {
+                assert_eq!(clamp_world_translation(landmark), landmark);
+            }
+        }
+    }
+
+    #[test]
+    fn authored_scenery_blueprint_stays_varied_for_procgen_reference() {
+        for chapter in [ChapterId::AshenReliquary, ChapterId::HollowBastion] {
+            let specs = outdoor_decoration_specs(chapter);
+            assert!((100..=220).contains(&specs.len()));
+            assert!(
+                specs
+                    .iter()
+                    .any(|spec| spec.kind == OutdoorDecorationKind::DeadTree)
+            );
+            assert!(
+                specs
+                    .iter()
+                    .any(|spec| spec.kind == OutdoorDecorationKind::Crystal)
+            );
+            assert!(
+                specs
+                    .iter()
+                    .any(|spec| spec.kind == OutdoorDecorationKind::ArchLintel)
+            );
+            assert!(specs.iter().all(|spec| spec.position.is_finite()));
+            assert!(specs.iter().all(|spec| spec.scale.is_finite()));
+            assert!(specs.iter().all(|spec| spec.yaw.is_finite()));
+        }
     }
 }

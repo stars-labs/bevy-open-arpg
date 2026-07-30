@@ -1,4 +1,6 @@
 use crate::assets::{AssetLoadingProgress, GameAssets, game_assets_load_summary};
+#[cfg(test)]
+use crate::player::CHAPTER_LEVEL_CAP;
 use crate::{
     AFFIX_CODEX_TARGET, ASHEN_THREAT_MAX, ASHEN_THREAT_SURGE_TARGET, AudioSettings,
     BOSS_BREAK_TARGET, BuildOpen, CARNAGE_MASTER_STREAK, CHAMPION_PACK_TARGET, CODEX_ADEPT_KILLS,
@@ -14,7 +16,7 @@ use crate::{
     chapter_rating,
     combat::CombatComboState,
     companion::{CompanionBond, CompanionStance, companion_summary},
-    dungeon::{BREAKER_TARGET_BREAKABLES, ChapterZoneState, Interactable},
+    dungeon::{BREAKER_TARGET_BREAKABLES, ChapterZoneState, Interactable, chapter_world_layout},
     enemy::{
         AFFIX_HUNTER_KILLS, BossPhase, BossStagger, CURSED_AMBUSH_KILLS, Enemy, EnemyAffix,
         Staggered, boss_pressure_summary_for, boss_stagger_summary,
@@ -39,19 +41,19 @@ use crate::{
     obelisk::{BloodObelisk, ObeliskState, obelisk_summary},
     ordeal::{ChapterModifier, OrdealAffix, modifier_for_difficulty, modifier_for_run},
     player::{
-        Armory, Barrier, Burning, CHAPTER_LEVEL_CAP, ChapterBoon, ChapterBoonChoice, Charm,
-        ConduitBuff, DamageBonus, DashRune, DeathWard, DeathWardReport, ElixirBelt, ElixirBuff,
-        EmberParagon, Equipment, Evade, FortuneBuff, Fury, GearSlot, GloryBuff, Health, Inventory,
-        InventoryItem, Jailed, LegendaryCodex, LegendaryPower, NovaRune, PYLON_REAPER_KILLS,
-        Player, PlayerLevel, PotionBelt, RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet,
-        RuptureRune, SkillCooldowns, SkillRunes, SocketedGem, SurgeBuff, Talents, TownPortal,
-        buff_seconds_remaining, chapter_boon_choice_prompt, conduit_seconds_remaining,
-        elixir_seconds_remaining, equip_gear_piece, equip_inventory_item, evade_cooldown_remaining,
-        evade_seconds_remaining, fortune_seconds_remaining, gem_label, glory_seconds_remaining,
-        inventory_swap_index, legendary_codex_pursuit_summary, potion_seconds_remaining,
-        reliquary_boon_momentum_ready, reliquary_momentum_summary, reliquary_resonance,
-        surge_seconds_remaining, temper_label, themed_reliquary_set, total_armor,
-        total_crit_chance, total_damage_bonus, town_portal_seconds_remaining, unequip_gear_piece,
+        Armory, Barrier, Burning, ChapterBoon, ChapterBoonChoice, Charm, ConduitBuff, DamageBonus,
+        DashRune, DeathWard, DeathWardReport, ElixirBelt, ElixirBuff, EmberParagon, Equipment,
+        Evade, FortuneBuff, Fury, GearSlot, GloryBuff, Health, Inventory, InventoryItem, Jailed,
+        LegendaryCodex, LegendaryPower, NovaRune, PYLON_REAPER_KILLS, Player, PlayerLevel,
+        PotionBelt, RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet, RuptureRune, SkillCooldowns,
+        SkillRunes, SocketedGem, SurgeBuff, Talents, TownPortal, buff_seconds_remaining,
+        chapter_boon_choice_prompt, conduit_seconds_remaining, elixir_seconds_remaining,
+        equip_gear_piece, equip_inventory_item, evade_cooldown_remaining, evade_seconds_remaining,
+        fortune_seconds_remaining, gem_label, glory_seconds_remaining, inventory_swap_index,
+        legendary_codex_pursuit_summary, potion_seconds_remaining, reliquary_boon_momentum_ready,
+        reliquary_momentum_summary, reliquary_resonance, surge_seconds_remaining,
+        themed_reliquary_set, total_armor, total_crit_chance, total_damage_bonus,
+        town_portal_seconds_remaining, unequip_gear_piece,
     },
     rift::{EmberRift, RiftState, rift_summary},
     story::{StoryBeat, StoryLog, story_recap, story_summary},
@@ -59,7 +61,7 @@ use crate::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::ui::UiGlobalTransform;
+use bevy::ui::{UiGlobalTransform, widget::NodeImageMode};
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
@@ -208,6 +210,76 @@ struct BuildPanel;
 
 #[derive(Component)]
 struct BuildText;
+
+#[derive(Component)]
+struct MainMenuBackdropArt;
+
+#[derive(Component)]
+struct CorePanelArt;
+
+#[derive(Component)]
+struct ResourceOrbArt;
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct InventorySlot(usize);
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct InventorySlotIcon(usize);
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct PaperDollSlotText(GearSlot);
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+enum TalentBranch {
+    Wrath,
+    Vigor,
+    Focus,
+}
+
+impl TalentBranch {
+    const ALL: [Self; 3] = [Self::Wrath, Self::Vigor, Self::Focus];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Wrath => "WRATH",
+            Self::Vigor => "VIGOR",
+            Self::Focus => "FOCUS",
+        }
+    }
+
+    fn role(self) -> &'static str {
+        match self {
+            Self::Wrath => "DAMAGE · CRITICAL",
+            Self::Vigor => "LIFE · RECOVERY",
+            Self::Focus => "TEMPO · EFFICIENCY",
+        }
+    }
+
+    fn rank(self, talents: &Talents) -> u32 {
+        match self {
+            Self::Wrath => talents.wrath,
+            Self::Vigor => talents.vigor,
+            Self::Focus => talents.focus,
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Wrath => Color::srgb(0.94, 0.20, 0.12),
+            Self::Vigor => Color::srgb(0.24, 0.76, 0.46),
+            Self::Focus => Color::srgb(0.28, 0.58, 1.0),
+        }
+    }
+}
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct TalentRankText(TalentBranch);
+
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct TalentRankNode {
+    branch: TalentBranch,
+    rank: u32,
+}
 
 #[derive(Component)]
 struct ExperienceFill;
@@ -1427,6 +1499,7 @@ type GearSlotFrameQuery<'w, 's> = Query<
         Without<ResourceFill>,
         Without<SkillCooldownMask>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<SkillSlotFrame>,
         Without<PotionPip>,
         Without<ObjectiveText>,
@@ -1436,7 +1509,7 @@ type InventorySlotFrameQuery<'w, 's> = Query<
     'w,
     's,
     (
-        &'static InventorySlotText,
+        &'static InventorySlot,
         &'static mut BorderColor,
         &'static mut BackgroundColor,
     ),
@@ -1448,6 +1521,16 @@ type InventorySlotFrameQuery<'w, 's> = Query<
         Without<PotionPip>,
         Without<ObjectiveText>,
     ),
+>;
+type InventorySlotIconQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static InventorySlotIcon,
+        &'static mut ImageNode,
+        &'static mut Visibility,
+    ),
+    (Without<LogText>, Without<JournalText>),
 >;
 type JournalTextQuery<'w, 's> = Query<
     'w,
@@ -1498,6 +1581,7 @@ type ResourceFillQuery<'w, 's> = Query<
         Without<ObjectiveText>,
         Without<GearSlotText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<LogText>,
         Without<JournalText>,
     ),
@@ -1522,6 +1606,7 @@ type ResourceOrbFrameQuery<'w, 's> = Query<
         Without<ObjectiveText>,
         Without<GearSlotText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<LogText>,
         Without<JournalText>,
     ),
@@ -1541,6 +1626,7 @@ type SkillSlotFrameQuery<'w, 's> = Query<
         Without<PotionPip>,
         Without<ObjectiveText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<GearSlotText>,
     ),
 >;
@@ -1561,6 +1647,7 @@ type SkillCooldownMaskQuery<'w, 's> = Query<
         Without<SkillSlotFrame>,
         Without<ObjectiveText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<GearSlotText>,
     ),
 >;
@@ -1582,6 +1669,7 @@ type SkillSlotLampQuery<'w, 's> = Query<
         Without<SkillCooldownMask>,
         Without<ObjectiveText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
         Without<GearSlotText>,
     ),
 >;
@@ -1627,6 +1715,7 @@ type ExperienceFillQuery<'w, 's> = Query<
         Without<ObjectiveText>,
         Without<GearSlotText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
     ),
 >;
 type PotionPipQuery<'w, 's> = Query<
@@ -1647,6 +1736,7 @@ type PotionPipQuery<'w, 's> = Query<
         Without<ObjectiveText>,
         Without<GearSlotText>,
         Without<InventorySlotText>,
+        Without<InventorySlot>,
     ),
 >;
 type ObjectiveFrameQuery<'w, 's> = Query<
@@ -1697,6 +1787,7 @@ struct HudNodeQueries<'w, 's> {
     potion_pips: PotionPipQuery<'w, 's>,
     gear_frames: GearSlotFrameQuery<'w, 's>,
     inventory_frames: InventorySlotFrameQuery<'w, 's>,
+    inventory_icons: InventorySlotIconQuery<'w, 's>,
     log_visibility: LogVisibilityQuery<'w, 's>,
     journal_visibility: JournalVisibilityQuery<'w, 's>,
 }
@@ -2029,12 +2120,92 @@ const MINIMAP_MAP_LEFT: f32 = 8.0;
 const MINIMAP_MAP_RIGHT: f32 = 8.0;
 const MINIMAP_MAP_TOP: f32 = 34.0;
 const MINIMAP_MAP_BOTTOM: f32 = 20.0;
-const WORLD_MIN_X: f32 = -13.0;
-const WORLD_MAX_X: f32 = 13.0;
-// Covers both chambers: outer hall (z in -9..9) and inner sanctum (to -25).
-const WORLD_MIN_Z: f32 = -25.0;
-const WORLD_MAX_Z: f32 = 9.0;
-const MAIN_MENU_BACKGROUND_IMAGE: &str = "images/generated/bevy-open-arpg-concept.png";
+const MINIMAP_VISIBLE_RADIUS_X: f32 = 64.0;
+const MINIMAP_VISIBLE_RADIUS_Z: f32 = 52.0;
+const MAIN_MENU_BACKGROUND_IMAGE: &str = "images/generated/ui/main-menu-reliquary-v2.png";
+const UI_PANEL_FRAME_IMAGE: &str = "images/generated/ui/panel-frame-reliquary.png";
+const UI_SLOT_FRAME_IMAGE: &str = "images/generated/ui/slot-frame-reliquary.png";
+const UI_RESOURCE_ORB_FRAME_IMAGE: &str = "images/generated/ui/resource-orb-frame-reliquary.png";
+const UI_SKILL_ICONS_IMAGE: &str = "images/generated/ui/skill-icons-reliquary.png";
+const UI_GEAR_ICONS_IMAGE: &str = "images/generated/ui/gear-icons-reliquary.png";
+const UI_TALENT_SIGILS_IMAGE: &str = "images/generated/ui/talent-sigils-reliquary.png";
+const UI_FONT_REGULAR: &str = "fonts/FiraSans-Regular.ttf";
+const UI_FONT_BOLD: &str = "fonts/FiraSans-Bold.ttf";
+
+fn panel_image_node(asset_server: &AssetServer) -> ImageNode {
+    ImageNode {
+        image: asset_server.load(UI_PANEL_FRAME_IMAGE),
+        image_mode: NodeImageMode::Sliced(TextureSlicer {
+            border: BorderRect::all(118.0),
+            center_scale_mode: SliceScaleMode::Stretch,
+            sides_scale_mode: SliceScaleMode::Stretch,
+            max_corner_scale: 1.0,
+        }),
+        ..default()
+    }
+}
+
+fn slot_frame_image_node(asset_server: &AssetServer) -> ImageNode {
+    ImageNode {
+        image: asset_server.load(UI_SLOT_FRAME_IMAGE),
+        image_mode: NodeImageMode::Sliced(TextureSlicer {
+            border: BorderRect::all(170.0),
+            center_scale_mode: SliceScaleMode::Stretch,
+            sides_scale_mode: SliceScaleMode::Stretch,
+            max_corner_scale: 1.0,
+        }),
+        ..default()
+    }
+}
+
+fn atlas_rect(cell_width: f32, cell_height: f32, columns: usize, index: usize) -> Rect {
+    let column = (index % columns) as f32;
+    let row = (index / columns) as f32;
+    Rect::from_corners(
+        Vec2::new(column * cell_width, row * cell_height),
+        Vec2::new((column + 1.0) * cell_width, (row + 1.0) * cell_height),
+    )
+}
+
+fn skill_icon_index(slot: SkillSlotText) -> usize {
+    match slot {
+        SkillSlotText::Strike => 0,
+        SkillSlotText::Rupture => 1,
+        SkillSlotText::Dash => 2,
+        SkillSlotText::Nova => 3,
+        SkillSlotText::Surge => 4,
+        SkillSlotText::Evade => 5,
+    }
+}
+
+fn gear_icon_index(slot: GearSlot) -> usize {
+    match slot {
+        GearSlot::Weapon => 0,
+        GearSlot::Helm => 1,
+        GearSlot::Chest => 2,
+        GearSlot::Gloves => 3,
+        GearSlot::Boots => 4,
+        GearSlot::Amulet => 5,
+        GearSlot::Ring => 6,
+    }
+}
+
+fn talent_icon_index(branch: TalentBranch) -> usize {
+    match branch {
+        TalentBranch::Wrath => 0,
+        TalentBranch::Vigor => 1,
+        TalentBranch::Focus => 2,
+    }
+}
+
+fn atlas_image_node(asset_server: &AssetServer, image_path: &'static str, rect: Rect) -> ImageNode {
+    ImageNode {
+        image: asset_server.load(image_path),
+        rect: Some(rect),
+        image_mode: NodeImageMode::Stretch,
+        ..default()
+    }
+}
 
 pub struct HudPlugin;
 
@@ -2105,6 +2276,10 @@ impl Plugin for HudPlugin {
                     update_combat_streak_banner,
                 )
                     .run_if(in_state(GameState::InGame)),
+            )
+            .add_systems(
+                Update,
+                update_talent_tree_hud.run_if(in_state(GameState::InGame)),
             )
             .init_resource::<UiPointerCapture>()
             .add_systems(
@@ -2286,33 +2461,41 @@ fn spawn_main_menu(
     audio: &AudioSettings,
     audio_backend: &AudioBackendStatus,
 ) {
+    let regular_font: Handle<Font> = asset_server.load(UI_FONT_REGULAR);
+    let bold_font: Handle<Font> = asset_server.load(UI_FONT_BOLD);
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 overflow: Overflow::clip(),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.01, 0.01, 0.012, 0.90)),
+            BackgroundColor(Color::srgb(0.006, 0.007, 0.010)),
             MenuUi,
         ))
         .with_children(|root| {
             root.spawn((
-                ImageNode::new(asset_server.load(MAIN_MENU_BACKGROUND_IMAGE)),
+                ImageNode {
+                    image: asset_server.load(MAIN_MENU_BACKGROUND_IMAGE),
+                    image_mode: NodeImageMode::Stretch,
+                    ..default()
+                },
                 Node {
                     position_type: PositionType::Absolute,
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
                     ..default()
                 },
+                MainMenuBackdropArt,
             ));
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    width: Val::Percent(58.0),
                     height: Val::Percent(100.0),
                     ..default()
                 },
@@ -2320,88 +2503,227 @@ fn spawn_main_menu(
             ));
             root.spawn((
                 Node {
-                    width: Val::Percent(88.0),
-                    max_width: Val::Px(820.0),
-                    padding: UiRect::axes(Val::Px(28.0), Val::Px(24.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(6.0)),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(4.0),
+                    top: Val::Percent(5.0),
+                    bottom: Val::Percent(5.0),
+                    width: Val::Px(530.0),
+                    max_width: Val::Percent(44.0),
+                    min_height: Val::Px(590.0),
+                    padding: UiRect::axes(Val::Px(52.0), Val::Px(46.0)),
                     flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
                     row_gap: Val::Px(14.0),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.018, 0.014, 0.016, 0.76)),
-                BorderColor::all(Color::srgba(0.66, 0.48, 0.24, 0.55)),
+                panel_image_node(asset_server),
+                CorePanelArt,
             ))
-            .with_children(|parent| {
-                parent.spawn((
-                    Text::new("Bevy Open ARPG"),
-                    TextFont {
-                        font_size: FontSize::Px(48.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.82, 0.68)),
-                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
-                    Node {
+            .with_children(|panel| {
+                panel
+                    .spawn((Node {
                         width: Val::Percent(100.0),
+                        height: Val::Px(62.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(12.0),
                         ..default()
-                    },
-                ));
-                parent.spawn((
-                    Text::new(menu_difficulty_line(difficulty.current, records)),
+                    },))
+                    .with_children(|brand| {
+                        brand.spawn((
+                            atlas_image_node(
+                                asset_server,
+                                UI_TALENT_SIGILS_IMAGE,
+                                atlas_rect(724.0, 724.0, 3, 0),
+                            ),
+                            Node {
+                                width: Val::Px(58.0),
+                                height: Val::Px(58.0),
+                                ..default()
+                            },
+                        ));
+                        brand
+                            .spawn((Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(2.0),
+                                ..default()
+                            },))
+                            .with_children(|copy| {
+                                copy.spawn((
+                                    Text::new("THE RELIQUARY AWAITS"),
+                                    TextFont {
+                                        font: bold_font.clone().into(),
+                                        font_size: FontSize::Px(11.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.90, 0.54, 0.24)),
+                                ));
+                                copy.spawn((
+                                    Text::new("A DESCENT INTO ASH"),
+                                    TextFont {
+                                        font: regular_font.clone().into(),
+                                        font_size: FontSize::Px(9.5),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.48, 0.50, 0.54)),
+                                ));
+                            });
+                    });
+                panel.spawn((
+                    Text::new("SHADOW\nRELIQUARY"),
                     TextFont {
-                        font_size: FontSize::Px(18.0),
+                        font: bold_font.clone().into(),
+                        font_size: FontSize::Px(46.0),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.86, 0.72, 0.28)),
-                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
-                    Node {
-                        width: Val::Percent(100.0),
-                        ..default()
-                    },
-                    MenuDifficultyText,
-                ));
-                parent.spawn((
-                    Text::new(menu_profile_summary(
-                        records,
-                        difficulty.current,
-                        audio_backend.status_label(audio),
-                    )),
-                    TextFont {
-                        font_size: FontSize::Px(16.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.76, 0.70, 0.58)),
-                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
-                    Node {
-                        width: Val::Percent(100.0),
-                        ..default()
-                    },
-                    MenuProfileText,
-                ));
-                parent.spawn((
-                    Text::new("SPACE / ENTER  -  BEGIN"),
-                    TextFont {
-                        font_size: FontSize::Px(22.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.94, 0.84, 0.58)),
-                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    TextColor(Color::srgb(0.94, 0.88, 0.78)),
+                    TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
                     Node {
                         width: Val::Percent(100.0),
                         margin: UiRect::top(Val::Px(4.0)),
                         ..default()
                     },
                 ));
-                parent.spawn((
-                    Text::new("TAB  Difficulty     F9  Continue     M  Audio"),
-                    TextFont {
-                        font_size: FontSize::Px(13.0),
+                panel.spawn((
+                    Node {
+                        width: Val::Px(104.0),
+                        height: Val::Px(2.0),
+                        margin: UiRect::vertical(Val::Px(2.0)),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.58, 0.57, 0.54)),
-                    TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                    BackgroundColor(Color::srgb(0.76, 0.33, 0.12)),
+                ));
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(48.0),
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                            border: UiRect::left(Val::Px(3.0)),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.11, 0.065, 0.034, 0.72)),
+                        BorderColor::all(Color::srgba(0.92, 0.40, 0.12, 0.92)),
+                    ))
+                    .with_children(|difficulty_row| {
+                        difficulty_row.spawn((
+                            Text::new(menu_difficulty_line(difficulty.current, records)),
+                            TextFont {
+                                font: bold_font.clone().into(),
+                                font_size: FontSize::Px(15.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.96, 0.72, 0.32)),
+                            TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
+                            MenuDifficultyText,
+                        ));
+                    });
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(88.0),
+                            padding: UiRect::all(Val::Px(13.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.015, 0.020, 0.027, 0.72)),
+                        BorderColor::all(Color::srgba(0.35, 0.40, 0.48, 0.54)),
+                    ))
+                    .with_children(|profile| {
+                        profile.spawn((
+                            Text::new(menu_profile_summary(
+                                records,
+                                difficulty.current,
+                                audio_backend.status_label(audio),
+                            )),
+                            TextFont {
+                                font: regular_font.clone().into(),
+                                font_size: FontSize::Px(12.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.70, 0.72, 0.72)),
+                            TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
+                            MenuProfileText,
+                        ));
+                    });
+                panel.spawn((Node {
+                    flex_grow: 1.0,
+                    min_height: Val::Px(8.0),
+                    ..default()
+                },));
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(66.0),
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(12.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.32, 0.105, 0.028, 0.78)),
+                        BorderColor::all(Color::srgba(0.98, 0.48, 0.14, 0.88)),
+                    ))
+                    .with_children(|begin| {
+                        begin.spawn((
+                            Node {
+                                width: Val::Px(38.0),
+                                height: Val::Px(38.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.018, 0.018, 0.92)),
+                            BorderColor::all(Color::srgba(0.98, 0.63, 0.24, 0.72)),
+                            Text::new("↵"),
+                            TextFont {
+                                font: bold_font.clone().into(),
+                                font_size: FontSize::Px(20.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.98, 0.86, 0.66)),
+                        ));
+                        begin
+                            .spawn((Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(2.0),
+                                ..default()
+                            },))
+                            .with_children(|copy| {
+                                copy.spawn((
+                                    Text::new("BEGIN DESCENT"),
+                                    TextFont {
+                                        font: bold_font.clone().into(),
+                                        font_size: FontSize::Px(18.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(1.0, 0.86, 0.66)),
+                                ));
+                                copy.spawn((
+                                    Text::new("SPACE OR ENTER"),
+                                    TextFont {
+                                        font: regular_font.clone().into(),
+                                        font_size: FontSize::Px(9.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.78, 0.56, 0.36)),
+                                ));
+                            });
+                    });
+                panel.spawn((
+                    Text::new("TAB  DIFFICULTY    F9  CONTINUE    M  AUDIO"),
+                    TextFont {
+                        font: regular_font.clone().into(),
+                        font_size: FontSize::Px(9.5),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.45, 0.47, 0.50)),
+                    TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
                     Node {
                         width: Val::Percent(100.0),
                         ..default()
@@ -2412,7 +2734,7 @@ fn spawn_main_menu(
 }
 
 fn main_menu_scrim_color() -> Color {
-    Color::srgba(0.012, 0.010, 0.012, 0.62)
+    Color::srgba(0.008, 0.009, 0.012, 0.72)
 }
 
 #[cfg(test)]
@@ -5865,7 +6187,9 @@ fn threat_tier(stats: &RunStats) -> &'static str {
     }
 }
 
-fn spawn_hud(mut commands: Commands) {
+fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let regular_font: Handle<Font> = asset_server.load(UI_FONT_REGULAR);
+    let bold_font: Handle<Font> = asset_server.load(UI_FONT_BOLD);
     commands
         .spawn((
             Node {
@@ -6083,6 +6407,7 @@ fn spawn_hud(mut commands: Commands) {
                             BackgroundColor(Color::srgba(0.018, 0.017, 0.020, 0.82)),
                             Text::new(""),
                             TextFont {
+                                font: regular_font.clone().into(),
                                 font_size: FontSize::Px(8.5),
                                 ..default()
                             },
@@ -6112,6 +6437,7 @@ fn spawn_hud(mut commands: Commands) {
                             BackgroundColor(Color::srgba(0.018, 0.017, 0.020, 0.82)),
                             Text::new(""),
                             TextFont {
+                                font: regular_font.clone().into(),
                                 font_size: FontSize::Px(8.5),
                                 ..default()
                             },
@@ -6180,6 +6506,7 @@ fn spawn_hud(mut commands: Commands) {
                         },
                         Text::new(""),
                         TextFont {
+                            font: bold_font.clone().into(),
                             font_size: FontSize::Px(15.0),
                             ..default()
                         },
@@ -6213,6 +6540,19 @@ fn spawn_hud(mut commands: Commands) {
                                 ));
                             }
                         });
+                    panel.spawn((
+                        ImageNode::new(asset_server.load(UI_RESOURCE_ORB_FRAME_IMAGE)),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                        ResourceOrbArt,
+                    ));
                 });
             parent
                 .spawn((
@@ -6233,6 +6573,8 @@ fn spawn_hud(mut commands: Commands) {
                     },
                     BorderColor::all(Color::srgba(0.76, 0.60, 0.36, 0.78)),
                     BackgroundColor(Color::srgba(0.025, 0.022, 0.030, 0.90)),
+                    panel_image_node(&asset_server),
+                    CorePanelArt,
                 ))
                 .with_children(|bar| {
                     for slot in [
@@ -6258,9 +6600,26 @@ fn spawn_hud(mut commands: Commands) {
                             },
                             BorderColor::all(Color::srgba(0.92, 0.74, 0.42, 0.62)),
                             BackgroundColor(Color::srgba(0.055, 0.047, 0.058, 0.92)),
+                            slot_frame_image_node(&asset_server),
                             SkillSlotFrame(slot),
                         ))
                         .with_children(|slot_node| {
+                            slot_node.spawn((
+                                atlas_image_node(
+                                    &asset_server,
+                                    UI_SKILL_ICONS_IMAGE,
+                                    atlas_rect(512.0, 512.0, 3, skill_icon_index(slot)),
+                                ),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(15.0),
+                                    right: Val::Px(15.0),
+                                    top: Val::Px(7.0),
+                                    height: Val::Px(56.0),
+                                    ..default()
+                                },
+                                Pickable::IGNORE,
+                            ));
                             slot_node.spawn((
                                 Node {
                                     position_type: PositionType::Absolute,
@@ -6289,6 +6648,7 @@ fn spawn_hud(mut commands: Commands) {
                                 BackgroundColor(Color::srgba(0.012, 0.010, 0.012, 0.78)),
                                 Text::new(skill_slot_keycap(slot)),
                                 TextFont {
+                                    font: bold_font.clone().into(),
                                     font_size: FontSize::Px(skill_slot_keycap_font_size(slot)),
                                     ..default()
                                 },
@@ -6309,24 +6669,6 @@ fn spawn_hud(mut commands: Commands) {
                             slot_node.spawn((
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(0.0),
-                                    right: Val::Px(0.0),
-                                    top: Val::Px(8.0),
-                                    height: Val::Px(32.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                Text::new(skill_slot_glyph(slot)),
-                                TextFont {
-                                    font_size: FontSize::Px(skill_slot_glyph_font_size(slot)),
-                                    ..default()
-                                },
-                                TextColor(skill_slot_glyph_color(slot)),
-                            ));
-                            slot_node.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
                                     left: Val::Px(3.0),
                                     right: Val::Px(3.0),
                                     bottom: Val::Px(4.0),
@@ -6336,6 +6678,7 @@ fn spawn_hud(mut commands: Commands) {
                                 },
                                 Text::new(""),
                                 TextFont {
+                                    font: regular_font.clone().into(),
                                     font_size: FontSize::Px(8.0),
                                     ..default()
                                 },
@@ -6393,11 +6736,29 @@ fn spawn_hud(mut commands: Commands) {
                         },
                         Text::new(""),
                         TextFont {
+                            font: bold_font.clone().into(),
                             font_size: FontSize::Px(14.0),
                             ..default()
                         },
                         TextColor(Color::srgb(0.76, 0.86, 1.0)),
                         StatsText,
+                    ));
+                    panel.spawn((
+                        ImageNode {
+                            image: asset_server.load(UI_RESOURCE_ORB_FRAME_IMAGE),
+                            color: Color::srgb(0.64, 0.78, 1.0),
+                            ..default()
+                        },
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                        ResourceOrbArt,
                     ));
                 });
             parent.spawn((
@@ -6444,49 +6805,123 @@ fn spawn_hud(mut commands: Commands) {
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Px(24.0),
-                        top: Val::Px(78.0),
-                        width: Val::Px(660.0),
-                        min_height: Val::Px(340.0),
-                        padding: UiRect::all(Val::Px(12.0)),
+                        top: Val::Px(54.0),
+                        width: Val::Px(760.0),
+                        max_width: Val::Percent(92.0),
+                        height: Val::Px(570.0),
+                        padding: UiRect::axes(Val::Px(48.0), Val::Px(42.0)),
                         border: UiRect::all(Val::Px(1.0)),
                         display: Display::None,
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(10.0),
+                        row_gap: Val::Px(12.0),
+                        overflow: Overflow::clip(),
                         ..default()
                     },
                     BorderColor::all(Color::srgba(0.44, 0.60, 0.80, 0.72)),
                     BackgroundColor(Color::srgba(0.010, 0.014, 0.020, 0.92)),
+                    panel_image_node(&asset_server),
                     InventoryPanel,
+                    CorePanelArt,
                 ))
                 .with_children(|panel| {
-                    panel.spawn((
-                        Text::new(""),
-                        TextFont {
-                            font_size: FontSize::Px(14.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.70, 0.82, 0.95)),
-                        InventoryText,
-                    ));
                     panel
                         .spawn((Node {
                             width: Val::Percent(100.0),
+                            height: Val::Px(58.0),
                             display: Display::Flex,
-                            column_gap: Val::Px(10.0),
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(12.0),
+                            ..default()
+                        },))
+                        .with_children(|header| {
+                            header.spawn((
+                                atlas_image_node(
+                                    &asset_server,
+                                    UI_GEAR_ICONS_IMAGE,
+                                    atlas_rect(444.0, 444.0, 4, 7),
+                                ),
+                                Node {
+                                    width: Val::Px(52.0),
+                                    height: Val::Px(52.0),
+                                    ..default()
+                                },
+                            ));
+                            header
+                                .spawn((Node {
+                                    width: Val::Px(190.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(2.0),
+                                    ..default()
+                                },))
+                                .with_children(|title| {
+                                    title.spawn((
+                                        Text::new("RELIQUARY PACK"),
+                                        TextFont {
+                                            font: bold_font.clone().into(),
+                                            font_size: FontSize::Px(18.0),
+                                            ..default()
+                                        },
+                                        TextColor(Color::srgb(0.92, 0.84, 0.70)),
+                                    ));
+                                    title.spawn((
+                                        Text::new("I  CLOSE  ·  CLICK TO EQUIP"),
+                                        TextFont {
+                                            font: regular_font.clone().into(),
+                                            font_size: FontSize::Px(8.5),
+                                            ..default()
+                                        },
+                                        TextColor(Color::srgb(0.50, 0.60, 0.70)),
+                                    ));
+                                });
+                            header.spawn((Node {
+                                flex_grow: 1.0,
+                                ..default()
+                            },));
+                            header.spawn((
+                                Text::new(""),
+                                TextFont {
+                                    font: regular_font.clone().into(),
+                                    font_size: FontSize::Px(10.5),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.66, 0.76, 0.86)),
+                                TextLayout::new(Justify::Right, LineBreak::WordOrCharacter),
+                                Node {
+                                    width: Val::Px(340.0),
+                                    max_height: Val::Px(56.0),
+                                    overflow: Overflow::clip(),
+                                    ..default()
+                                },
+                                InventoryText,
+                            ));
+                        });
+                    panel
+                        .spawn((Node {
+                            width: Val::Percent(100.0),
+                            flex_grow: 1.0,
+                            display: Display::Flex,
+                            column_gap: Val::Px(14.0),
+                            min_height: Val::Px(0.0),
                             ..default()
                         },))
                         .with_children(|body| {
                             body.spawn((Node {
-                                width: Val::Px(250.0),
+                                width: Val::Px(276.0),
                                 display: Display::Flex,
                                 flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(8.0),
+                                row_gap: Val::Px(6.0),
                                 ..default()
                             },))
                                 .with_children(|gear| {
-                                    // Paper doll: helm on top, amulet/chest/ring
-                                    // across the torso row, weapon/gloves at the
-                                    // hands, boots at the feet.
+                                    gear.spawn((
+                                        Text::new("EQUIPPED"),
+                                        TextFont {
+                                            font: bold_font.clone().into(),
+                                            font_size: FontSize::Px(10.0),
+                                            ..default()
+                                        },
+                                        TextColor(Color::srgb(0.62, 0.66, 0.68)),
+                                    ));
                                     let doll_rows: [&[GearSlot]; 4] = [
                                         &[GearSlot::Helm],
                                         &[GearSlot::Amulet, GearSlot::Chest, GearSlot::Ring],
@@ -6503,121 +6938,389 @@ fn spawn_hud(mut commands: Commands) {
                                         },))
                                             .with_children(|doll_row| {
                                                 for slot in row {
-                                                    doll_row.spawn((
-                                                        Node {
-                                                            width: Val::Px(76.0),
-                                                            height: Val::Px(64.0),
-                                                            padding: UiRect::all(Val::Px(5.0)),
-                                                            border: UiRect::all(Val::Px(1.0)),
-                                                            justify_content: JustifyContent::Center,
-                                                            align_items: AlignItems::Center,
-                                                            ..default()
-                                                        },
-                                                        BorderColor::all(Color::srgba(
-                                                            0.45, 0.40, 0.32, 0.55,
-                                                        )),
-                                                        BackgroundColor(Color::srgba(
-                                                            0.030, 0.026, 0.022, 0.90,
-                                                        )),
-                                                        Text::new(""),
-                                                        TextFont {
-                                                            font_size: FontSize::Px(10.0),
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgb(0.82, 0.75, 0.62)),
-                                                        PaperDollSlot(*slot),
-                                                    ));
+                                                    doll_row
+                                                        .spawn((
+                                                            Node {
+                                                                width: Val::Px(82.0),
+                                                                height: Val::Px(76.0),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                overflow: Overflow::clip(),
+                                                                ..default()
+                                                            },
+                                                            BorderColor::all(Color::srgba(
+                                                                0.45, 0.40, 0.32, 0.55,
+                                                            )),
+                                                            BackgroundColor(Color::srgba(
+                                                                0.030, 0.026, 0.022, 0.90,
+                                                            )),
+                                                            slot_frame_image_node(&asset_server),
+                                                            PaperDollSlot(*slot),
+                                                        ))
+                                                        .with_children(|gear_slot| {
+                                                            gear_slot.spawn((
+                                                                atlas_image_node(
+                                                                    &asset_server,
+                                                                    UI_GEAR_ICONS_IMAGE,
+                                                                    atlas_rect(
+                                                                        444.0,
+                                                                        444.0,
+                                                                        4,
+                                                                        gear_icon_index(*slot),
+                                                                    ),
+                                                                ),
+                                                                Node {
+                                                                    position_type:
+                                                                        PositionType::Absolute,
+                                                                    left: Val::Px(20.0),
+                                                                    top: Val::Px(5.0),
+                                                                    width: Val::Px(42.0),
+                                                                    height: Val::Px(42.0),
+                                                                    ..default()
+                                                                },
+                                                                Pickable::IGNORE,
+                                                            ));
+                                                            gear_slot.spawn((
+                                                                Text::new(""),
+                                                                TextFont {
+                                                                    font: regular_font
+                                                                        .clone()
+                                                                        .into(),
+                                                                    font_size: FontSize::Px(8.0),
+                                                                    ..default()
+                                                                },
+                                                                TextColor(Color::srgb(
+                                                                    0.82, 0.75, 0.62,
+                                                                )),
+                                                                TextLayout::new(
+                                                                    Justify::Center,
+                                                                    LineBreak::WordOrCharacter,
+                                                                ),
+                                                                Node {
+                                                                    position_type:
+                                                                        PositionType::Absolute,
+                                                                    left: Val::Px(4.0),
+                                                                    right: Val::Px(4.0),
+                                                                    bottom: Val::Px(4.0),
+                                                                    height: Val::Px(24.0),
+                                                                    overflow: Overflow::clip(),
+                                                                    ..default()
+                                                                },
+                                                                PaperDollSlotText(*slot),
+                                                            ));
+                                                        });
                                                 }
                                             });
                                     }
-                                    for slot in [
-                                        GearSlotText::Weapon,
-                                        GearSlotText::Charm,
-                                        GearSlotText::Codex,
-                                        GearSlotText::Armory,
-                                    ] {
-                                        gear.spawn((
-                                            Node {
-                                                width: Val::Percent(100.0),
-                                                height: Val::Px(58.0),
-                                                padding: UiRect::all(Val::Px(8.0)),
-                                                border: UiRect::all(Val::Px(1.0)),
-                                                align_items: AlignItems::Center,
-                                                ..default()
-                                            },
-                                            BorderColor::all(Color::srgba(0.65, 0.52, 0.34, 0.58)),
-                                            BackgroundColor(Color::srgba(
-                                                0.035, 0.030, 0.026, 0.90,
-                                            )),
-                                            Text::new(""),
-                                            TextFont {
-                                                font_size: FontSize::Px(12.0),
-                                                ..default()
-                                            },
-                                            TextColor(Color::srgb(0.86, 0.78, 0.64)),
-                                            slot,
-                                        ));
-                                    }
+                                    gear.spawn((Node {
+                                        width: Val::Percent(100.0),
+                                        display: Display::Flex,
+                                        flex_wrap: FlexWrap::Wrap,
+                                        column_gap: Val::Px(6.0),
+                                        row_gap: Val::Px(6.0),
+                                        ..default()
+                                    },))
+                                        .with_children(|summary| {
+                                            for slot in [
+                                                GearSlotText::Weapon,
+                                                GearSlotText::Charm,
+                                                GearSlotText::Codex,
+                                                GearSlotText::Armory,
+                                            ] {
+                                                summary.spawn((
+                                                    Node {
+                                                        width: Val::Px(132.0),
+                                                        height: Val::Px(38.0),
+                                                        padding: UiRect::all(Val::Px(5.0)),
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        align_items: AlignItems::Center,
+                                                        overflow: Overflow::clip(),
+                                                        ..default()
+                                                    },
+                                                    BorderColor::all(Color::srgba(
+                                                        0.65, 0.52, 0.34, 0.58,
+                                                    )),
+                                                    BackgroundColor(Color::srgba(
+                                                        0.035, 0.030, 0.026, 0.90,
+                                                    )),
+                                                    Text::new(""),
+                                                    TextFont {
+                                                        font: regular_font.clone().into(),
+                                                        font_size: FontSize::Px(8.0),
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.86, 0.78, 0.64)),
+                                                    slot,
+                                                ));
+                                            }
+                                        });
                                 });
                             body.spawn((Node {
-                                width: Val::Px(374.0),
+                                flex_grow: 1.0,
                                 display: Display::Flex,
+                                align_content: AlignContent::FlexStart,
                                 flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(8.0),
-                                row_gap: Val::Px(8.0),
+                                column_gap: Val::Px(7.0),
+                                row_gap: Val::Px(7.0),
                                 ..default()
                             },))
                                 .with_children(|grid| {
                                     for index in 0..10 {
                                         grid.spawn((
                                             Node {
-                                                width: Val::Px(68.0),
-                                                height: Val::Px(82.0),
-                                                padding: UiRect::all(Val::Px(6.0)),
+                                                width: Val::Px(80.0),
+                                                height: Val::Px(112.0),
                                                 border: UiRect::all(Val::Px(1.0)),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
+                                                overflow: Overflow::clip(),
                                                 ..default()
                                             },
                                             BorderColor::all(Color::srgba(0.36, 0.43, 0.50, 0.58)),
                                             BackgroundColor(Color::srgba(
                                                 0.020, 0.024, 0.030, 0.92,
                                             )),
-                                            Text::new(""),
-                                            TextFont {
-                                                font_size: FontSize::Px(10.5),
-                                                ..default()
+                                            slot_frame_image_node(&asset_server),
+                                            InventorySlot(index),
+                                        ))
+                                        .with_children(
+                                            |item_slot| {
+                                                item_slot.spawn((
+                                                    atlas_image_node(
+                                                        &asset_server,
+                                                        UI_GEAR_ICONS_IMAGE,
+                                                        atlas_rect(444.0, 444.0, 4, 0),
+                                                    ),
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(15.0),
+                                                        top: Val::Px(7.0),
+                                                        width: Val::Px(50.0),
+                                                        height: Val::Px(50.0),
+                                                        ..default()
+                                                    },
+                                                    Pickable::IGNORE,
+                                                    Visibility::Hidden,
+                                                    InventorySlotIcon(index),
+                                                ));
+                                                item_slot.spawn((
+                                                    Text::new(""),
+                                                    TextFont {
+                                                        font: regular_font.clone().into(),
+                                                        font_size: FontSize::Px(8.0),
+                                                        ..default()
+                                                    },
+                                                    TextColor(Color::srgb(0.70, 0.82, 0.95)),
+                                                    TextLayout::new(
+                                                        Justify::Center,
+                                                        LineBreak::WordOrCharacter,
+                                                    ),
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(4.0),
+                                                        right: Val::Px(4.0),
+                                                        bottom: Val::Px(5.0),
+                                                        height: Val::Px(46.0),
+                                                        overflow: Overflow::clip(),
+                                                        ..default()
+                                                    },
+                                                    InventorySlotText(index),
+                                                ));
                                             },
-                                            TextColor(Color::srgb(0.70, 0.82, 0.95)),
-                                            InventorySlotText(index),
-                                        ));
+                                        );
                                     }
                                 });
                         });
                 });
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: Val::Px(24.0),
-                    top: Val::Px(78.0),
-                    width: Val::Px(430.0),
-                    min_height: Val::Px(280.0),
-                    padding: UiRect::all(Val::Px(12.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    display: Display::None,
-                    ..default()
-                },
-                BorderColor::all(Color::srgba(0.72, 0.48, 0.90, 0.72)),
-                BackgroundColor(Color::srgba(0.018, 0.012, 0.026, 0.92)),
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(13.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.84, 0.76, 0.96)),
-                BuildPanel,
-                BuildText,
-            ));
+            parent
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(50.0),
+                        top: Val::Px(54.0),
+                        width: Val::Px(780.0),
+                        max_width: Val::Percent(92.0),
+                        height: Val::Px(570.0),
+                        margin: UiRect::left(Val::Px(-390.0)),
+                        padding: UiRect::axes(Val::Px(48.0), Val::Px(42.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        display: Display::None,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(12.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgba(0.72, 0.48, 0.90, 0.72)),
+                    BackgroundColor(Color::srgba(0.018, 0.012, 0.026, 0.92)),
+                    panel_image_node(&asset_server),
+                    BuildPanel,
+                    CorePanelArt,
+                ))
+                .with_children(|build| {
+                    build.spawn((
+                        Text::new(""),
+                        TextFont {
+                            font: bold_font.clone().into(),
+                            font_size: FontSize::Px(13.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.88, 0.82, 0.92)),
+                        TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(58.0),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BuildText,
+                    ));
+                    build
+                        .spawn((Node {
+                            width: Val::Percent(100.0),
+                            flex_grow: 1.0,
+                            display: Display::Flex,
+                            column_gap: Val::Px(10.0),
+                            min_height: Val::Px(0.0),
+                            ..default()
+                        },))
+                        .with_children(|branches| {
+                            for branch in TalentBranch::ALL {
+                                branches
+                                    .spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            flex_basis: Val::Px(0.0),
+                                            height: Val::Percent(100.0),
+                                            padding: UiRect::axes(Val::Px(15.0), Val::Px(13.0)),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            flex_direction: FlexDirection::Column,
+                                            align_items: AlignItems::Center,
+                                            row_gap: Val::Px(5.0),
+                                            overflow: Overflow::clip(),
+                                            ..default()
+                                        },
+                                        BorderColor::all(branch.color().with_alpha(0.56)),
+                                        BackgroundColor(Color::srgba(0.014, 0.014, 0.020, 0.92)),
+                                        slot_frame_image_node(&asset_server),
+                                    ))
+                                    .with_children(|card| {
+                                        card.spawn((
+                                            atlas_image_node(
+                                                &asset_server,
+                                                UI_TALENT_SIGILS_IMAGE,
+                                                atlas_rect(
+                                                    724.0,
+                                                    724.0,
+                                                    3,
+                                                    talent_icon_index(branch),
+                                                ),
+                                            ),
+                                            Node {
+                                                width: Val::Px(92.0),
+                                                height: Val::Px(92.0),
+                                                ..default()
+                                            },
+                                        ));
+                                        card.spawn((
+                                            Text::new(branch.label()),
+                                            TextFont {
+                                                font: bold_font.clone().into(),
+                                                font_size: FontSize::Px(16.0),
+                                                ..default()
+                                            },
+                                            TextColor(branch.color()),
+                                        ));
+                                        card.spawn((
+                                            Text::new(branch.role()),
+                                            TextFont {
+                                                font: regular_font.clone().into(),
+                                                font_size: FontSize::Px(7.5),
+                                                ..default()
+                                            },
+                                            TextColor(Color::srgb(0.58, 0.58, 0.62)),
+                                        ));
+                                        card.spawn((
+                                            Text::new("0 / 8"),
+                                            TextFont {
+                                                font: bold_font.clone().into(),
+                                                font_size: FontSize::Px(12.0),
+                                                ..default()
+                                            },
+                                            TextColor(Color::srgb(0.86, 0.84, 0.80)),
+                                            TalentRankText(branch),
+                                        ));
+                                        card.spawn((Node {
+                                            width: Val::Percent(100.0),
+                                            flex_grow: 1.0,
+                                            flex_direction: FlexDirection::Column,
+                                            row_gap: Val::Px(3.0),
+                                            ..default()
+                                        },))
+                                            .with_children(|ladder| {
+                                                for rank in 1..=8 {
+                                                    let label = talent_rank_label(branch, rank);
+                                                    ladder
+                                                        .spawn((
+                                                            Node {
+                                                                width: Val::Percent(100.0),
+                                                                height: Val::Px(22.0),
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(6.0),
+                                                                    Val::Px(3.0),
+                                                                ),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                align_items: AlignItems::Center,
+                                                                ..default()
+                                                            },
+                                                            BorderColor::all(Color::srgba(
+                                                                0.20, 0.20, 0.24, 0.72,
+                                                            )),
+                                                            BackgroundColor(Color::srgba(
+                                                                0.025, 0.025, 0.032, 0.92,
+                                                            )),
+                                                            TalentRankNode { branch, rank },
+                                                        ))
+                                                        .with_children(|node| {
+                                                            node.spawn((
+                                                                Text::new(label),
+                                                                TextFont {
+                                                                    font: if rank == 4 || rank == 8
+                                                                    {
+                                                                        bold_font.clone().into()
+                                                                    } else {
+                                                                        regular_font.clone().into()
+                                                                    },
+                                                                    font_size: FontSize::Px(
+                                                                        if rank == 4 || rank == 8 {
+                                                                            8.0
+                                                                        } else {
+                                                                            7.5
+                                                                        },
+                                                                    ),
+                                                                    ..default()
+                                                                },
+                                                                TextColor(Color::srgb(
+                                                                    0.72, 0.70, 0.68,
+                                                                )),
+                                                            ));
+                                                        });
+                                                }
+                                            });
+                                    });
+                            }
+                        });
+                    build.spawn((
+                        Text::new("1  WRATH     2  VIGOR     3  FOCUS        K  CLOSE"),
+                        TextFont {
+                            font: regular_font.clone().into(),
+                            font_size: FontSize::Px(9.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.52, 0.50, 0.56)),
+                        TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                        Node {
+                            width: Val::Percent(100.0),
+                            ..default()
+                        },
+                    ));
+                });
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -8642,7 +9345,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     }
     update_objective_frame(&mut nodes.objective_frames, combat_focus, clean_hud);
     if let Ok(mut text) = texts.1.single_mut() {
-        **text = health_orb_text(health, barrier, potions, death_ward);
+        **text = health_orb_compact_text(health, barrier, potions, death_ward);
     }
     for (slot, mut text) in &mut texts.2 {
         **text = skill_slot_summary(*slot, fury, cooldowns, runes, surge, evade);
@@ -8673,7 +9376,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
             evade,
             runes,
         });
-        **text = fury_orb_text(fury, level, paragon, &stats, &readiness);
+        **text = fury_orb_compact_text(fury, level, paragon, &stats, &readiness);
     }
     if let Ok(mut text) = texts.4.single_mut() {
         let (log_text, display) =
@@ -8712,7 +9415,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     }
     if let Ok(mut text) = texts.6.single_mut() {
         **text = if inventory_open.open {
-            inventory_panel_header(
+            inventory_panel_compact_header(
                 &stats,
                 inventory,
                 equipment,
@@ -8754,6 +9457,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         inventory,
         equipment,
     );
+    update_inventory_slot_icons(&mut nodes.inventory_icons, inventory_open.open, inventory);
     if let Ok(mut text) = texts.9.single_mut() {
         let quest_board =
             chapter_quest_board_text(&progress, &stats, &bounty, &obelisk, &rift, &story);
@@ -8778,11 +9482,14 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     }
     if let Ok(mut text) = texts.10.single_mut() {
         **text = if build_open.open {
-            build_panel_text(BuildPanelInputs {
+            talent_panel_text(BuildPanelInputs {
                 health,
                 fury,
+                #[cfg(test)]
                 cooldowns,
+                #[cfg(test)]
                 evade,
+                #[cfg(test)]
                 surge,
                 level,
                 damage_bonus,
@@ -10290,6 +10997,55 @@ fn update_build_panels(build_panels: &mut BuildPanelQuery, open: bool) {
     }
 }
 
+fn talent_rank_label(branch: TalentBranch, rank: u32) -> String {
+    match (branch, rank) {
+        (TalentBranch::Wrath, 4) => "I  BLOODRUSH".to_string(),
+        (TalentBranch::Wrath, 8) => "II  CARNAGE".to_string(),
+        (TalentBranch::Vigor, 4) => "I  SECOND WIND".to_string(),
+        (TalentBranch::Vigor, 8) => "II  IRON CONSTITUTION".to_string(),
+        (TalentBranch::Focus, 4) => "I  FLOW".to_string(),
+        (TalentBranch::Focus, 8) => "II  TEMPEST".to_string(),
+        _ => format!("◆  RANK {rank}"),
+    }
+}
+
+fn update_talent_tree_hud(
+    build_open: Res<BuildOpen>,
+    player: Query<&Talents, With<Player>>,
+    mut rank_texts: Query<(&TalentRankText, &mut Text)>,
+    mut rank_nodes: Query<(&TalentRankNode, &mut BorderColor, &mut BackgroundColor)>,
+) {
+    let Ok(talents) = player.single() else {
+        return;
+    };
+    for (marker, mut text) in &mut rank_texts {
+        let rank = marker.0.rank(talents);
+        **text = format!("{}/8", rank.min(8));
+    }
+    if !build_open.open {
+        return;
+    }
+    for (node, mut border, mut background) in &mut rank_nodes {
+        let current = node.branch.rank(talents);
+        let unlocked = node.rank <= current;
+        let next = node.rank == current.saturating_add(1) && talents.points > 0;
+        *border = BorderColor::all(if unlocked {
+            node.branch.color().with_alpha(0.96)
+        } else if next {
+            Color::srgba(0.92, 0.74, 0.34, 0.92)
+        } else {
+            Color::srgba(0.20, 0.20, 0.24, 0.72)
+        });
+        background.0 = if unlocked {
+            node.branch.color().with_alpha(0.34)
+        } else if next {
+            Color::srgba(0.20, 0.14, 0.055, 0.88)
+        } else {
+            Color::srgba(0.025, 0.025, 0.032, 0.92)
+        };
+    }
+}
+
 fn update_experience_fills(experience_fills: &mut ExperienceFillQuery, level: &PlayerLevel) {
     let amount = percent(level.xp as f32, level.next_level_xp as f32);
     for (mut node, mut color) in experience_fills {
@@ -10305,8 +11061,11 @@ fn update_experience_fills(experience_fills: &mut ExperienceFillQuery, level: &P
 struct BuildPanelInputs<'a> {
     health: &'a Health,
     fury: &'a Fury,
+    #[cfg(test)]
     cooldowns: &'a SkillCooldowns,
+    #[cfg(test)]
     evade: &'a Evade,
+    #[cfg(test)]
     surge: &'a SurgeBuff,
     level: &'a PlayerLevel,
     damage_bonus: &'a DamageBonus,
@@ -10317,6 +11076,38 @@ struct BuildPanelInputs<'a> {
     codex: &'a LegendaryCodex,
 }
 
+fn talent_panel_text(inputs: BuildPanelInputs) -> String {
+    let damage = total_damage_bonus(inputs.damage_bonus, inputs.equipment, inputs.charm);
+    let crit = total_crit_chance(inputs.equipment, inputs.charm) * 100.0;
+    let archetype = build_archetype_name(inputs.equipment, inputs.runes).to_ascii_uppercase();
+    let score = build_score_summary(
+        inputs.damage_bonus,
+        inputs.equipment,
+        inputs.charm,
+        inputs.talents,
+        inputs.runes,
+    );
+    format!(
+        "TALENT CONSTELLATION   ·   {} UNBOUND POINT{}\n\
+         {}  ·  {}  ·  L{}  ·  LIFE {:.0}/{:.0}  ·  FURY {:.0}/{:.0}\n\
+         +{:.0} DAMAGE  ·  {:.0}% CRIT  ·  x{:.2} COOLDOWN  ·  {} POWERS",
+        inputs.talents.points,
+        if inputs.talents.points == 1 { "" } else { "S" },
+        archetype,
+        score,
+        inputs.level.level,
+        inputs.health.current.max(0.0),
+        inputs.health.max,
+        inputs.fury.current,
+        inputs.fury.max,
+        damage,
+        crit,
+        inputs.talents.cooldown_multiplier(),
+        legendary_codex_power_count(inputs.codex),
+    )
+}
+
+#[cfg(test)]
 fn build_panel_text(inputs: BuildPanelInputs) -> String {
     let damage = total_damage_bonus(inputs.damage_bonus, inputs.equipment, inputs.charm);
     let crit = total_crit_chance(inputs.equipment, inputs.charm) * 100.0;
@@ -10405,6 +11196,7 @@ fn build_panel_text(inputs: BuildPanelInputs) -> String {
     )
 }
 
+#[cfg(test)]
 fn build_next_step_summary(
     talents: &Talents,
     equipment: &Equipment,
@@ -10431,6 +11223,7 @@ fn build_next_step_summary(
     format!("Z/X/C tune runes: {}", rune_synergy_summary(runes))
 }
 
+#[cfg(test)]
 fn build_archetype_summary(
     damage_bonus: &DamageBonus,
     equipment: &Equipment,
@@ -10444,6 +11237,7 @@ fn build_archetype_summary(
     format!("{primary} {posture} | {payoff}")
 }
 
+#[cfg(test)]
 fn build_loadout_label(equipment: &Equipment, charm: &Charm, runes: &SkillRunes) -> String {
     format!(
         "{} / {} / {}",
@@ -10470,6 +11264,7 @@ fn build_archetype_name(equipment: &Equipment, runes: &SkillRunes) -> &'static s
     }
 }
 
+#[cfg(test)]
 fn build_posture_label(
     damage_bonus: &DamageBonus,
     equipment: &Equipment,
@@ -10663,6 +11458,7 @@ fn next_talent_pick_summary(talents: &Talents) -> String {
     }
 }
 
+#[cfg(test)]
 fn rune_loadout_summary(runes: &SkillRunes) -> String {
     format!(
         "Dash {} / Nova {} / Rupture {}",
@@ -10672,6 +11468,7 @@ fn rune_loadout_summary(runes: &SkillRunes) -> String {
     )
 }
 
+#[cfg(test)]
 fn rune_synergy_summary(runes: &SkillRunes) -> &'static str {
     match (runes.dash, runes.nova, runes.rupture) {
         (DashRune::Reap, NovaRune::Frost, RuptureRune::Hemorrhage) => {
@@ -10701,6 +11498,7 @@ fn rune_synergy_summary(runes: &SkillRunes) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn set_combo_payoff_summary(equipment: &Equipment, charm: &Charm) -> &'static str {
     match themed_reliquary_set(equipment, charm) {
         Some(ReliquarySet::Storm) => "Combo set: shock",
@@ -10711,6 +11509,7 @@ fn set_combo_payoff_summary(equipment: &Equipment, charm: &Charm) -> &'static st
     }
 }
 
+#[cfg(test)]
 fn build_rotation_summary(
     fury: &Fury,
     cooldowns: &SkillCooldowns,
@@ -10747,6 +11546,7 @@ fn build_rotation_summary(
     "Hold position, Strike, wait for cooldowns".to_string()
 }
 
+#[cfg(test)]
 fn surge_build_state(surge: &SurgeBuff) -> String {
     let active = surge_seconds_remaining(surge);
     if active > 0.0 {
@@ -10758,6 +11558,7 @@ fn surge_build_state(surge: &SurgeBuff) -> String {
     }
 }
 
+#[cfg(test)]
 fn evade_build_state(evade: &Evade) -> String {
     let active = evade_seconds_remaining(evade);
     if active > 0.0 {
@@ -10919,6 +11720,7 @@ fn bag_action_summary(
     loot_pursuit_summary(stats, inventory, equipment)
 }
 
+#[cfg(test)]
 fn inventory_panel_header(
     stats: &RunStats,
     inventory: &Inventory,
@@ -10961,6 +11763,35 @@ fn inventory_panel_header(
         elixirs.selected.label(),
         elixirs.current,
         elixirs.max
+    )
+}
+
+fn inventory_panel_compact_header(
+    stats: &RunStats,
+    inventory: &Inventory,
+    equipment: &Equipment,
+    damage_bonus: &DamageBonus,
+    potions: &PotionBelt,
+    elixirs: &ElixirBelt,
+    codex: &LegendaryCodex,
+) -> String {
+    format!(
+        "{}/{} SLOTS  ·  {} GOLD  ·  {} SHARDS  ·  POTION {}/{}\n{}  ·  CODEX {}/{}  ·  ELIXIR {} {}/{}",
+        inventory.items.len(),
+        inventory.capacity,
+        stats.gold,
+        stats.ember_shards,
+        potions.current,
+        potions.max,
+        compact_label(
+            &bag_action_summary(stats, inventory, equipment, damage_bonus).to_uppercase(),
+            30,
+        ),
+        legendary_codex_power_count(codex),
+        LegendaryPower::ALL.len(),
+        elixirs.selected.label().to_uppercase(),
+        elixirs.current,
+        elixirs.max,
     )
 }
 
@@ -11198,40 +12029,27 @@ fn update_gear_slots(
         **text = if open {
             match slot {
                 GearSlotText::Weapon => format!(
-                    "WEAPON\n{} {}\n+{:.0} dmg  {:.0}% crit{}{}\n{}",
-                    equipment.quality,
-                    compact_label(&equipment.weapon_name, 20),
+                    "WEAPON · {}\n{}  +{:.0}",
+                    compact_label(&equipment.quality.to_uppercase(), 9),
+                    compact_label(&equipment.weapon_name, 12),
                     damage_bonus.0,
-                    equipment.crit_chance * 100.0,
-                    temper_label(equipment.temper_level),
-                    gem_label(equipment.socketed_gem),
-                    compact_label(
-                        &weapon_build_tag(equipment, damage_bonus, equipment.socketed_gem),
-                        30
-                    )
                 ),
                 GearSlotText::Charm => format!(
-                    "CHARM\n{} {}\n+{:.0} dmg  {:.0}% crit\n{}",
-                    charm.quality,
-                    compact_label(&charm.name, 21),
+                    "CHARM · {}\n{}  +{:.0}",
+                    compact_label(&charm.quality.to_uppercase(), 9),
+                    compact_label(&charm.name, 12),
                     charm.damage_bonus,
-                    charm.crit_chance * 100.0,
-                    compact_label(&charm_build_tag(charm), 30)
                 ),
                 GearSlotText::Codex => format!(
-                    "BUILD\n{}\n{}\n{}",
-                    compact_label(&talents.summary(), 30),
-                    compact_label(&runes.summary(), 30),
-                    compact_label(&codex.summary(), 30)
+                    "BUILD · {} PT\n{} · {}",
+                    talents.points,
+                    compact_label(build_archetype_name(equipment, runes), 10),
+                    compact_label(&codex.summary(), 12),
                 ),
                 GearSlotText::Armory => format!(
-                    "ARMORY\n{}\n{}\n{}",
-                    compact_label(&armory.summary(), 30),
-                    compact_label(resonance, 30),
-                    compact_label(
-                        &weapon_build_tag(equipment, damage_bonus, equipment.socketed_gem),
-                        30
-                    )
+                    "ARMORY · SLOT {}\n{}",
+                    armory.active_slot + 1,
+                    compact_label(resonance, 18),
                 ),
             }
         } else {
@@ -11286,7 +12104,7 @@ fn handle_inventory_slot_clicks(
     inventory_open: Res<InventoryOpen>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    slots: Query<(&ComputedNode, &UiGlobalTransform, &InventorySlotText)>,
+    slots: Query<(&ComputedNode, &UiGlobalTransform, &InventorySlot)>,
     mut combat_events: MessageWriter<CombatEvent>,
     mut player: Query<
         (
@@ -11385,56 +12203,63 @@ fn handle_paper_doll_clicks(
 fn update_paper_doll_slots(
     inventory_open: Res<InventoryOpen>,
     player: Query<(&Equipment, &DamageBonus), With<Player>>,
-    mut slots: Query<(
-        &PaperDollSlot,
-        &mut Text,
-        &mut TextColor,
-        &mut BorderColor,
-        &mut BackgroundColor,
-    )>,
+    mut slot_texts: Query<(&PaperDollSlotText, &mut Text, &mut TextColor), Without<PaperDollSlot>>,
+    mut slot_frames: Query<
+        (&PaperDollSlot, &mut BorderColor, &mut BackgroundColor),
+        Without<PaperDollSlotText>,
+    >,
 ) {
     let Ok((equipment, damage_bonus)) = player.single() else {
         return;
     };
-    for (slot, mut text, mut text_color, mut border, mut background) in &mut slots {
+    for (slot, mut text, mut text_color) in &mut slot_texts {
         if !inventory_open.open {
             **text = String::new();
-            *border = BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.0));
-            background.0 = Color::srgba(0.0, 0.0, 0.0, 0.0);
             continue;
         }
-        let title = slot.0.label().to_uppercase();
         if slot.0.is_weapon() {
             **text = format!(
-                "{title}\n{}\n+{:.0} dmg {:.0}%{}",
-                compact_label(&equipment.weapon_name, 13),
+                "{}\n+{:.0} DMG",
+                compact_label(&equipment.weapon_name, 11),
                 damage_bonus.0,
-                equipment.crit_chance * 100.0,
-                temper_label(equipment.temper_level),
             );
-            *border = BorderColor::all(quality_color(&equipment.quality));
-            background.0 = quality_background(&equipment.quality);
             text_color.0 = Color::srgb(0.88, 0.82, 0.70);
             continue;
         }
         match equipment.worn_piece(slot.0) {
             Some(item) => {
                 **text = format!(
-                    "{title}\n{}\n+{:.0} tough +{:.0} hp",
-                    compact_label(&item.name, 13),
+                    "{}\n+{:.0} ARM",
+                    compact_label(&item.name, 11),
                     item.armor_bonus,
-                    item.health_bonus,
                 );
-                *border = BorderColor::all(quality_color(&item.quality));
-                background.0 = quality_background(&item.quality);
                 text_color.0 = Color::srgb(0.88, 0.82, 0.70);
             }
             None => {
-                **text = format!("{title}\n—");
-                *border = BorderColor::all(Color::srgba(0.45, 0.40, 0.32, 0.55));
-                background.0 = Color::srgba(0.030, 0.026, 0.022, 0.90);
+                **text = format!("{}\nEMPTY", slot.0.label().to_uppercase());
                 text_color.0 = Color::srgba(0.62, 0.56, 0.46, 0.80);
             }
+        }
+    }
+    for (slot, mut border, mut background) in &mut slot_frames {
+        if !inventory_open.open {
+            *border = BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.0));
+            background.0 = Color::srgba(0.0, 0.0, 0.0, 0.0);
+            continue;
+        }
+        let quality = if slot.0.is_weapon() {
+            Some(equipment.quality.as_str())
+        } else {
+            equipment
+                .worn_piece(slot.0)
+                .map(|item| item.quality.as_str())
+        };
+        if let Some(quality) = quality {
+            *border = BorderColor::all(quality_color(quality));
+            background.0 = quality_background(quality);
+        } else {
+            *border = BorderColor::all(Color::srgba(0.45, 0.40, 0.32, 0.55));
+            background.0 = Color::srgba(0.030, 0.026, 0.022, 0.90);
         }
     }
 }
@@ -11451,8 +12276,8 @@ fn update_inventory_slots(
         **text = if open {
             recent_items
                 .get(slot.0)
-                .map(|item| inventory_slot_label(item, equipment, damage_bonus))
-                .unwrap_or_else(|| "Empty".to_string())
+                .map(|item| inventory_slot_card_label(item, equipment, damage_bonus))
+                .unwrap_or_else(|| "EMPTY\n—".to_string())
         } else {
             String::new()
         };
@@ -11491,6 +12316,38 @@ fn update_inventory_slot_frames(
     }
 }
 
+fn update_inventory_slot_icons(
+    inventory_icons: &mut InventorySlotIconQuery,
+    open: bool,
+    inventory: &Inventory,
+) {
+    let recent_items = inventory.items.iter().rev().take(10).collect::<Vec<_>>();
+    for (slot, mut image, mut visibility) in inventory_icons {
+        let Some(item) = recent_items.get(slot.0).filter(|_| open) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        image.rect = Some(atlas_rect(444.0, 444.0, 4, gear_icon_index(item.slot)));
+        *visibility = Visibility::Inherited;
+    }
+}
+
+fn inventory_slot_card_label(
+    item: &InventoryItem,
+    equipment: &Equipment,
+    damage_bonus: &DamageBonus,
+) -> String {
+    let decision = inventory_item_decision(item, equipment, damage_bonus);
+    let delta = inventory_item_power_delta(item, equipment, damage_bonus);
+    format!(
+        "{}\n{}\n{:+.0} PWR",
+        compact_label(decision, 10),
+        compact_label(&item.name, 11),
+        delta,
+    )
+}
+
+#[cfg(test)]
 fn inventory_slot_label(
     item: &InventoryItem,
     equipment: &Equipment,
@@ -11602,6 +12459,7 @@ fn inventory_item_decision_reason(
     }
 }
 
+#[cfg(test)]
 fn inventory_item_power_delta_label(
     item: &InventoryItem,
     equipment: &Equipment,
@@ -11660,6 +12518,7 @@ fn inventory_item_power_score(item: &InventoryItem) -> f32 {
         * quality_multiplier
 }
 
+#[cfg(test)]
 fn inventory_item_callout_line(
     item: &InventoryItem,
     equipment: &Equipment,
@@ -11787,6 +12646,7 @@ fn quality_background(quality: &str) -> Color {
     }
 }
 
+#[cfg(test)]
 fn compact_bonus_line(label: &str, value: f32) -> String {
     if value <= 0.0 {
         String::new()
@@ -12348,6 +13208,7 @@ fn objective_compass_display_for_target(
 }
 
 fn fixed_mainline_compass_target(progress: &ChapterProgress) -> Option<ObjectiveCompassTarget> {
+    let layout = chapter_world_layout(progress.chapter_id());
     match progress.phase {
         ChapterPhase::Cache if !progress.chest_opened => Some(ObjectiveCompassTarget {
             scope: "MAIN",
@@ -12355,7 +13216,7 @@ fn fixed_mainline_compass_target(progress: &ChapterProgress) -> Option<Objective
                 progress.chapter_id(),
                 InteractableKind::Cache,
             ),
-            position: Vec3::new(-8.0, 0.0, -5.5),
+            position: layout.cache,
         }),
         ChapterPhase::Ritual if !progress.altar_activated => Some(ObjectiveCompassTarget {
             scope: "MAIN",
@@ -12363,7 +13224,7 @@ fn fixed_mainline_compass_target(progress: &ChapterProgress) -> Option<Objective
                 progress.chapter_id(),
                 InteractableKind::Altar,
             ),
-            position: Vec3::new(6.0, 0.0, -20.5),
+            position: layout.altar,
         }),
         _ => None,
     }
@@ -12419,11 +13280,12 @@ fn mainline_enemy_compass_label(
 }
 
 fn boss_fallback_compass_target(progress: &ChapterProgress) -> Option<ObjectiveCompassTarget> {
+    let layout = chapter_world_layout(progress.chapter_id());
     match progress.phase {
         ChapterPhase::Boss if !progress.boss_slain => Some(ObjectiveCompassTarget {
             scope: "MAIN",
             label: progress.chapter_id().boss_short_name(),
-            position: Vec3::new(0.0, 0.0, -20.0),
+            position: layout.boss,
         }),
         _ => None,
     }
@@ -12496,18 +13358,19 @@ fn optional_interactable_compass_label(kind: InteractableKind) -> &'static str {
 }
 
 fn mainline_navigation_target(progress: &ChapterProgress) -> Option<(&'static str, Vec3)> {
+    let layout = chapter_world_layout(progress.chapter_id());
     match progress.phase {
-        ChapterPhase::Cache if !progress.chest_opened => {
-            Some(("Cache", Vec3::new(-8.0, 0.0, -5.5)))
-        }
+        ChapterPhase::Cache if !progress.chest_opened => Some((
+            mainline_interactable_compass_label(progress.chapter_id(), InteractableKind::Cache),
+            layout.cache,
+        )),
         ChapterPhase::Ritual if !progress.altar_activated => Some((
             mainline_interactable_compass_label(progress.chapter_id(), InteractableKind::Altar),
-            Vec3::new(6.0, 0.0, -20.5),
+            layout.altar,
         )),
-        ChapterPhase::Boss if !progress.boss_slain => Some((
-            progress.chapter_id().boss_short_name(),
-            Vec3::new(0.0, 0.0, -20.0),
-        )),
+        ChapterPhase::Boss if !progress.boss_slain => {
+            Some((progress.chapter_id().boss_short_name(), layout.boss))
+        }
         _ => None,
     }
 }
@@ -12582,6 +13445,7 @@ fn chapter_zone_summary(zone: &ChapterZoneState) -> String {
     )
 }
 
+#[cfg(test)]
 fn health_orb_text(
     health: &Health,
     barrier: &Barrier,
@@ -12601,6 +13465,29 @@ fn health_orb_text(
     )
 }
 
+fn health_orb_compact_text(
+    health: &Health,
+    barrier: &Barrier,
+    potions: &PotionBelt,
+    death_ward: &DeathWard,
+) -> String {
+    let ward = if barrier.current > 0.5 {
+        format!("  ·  WARD {:.0}", barrier.current)
+    } else {
+        String::new()
+    };
+    format!(
+        "LIFE\n{:.0} / {:.0}\nPOTION {}/{}{}\nSOUL {}",
+        health.current.max(0.0),
+        health.max,
+        potions.current,
+        potions.max,
+        ward,
+        death_ward.remaining_revives(),
+    )
+}
+
+#[cfg(test)]
 fn health_state_label(health: &Health) -> &'static str {
     if health.max <= 0.0 {
         return "UNKNOWN";
@@ -12615,6 +13502,7 @@ fn health_state_label(health: &Health) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn fury_orb_text(
     fury: &Fury,
     level: &PlayerLevel,
@@ -12636,6 +13524,27 @@ fn fury_orb_text(
     )
 }
 
+fn fury_orb_compact_text(
+    fury: &Fury,
+    level: &PlayerLevel,
+    paragon: &EmberParagon,
+    stats: &RunStats,
+    readiness: &str,
+) -> String {
+    format!(
+        "FURY\n{:.0} / {:.0}\nLEVEL {}  ·  P{}\n{}\n{}g  {}s  {}e",
+        fury.current,
+        fury.max,
+        level.level,
+        paragon.rank,
+        compact_label(readiness, 15).to_uppercase(),
+        stats.gold,
+        stats.ember_shards,
+        stats.affix_essence,
+    )
+}
+
+#[cfg(test)]
 fn fury_spend_line(fury: &Fury) -> String {
     format!(
         "SPEND RMB{:.0} Q{:.0} E{:.0}",
@@ -12643,6 +13552,7 @@ fn fury_spend_line(fury: &Fury) -> String {
     )
 }
 
+#[cfg(test)]
 fn fury_builder_line(fury: &Fury) -> String {
     format!("BUILD LMB +{:.0}F", fury.basic_gain)
 }
@@ -12728,6 +13638,7 @@ fn survival_readiness_summary(potions: &PotionBelt, evade: &Evade) -> String {
     "SURVIVE kite".to_string()
 }
 
+#[cfg(test)]
 fn growth_orb_text(level: &PlayerLevel, paragon: &EmberParagon) -> String {
     if level.level >= CHAPTER_LEVEL_CAP {
         format!(
@@ -13398,6 +14309,7 @@ fn skill_slot_keycap_font_size(slot: SkillSlotText) -> f32 {
     }
 }
 
+#[cfg(test)]
 fn skill_slot_glyph(slot: SkillSlotText) -> &'static str {
     match slot {
         SkillSlotText::Strike => "/",
@@ -13409,6 +14321,7 @@ fn skill_slot_glyph(slot: SkillSlotText) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn skill_slot_glyph_font_size(slot: SkillSlotText) -> f32 {
     match slot {
         SkillSlotText::Dash => 21.0,
@@ -13417,6 +14330,7 @@ fn skill_slot_glyph_font_size(slot: SkillSlotText) -> f32 {
     }
 }
 
+#[cfg(test)]
 fn skill_slot_glyph_color(slot: SkillSlotText) -> Color {
     match slot {
         SkillSlotText::Strike => Color::srgb(0.94, 0.78, 0.46),
@@ -13652,6 +14566,7 @@ fn skill_slot_role_short(
     }
 }
 
+#[cfg(test)]
 fn cooldown_label(seconds: f32) -> String {
     if seconds <= 0.05 {
         "ready".to_string()
@@ -13689,6 +14604,12 @@ fn update_minimap(
     let Ok(map_entity) = map.single() else {
         return;
     };
+    let (player, enemies, loot, health_globes, fury_globes, interactables) = queries;
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    let center = player_transform.translation;
+
     for mut text in &mut objective_text {
         **text = minimap_objective_line(&progress);
     }
@@ -13696,12 +14617,12 @@ fn update_minimap(
         queue_safe_despawn(commands.reborrow(), entity);
     }
 
-    let (player, enemies, loot, health_globes, fury_globes, interactables) = queries;
     for transform in &loot {
         spawn_minimap_dot(
             &mut commands,
             map_entity,
             transform.translation,
+            center,
             4.0,
             Color::srgb(0.95, 0.72, 0.18),
         );
@@ -13711,6 +14632,7 @@ fn update_minimap(
             &mut commands,
             map_entity,
             transform.translation,
+            center,
             4.5,
             Color::srgb(1.0, 0.08, 0.12),
         );
@@ -13720,6 +14642,7 @@ fn update_minimap(
             &mut commands,
             map_entity,
             transform.translation,
+            center,
             4.2,
             Color::srgb(0.18, 0.58, 1.0),
         );
@@ -13734,6 +14657,7 @@ fn update_minimap(
             &mut commands,
             map_entity,
             transform.translation,
+            center,
             size,
             color,
         );
@@ -13744,19 +14668,19 @@ fn update_minimap(
             &mut commands,
             map_entity,
             transform.translation,
+            center,
             size,
             color,
         );
     }
-    if let Ok(transform) = player.single() {
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            7.0,
-            Color::srgb(0.20, 0.92, 0.46),
-        );
-    }
+    spawn_minimap_dot(
+        &mut commands,
+        map_entity,
+        center,
+        center,
+        7.0,
+        Color::srgb(0.20, 0.92, 0.46),
+    );
 }
 
 fn update_objective_compass_hud(
@@ -13857,10 +14781,11 @@ fn spawn_minimap_dot(
     commands: &mut Commands,
     map_entity: Entity,
     world_position: Vec3,
+    center: Vec3,
     size: f32,
     color: Color,
 ) {
-    let position = minimap_position(world_position);
+    let position = minimap_position(world_position, center);
     let Ok(mut map_entity_commands) = commands.get_entity(map_entity) else {
         return;
     };
@@ -13881,9 +14806,11 @@ fn spawn_minimap_dot(
     });
 }
 
-fn minimap_position(world_position: Vec3) -> Vec2 {
-    let x = ((world_position.x - WORLD_MIN_X) / (WORLD_MAX_X - WORLD_MIN_X)).clamp(0.0, 1.0);
-    let z = ((world_position.z - WORLD_MIN_Z) / (WORLD_MAX_Z - WORLD_MIN_Z)).clamp(0.0, 1.0);
+fn minimap_position(world_position: Vec3, center: Vec3) -> Vec2 {
+    let x =
+        (0.5 + (world_position.x - center.x) / (MINIMAP_VISIBLE_RADIUS_X * 2.0)).clamp(0.0, 1.0);
+    let z =
+        (0.5 + (world_position.z - center.z) / (MINIMAP_VISIBLE_RADIUS_Z * 2.0)).clamp(0.0, 1.0);
     Vec2::new(
         MINIMAP_MAP_LEFT + x * (MINIMAP_WIDTH - MINIMAP_MAP_LEFT - MINIMAP_MAP_RIGHT),
         MINIMAP_MAP_TOP + z * (MINIMAP_HEIGHT - MINIMAP_MAP_TOP - MINIMAP_MAP_BOTTOM),
@@ -14188,7 +15115,12 @@ mod tests {
         assert!(!text.contains(&progress.title));
         assert!(text.starts_with("Q73%"));
         assert!(text.contains("B>C>S>[R]>K"));
-        assert!(text.contains("Altar 21m NE"));
+        let altar = chapter_world_layout(progress.chapter_id()).altar;
+        assert!(text.contains(&format!(
+            "Altar {:.0}m {}",
+            flat_distance(Vec3::ZERO, altar),
+            compass_direction(Vec3::ZERO, altar)
+        )));
         assert!(text.contains("Ritual"));
         assert!(text.contains("2/3"));
         assert!(!text.contains("Claim the final reliquary seal"));
@@ -15342,13 +16274,18 @@ mod tests {
             phase: ChapterPhase::Sanctum,
             ..default()
         };
+        let layout = chapter_world_layout(cache.chapter_id());
 
         assert_eq!(
             chapter_navigation_hint(&cache, &zone, Vec3::ZERO),
-            "Cache 10m NW"
+            format!(
+                "Cache {:.0}m {}",
+                flat_distance(Vec3::ZERO, layout.cache),
+                compass_direction(Vec3::ZERO, layout.cache)
+            )
         );
         assert_eq!(
-            chapter_navigation_hint(&altar, &zone, Vec3::new(6.0, 0.0, -20.5)),
+            chapter_navigation_hint(&altar, &zone, layout.altar),
             "Altar 0m here"
         );
         assert_eq!(
@@ -15375,12 +16312,18 @@ mod tests {
             ..default()
         };
 
+        let layout = chapter_world_layout(cache.chapter_id());
         let cache_display = objective_compass_display(&cache, Vec3::ZERO).unwrap();
-        assert_eq!(cache_display.direction, "NW");
-        assert_eq!(cache_display.detail, "MAIN 10m Cache");
-        assert!(cache_display.detail.len() <= 16);
+        assert_eq!(
+            cache_display.direction,
+            compass_direction(Vec3::ZERO, layout.cache)
+        );
+        assert_eq!(
+            cache_display.detail,
+            format!("MAIN {:.0}m Cache", flat_distance(Vec3::ZERO, layout.cache))
+        );
 
-        let altar_display = objective_compass_display(&altar, Vec3::new(6.0, 0.0, -20.5)).unwrap();
+        let altar_display = objective_compass_display(&altar, layout.altar).unwrap();
         assert_eq!(altar_display.direction, "HERE");
         assert_eq!(altar_display.detail, "MAIN 0m Altar");
 
@@ -17671,21 +18614,54 @@ mod tests {
     }
 
     #[test]
-    fn minimap_projection_clamps_to_panel_bounds() {
+    fn minimap_projection_keeps_player_at_panel_center() {
+        let center = Vec3::new(384.0, 0.0, -672.0);
+
         assert_eq!(
-            minimap_position(Vec3::new(WORLD_MIN_X, 0.0, WORLD_MIN_Z)),
+            minimap_position(center, center),
+            Vec2::new(
+                (MINIMAP_MAP_LEFT + MINIMAP_WIDTH - MINIMAP_MAP_RIGHT) * 0.5,
+                (MINIMAP_MAP_TOP + MINIMAP_HEIGHT - MINIMAP_MAP_BOTTOM) * 0.5
+            )
+        );
+    }
+
+    #[test]
+    fn minimap_projection_maps_local_edges_and_clamps_distant_markers() {
+        let center = Vec3::new(100.0, 0.0, -200.0);
+
+        assert_eq!(
+            minimap_position(
+                center + Vec3::new(-MINIMAP_VISIBLE_RADIUS_X, 0.0, -MINIMAP_VISIBLE_RADIUS_Z),
+                center
+            ),
             Vec2::new(MINIMAP_MAP_LEFT, MINIMAP_MAP_TOP)
         );
         assert_eq!(
-            minimap_position(Vec3::new(WORLD_MAX_X, 0.0, WORLD_MAX_Z)),
+            minimap_position(
+                center + Vec3::new(MINIMAP_VISIBLE_RADIUS_X, 0.0, MINIMAP_VISIBLE_RADIUS_Z),
+                center
+            ),
             Vec2::new(
                 MINIMAP_WIDTH - MINIMAP_MAP_RIGHT,
                 MINIMAP_HEIGHT - MINIMAP_MAP_BOTTOM
             )
         );
         assert_eq!(
-            minimap_position(Vec3::new(999.0, 0.0, -999.0)),
+            minimap_position(center + Vec3::new(999.0, 0.0, -999.0), center),
             Vec2::new(MINIMAP_WIDTH - MINIMAP_MAP_RIGHT, MINIMAP_MAP_TOP)
+        );
+    }
+
+    #[test]
+    fn minimap_projection_is_translation_invariant() {
+        let center = Vec3::new(-48.0, 0.0, 96.0);
+        let marker = center + Vec3::new(19.0, 0.0, -23.0);
+        let translation = Vec3::new(8_192.0, 17.0, -16_384.0);
+
+        assert_eq!(
+            minimap_position(marker, center),
+            minimap_position(marker + translation, center + translation)
         );
     }
 
@@ -18427,10 +19403,10 @@ mod tests {
     }
 
     #[test]
-    fn main_menu_uses_concept_art_background_with_readability_scrim() {
+    fn main_menu_uses_generated_reliquary_background_with_readability_scrim() {
         assert_eq!(
             main_menu_background_image_path(),
-            "images/generated/bevy-open-arpg-concept.png"
+            "images/generated/ui/main-menu-reliquary-v2.png"
         );
         assert!(main_menu_background_image_path().ends_with(".png"));
         assert!(main_menu_scrim_alpha() >= 0.55);

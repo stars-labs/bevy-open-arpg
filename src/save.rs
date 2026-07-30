@@ -5,7 +5,7 @@ use crate::{
     challenge::{ChallengeProgress, ChapterChallenges},
     chapter::{ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind},
     companion::{CompanionBond, CompanionStance},
-    dungeon::{Breakable, Interactable},
+    dungeon::{Breakable, Interactable, chapter_world_position},
     feedback::CombatEvent,
     lore::{LoreEntryId, LoreJournal},
     mastery::ChapterMastery,
@@ -31,6 +31,7 @@ use std::fs;
 use std::path::Path;
 
 const SAVE_PATH: &str = "saves/slot1.ron";
+const CURRENT_SAVE_VERSION: u32 = 2;
 
 #[derive(Resource, Debug, Default)]
 pub struct PendingLoadGame {
@@ -986,7 +987,7 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
         .single()
         .map_err(|_| "expected exactly one player surge".to_string())?;
     Ok(SaveGame {
-        version: 1,
+        version: CURRENT_SAVE_VERSION,
         stats: SaveStats {
             kills: inputs.stats.kills,
             gold: inputs.stats.gold,
@@ -1293,7 +1294,7 @@ fn apply_save(
     resources: ApplyResources,
     queries: ApplyQueries,
 ) -> Result<(), String> {
-    if save.version != 1 {
+    if !(1..=CURRENT_SAVE_VERSION).contains(&save.version) {
         return Err(format!("unsupported save version {}", save.version));
     }
     let (
@@ -1479,9 +1480,21 @@ fn apply_save(
     if !save.story.is_empty() {
         resources.story.restore(save.story.clone());
     }
-    apply_interactable_save(&save.interactables, queries.interactables);
-    apply_breakable_save(&save.breakables, queries.breakables, queries.commands);
-    transform.translation = Vec3::from_array(save.player.position);
+    apply_interactable_save(
+        &save.interactables,
+        queries.interactables,
+        save.version,
+        save.chapter.chapter,
+    );
+    apply_breakable_save(
+        &save.breakables,
+        queries.breakables,
+        queries.commands,
+        save.version,
+        save.chapter.chapter,
+    );
+    transform.translation =
+        saved_world_position(save.version, save.chapter.chapter, save.player.position);
     health.current = save
         .player
         .health_current
@@ -1531,7 +1544,11 @@ fn apply_save(
     codex.restore(save.player.legendary_codex.clone());
     backfill_codex_from_items(&mut codex, &equipment, &inventory);
     codex.restore_attunement(save.player.legendary_codex_attuned);
-    death_ward.checkpoint = Vec3::from_array(save.player.death_checkpoint);
+    death_ward.checkpoint = saved_world_position(
+        save.version,
+        save.chapter.chapter,
+        save.player.death_checkpoint,
+    );
     death_ward.max_revives = save.player.max_revives.max(1);
     death_ward.revives_used = save.player.revives_used.min(death_ward.max_revives);
     death_ward.gold_penalty = save.player.revive_gold_penalty;
@@ -1587,7 +1604,7 @@ fn apply_save(
     town_portal.return_position = save
         .player
         .town_portal_return_position
-        .map(Vec3::from_array);
+        .map(|position| saved_world_position(save.version, save.chapter.chapter, position));
     if save.player.evade_cooldown_secs > 0.0 {
         evade.cooldown_secs = save.player.evade_cooldown_secs;
     }
@@ -1692,14 +1709,30 @@ fn apply_journal_save(entries: &[LoreEntryId], journal: &mut LoreJournal) {
         .unwrap_or_default();
 }
 
-fn apply_interactable_save(saves: &[SaveInteractable], interactables: &mut LoadInteractableQuery) {
+fn saved_world_position(version: u32, chapter: ChapterId, position: [f32; 3]) -> Vec3 {
+    let position = Vec3::from_array(position);
+    if version < CURRENT_SAVE_VERSION {
+        chapter_world_position(chapter, position)
+    } else {
+        position
+    }
+}
+
+fn apply_interactable_save(
+    saves: &[SaveInteractable],
+    interactables: &mut LoadInteractableQuery,
+    version: u32,
+    chapter: ChapterId,
+) {
     for (transform, mut interactable) in interactables.iter_mut() {
         if interactable.reusable {
             continue;
         }
         if let Some(save) = saves.iter().find(|save| {
             save.kind == interactable.kind
-                && Vec3::from_array(save.position).distance(transform.translation) <= 0.1
+                && saved_world_position(version, chapter, save.position)
+                    .distance(transform.translation)
+                    <= 0.1
         }) {
             interactable.used = save.used;
         }
@@ -1710,15 +1743,17 @@ fn apply_breakable_save(
     saves: &Option<Vec<SaveBreakable>>,
     breakables: &mut LoadBreakableQuery,
     commands: &mut Commands,
+    version: u32,
+    chapter: ChapterId,
 ) {
     let Some(saves) = saves else {
         return;
     };
     for (entity, transform, mut health) in breakables.iter_mut() {
-        if let Some(save) = saves
-            .iter()
-            .find(|save| Vec3::from_array(save.position).distance(transform.translation) <= 0.1)
-        {
+        if let Some(save) = saves.iter().find(|save| {
+            saved_world_position(version, chapter, save.position).distance(transform.translation)
+                <= 0.1
+        }) {
             health.max = save.health_max.max(1.0);
             health.current = save.health_current.clamp(0.0, health.max);
         } else {
@@ -1802,6 +1837,27 @@ mod tests {
         pending.request();
         assert!(pending.take());
         assert!(!pending.take());
+    }
+
+    #[test]
+    fn legacy_save_positions_expand_into_the_open_world() {
+        let position = saved_world_position(1, ChapterId::AshenReliquary, [-8.0, 0.0, -5.5]);
+
+        assert_eq!(
+            position,
+            chapter_world_position(ChapterId::AshenReliquary, Vec3::new(-8.0, 0.0, -5.5))
+        );
+        assert!(position.x.abs() > 20.0);
+    }
+
+    #[test]
+    fn current_save_positions_are_not_scaled_twice() {
+        let position = [2.0, 0.0, -18.0];
+
+        assert_eq!(
+            saved_world_position(CURRENT_SAVE_VERSION, ChapterId::HollowBastion, position),
+            Vec3::from_array(position)
+        );
     }
 
     #[test]

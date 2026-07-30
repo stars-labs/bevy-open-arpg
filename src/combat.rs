@@ -3,7 +3,7 @@ use crate::{
     assets::GameAssets,
     bestiary::{Bestiary, bestiary_damage_multiplier},
     data::PlayerTuning,
-    dungeon::Breakable,
+    dungeon::{Breakable, DungeonLayout, clamp_dungeon_translation},
     enemy::{
         BossStagger, Chilled, Enemy, EnemyAffix, EnemyHitReact, EnemyTargetFocus,
         SEAL_WARDEN_WARD_VULNERABLE_SECS, SealWardenWard, Staggered, add_boss_stagger,
@@ -507,6 +507,7 @@ struct CombatInputs<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera3d>>,
     tuning: Res<'w, PlayerTuning>,
+    dungeon_layout: Res<'w, DungeonLayout>,
     bestiary: Res<'w, Bestiary>,
     assets: Res<'w, GameAssets>,
     stats: ResMut<'w, RunStats>,
@@ -713,9 +714,10 @@ fn player_attacks(
             DashRune::Cleanse => inputs.tuning.dash_distance,
             DashRune::Reap => inputs.tuning.dash_distance * 0.82,
         };
-        player_transform.translation += direction * dash_distance;
-        player_transform.translation.x = player_transform.translation.x.clamp(-11.5, 11.5);
-        player_transform.translation.z = player_transform.translation.z.clamp(-7.5, 7.5);
+        player_transform.translation = clamp_dungeon_translation(
+            &inputs.dungeon_layout,
+            player_transform.translation + direction * dash_distance,
+        );
         spawn_slash_vfx(
             &mut inputs.commands,
             &vfx,

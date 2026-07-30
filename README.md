@@ -14,6 +14,8 @@ The playable campaign has two connected chapters:
 - **Chapter I: The Ashen Reliquary** culminates in Malrec, Keeper of Ash.
 - **Chapter II: The Hollow Bastion** adds the Hollowbound vanguard, Choir reliquary, Vesper the Bell Warden, the Soul Font, and Nyxara the Hollow Matron.
 
+Each chapter anchors its main quest in a hand-authored origin region, then streams a deterministic procedural wilderness without a hard map edge. The world loads 48 m terrain chunks around the hero, unloads distant chunks, and recreates the same biome, rocks, deadwood, crystals, and ruins whenever a seed and chunk coordinate are revisited. The minimap is a player-centered local radar; the objective compass leads back to distant story landmarks.
+
 Continuing from Chapter I carries the hero's level, equipment, inventory, talents, runes, codex, gems, armory, potion upgrades, and companion into Chapter II. Completing Chapter II advances the difficulty and begins the next campaign cycle.
 
 ## Running
@@ -286,9 +288,9 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 
 - Breach the reliquary and defeat the first guard wave.
-- Recover three reliquary seal fragments by opening the sealed cache, slaying Seal Warden Vhal in the inner sanctum, and extinguishing the ember altar before Malrec can be summoned; each recovered seal pays gold and ember shards, with the final seal also granting affix essence.
+- Recover three reliquary seal fragments by opening the sealed cache, slaying Seal Warden Vhal beyond the northern pass, and extinguishing the ember altar before Malrec can be summoned; each recovered seal pays gold and ember shards, with the final seal also granting affix essence.
 - Track the Chapter I main quest as a five-step chain through breach, outer seal, Seal Warden, final seal, and Malrec in the HUD quest log.
-- Open the sealed reliquary cache to unlock the inner sanctum and release a guaranteed upgraded reward.
+- Open the sealed reliquary cache to break the mountain-pass seal and release a guaranteed upgraded reward.
 - Slay Seal Warden Vhal during the cult ambush, then extinguish the ember altar to restore health and potions before Malrec appears.
 - Activate the relic blade shrine for a temporary damage and movement buff.
 - Activate the gilded fortune shrine for temporary XP, gold, and magic-find drop boosts.
@@ -314,7 +316,7 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Earn Chapter Mastery on victory from challenges, bounty completion, recovered lore, full Valor stacks, Boss Break performance, Ashen Enrage denial, and legendary codex unlocks for gold, ember shards, and endgame affix essence; high-completion runs can reach Conqueror, while near-complete endgame clears can reach Paragon.
 - Gather gold, weapon drops, potions, XP, level upgrades, Ember Paragon ranks after the chapter level cap, and item affixes.
 - Fight alongside a Reliquary Sentinel companion that follows you, automatically strikes nearby enemies, earns XP from kills, and gains ranks for higher damage; cycle Vanguard, Guardian, and Seeker stances for damage, barrier support, or wider hunting and faster companion growth; press `H` to fire a stance-specific command pulse: Vanguard bursts nearby enemies, Guardian grants barrier while striking close threats, and Seeker sweeps a wider hunting radius; rank 3 completes the Sentinel Veteran challenge and milestone.
-- Hunt a roaming reliquary champion pack with a multi-affix leader and elite guards in the outer halls; breaking the full pack grants gold, ember shards, affix essence, a visible upgraded gear cache, the Champion Breaker challenge, and the Champion Pack milestone.
+- Hunt a roaming reliquary champion pack with a multi-affix leader and elite guards across the western wilds; breaking the full pack grants gold, ember shards, affix essence, a visible upgraded gear cache, the Champion Breaker challenge, and the Champion Pack milestone.
 - Smash every reliquary urn and offering box for small gold, potion, and fury rewards; clearing them all completes Breaker.
 - Earn better loot from elites and a guaranteed legendary-or-better reward from Malrec when the table contains one; Malrec's final hoard is claimed immediately before the victory transition, and his death grants difficulty-scaled Malrec Soul Sigils that can be spent at the quartermaster on Trophy Caches.
 - Chase down the reliquary treasure imp before it escapes to earn a large gold, ember-shard, upgraded loot cache, Treasure Hunter challenge credit, an opened Treasure Vault material cache, and the Treasure Fiend and Treasure Vault milestones.

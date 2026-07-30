@@ -6,6 +6,7 @@ use crate::{
         InteractableUsed, SpawnBoss, SpawnSanctumWave,
     },
     data::{EnemyAttackKind, EnemyCatalog, EnemyTuning},
+    dungeon::{chapter_world_position, clamp_world_translation},
     feedback::{CombatEvent, FloatingCombatTextEvent, ScreenShakeEvent},
     not_paused,
     obelisk::SpawnObeliskWave,
@@ -650,9 +651,8 @@ fn spawn_enemies(
     modifier: Res<ChapterModifier>,
     active_chapter: Res<ActiveChapter>,
 ) {
-    // Keep the guard wave ahead of the player spawn (0, 0, 4): an ARPG opener
-    // should give a few seconds to read the room before first contact, not
-    // spawn a marksman on top of the player.
+    // These are authored in chapter-local coordinates, then expanded into the
+    // shared world so each chapter keeps the same readable opening encounter.
     let spawns = [
         ("skeleton", Vec3::new(-6.0, 0.0, -2.5), vec![]),
         (
@@ -664,7 +664,7 @@ fn spawn_enemies(
         ("skeleton", Vec3::new(7.0, 0.0, -2.0), vec![]),
     ];
 
-    for (base_id, position, affixes) in spawns {
+    for (base_id, local_position, affixes) in spawns {
         let id = chapter_enemy_id(active_chapter.0, base_id);
         let Some(tuning) = catalog.get(id) else {
             continue;
@@ -676,7 +676,7 @@ fn spawn_enemies(
             EnemySpawnSpec {
                 scene,
                 tuning,
-                position,
+                position: chapter_world_position(active_chapter.0, local_position),
                 difficulty: difficulty.current,
                 modifier: *modifier,
                 affixes,
@@ -690,7 +690,7 @@ fn spawn_enemies(
         &catalog,
         difficulty.current,
         *modifier,
-        Vec3::new(-8.5, 0.0, 5.6),
+        chapter_world_position(active_chapter.0, Vec3::new(-8.5, 0.0, 5.6)),
     );
 
     spawn_champion_pack(
@@ -704,10 +704,10 @@ fn spawn_enemies(
     combat_events.write(CombatEvent {
         text: match active_chapter.0 {
             ChapterId::AshenReliquary => {
-                "A reliquary champion pack patrols the outer halls".to_string()
+                "A reliquary champion pack patrols the ashen wilds".to_string()
             }
             ChapterId::HollowBastion => {
-                "A Hollow Choir champion pack guards the bastion crossing".to_string()
+                "A Hollow Choir champion pack patrols the bastion moor".to_string()
             }
         },
     });
@@ -748,7 +748,7 @@ fn spawn_champion_pack(
     modifier: ChapterModifier,
     chapter: ChapterId,
 ) {
-    for (base_id, position, affixes) in champion_pack_spawns() {
+    for (base_id, local_position, affixes) in champion_pack_spawns() {
         let id = chapter_enemy_id(chapter, &base_id);
         let Some(tuning) = catalog.get(id) else {
             continue;
@@ -760,7 +760,7 @@ fn spawn_champion_pack(
             EnemySpawnSpec {
                 scene,
                 tuning,
-                position,
+                position: chapter_world_position(chapter, local_position),
                 difficulty,
                 modifier,
                 affixes,
@@ -805,7 +805,7 @@ fn spawn_sanctum_wave(
     mut combat_events: MessageWriter<CombatEvent>,
 ) {
     for _ in wave_events.read() {
-        for (base_id, position, affixes) in [
+        for (base_id, local_position, affixes) in [
             ("ashen_marksman", Vec3::new(-4.0, 0.0, -15.0), vec![]),
             (
                 "seal_warden",
@@ -837,7 +837,7 @@ fn spawn_sanctum_wave(
                 EnemySpawnSpec {
                     scene,
                     tuning,
-                    position,
+                    position: chapter_world_position(resources.active_chapter.0, local_position),
                     difficulty: resources.difficulty.current,
                     modifier: *resources.modifier,
                     affixes,
@@ -1127,7 +1127,7 @@ fn spawn_boss(
         let Some(tuning) = catalog.get(boss_id) else {
             continue;
         };
-        let boss_position = Vec3::new(0.0, 0.0, -20.0);
+        let boss_position = chapter_world_position(active_chapter.0, Vec3::new(0.0, 0.0, -20.0));
         commands.spawn((
             WorldAssetRoot(assets.boss_summon_portal.clone()),
             Transform::from_translation(boss_position).with_scale(Vec3::splat(1.18)),
@@ -1187,27 +1187,23 @@ fn spawn_boss(
 }
 
 fn spawn_nemesis(
-    mut commands: Commands,
+    mut resources: EnemySpawnResources,
     mut events: MessageReader<SpawnNemesis>,
     mut combat_events: MessageWriter<CombatEvent>,
-    assets: Res<GameAssets>,
-    catalog: Res<EnemyCatalog>,
-    difficulty: Res<DifficultySettings>,
-    modifier: Res<ChapterModifier>,
 ) {
     for event in events.read() {
-        let Some(tuning) = catalog.get("nemesis") else {
+        let Some(tuning) = resources.catalog.get("nemesis") else {
             continue;
         };
         spawn_enemy(
-            &mut commands,
-            &assets,
+            &mut resources.commands,
+            &resources.assets,
             EnemySpawnSpec {
-                scene: assets.skeleton.clone(),
+                scene: resources.assets.skeleton.clone(),
                 tuning,
-                position: nemesis_spawn_position(event.checkpoint),
-                difficulty: difficulty.current,
-                modifier: *modifier,
+                position: nemesis_spawn_position(resources.active_chapter.0, event.checkpoint),
+                difficulty: resources.difficulty.current,
+                modifier: *resources.modifier,
                 affixes: nemesis_affixes(),
             },
         );
@@ -1558,11 +1554,8 @@ fn nemesis_affixes() -> Vec<EnemyAffix> {
     ]
 }
 
-fn nemesis_spawn_position(checkpoint: Vec3) -> Vec3 {
-    let mut position = checkpoint + Vec3::new(2.6, 0.0, -1.8);
-    position.x = position.x.clamp(-10.8, 10.8);
-    position.z = position.z.clamp(-6.8, 6.8);
-    position
+fn nemesis_spawn_position(chapter: ChapterId, checkpoint: Vec3) -> Vec3 {
+    clamp_world_translation(checkpoint + chapter_world_position(chapter, Vec3::new(2.6, 0.0, -1.8)))
 }
 
 fn display_name_with_affixes(base: &str, affixes: &[EnemyAffix]) -> String {
@@ -1624,8 +1617,7 @@ fn enemy_ai(
             hit_react_power =
                 (1.0 - hit_react.timer.elapsed_secs() / hit_react.duration_secs).clamp(0.0, 1.0);
             transform.translation += enemy_hit_recoil_step(&hit_react, time.delta_secs());
-            transform.translation.x = transform.translation.x.clamp(-11.5, 11.5);
-            transform.translation.z = transform.translation.z.clamp(-7.5, 7.5);
+            transform.translation = clamp_world_translation(transform.translation);
             if hit_react.timer.is_finished()
                 && let Ok(mut entity_commands) = commands.get_entity(entity)
             {
@@ -1719,7 +1711,7 @@ fn enemy_ai(
                 }
                 TreasureFiendState::Escaped => {
                     feedback.combat_events.write(CombatEvent {
-                        text: "The treasure imp escaped into the ash vents".to_string(),
+                        text: "The treasure imp escaped beyond the valley".to_string(),
                     });
                     if let Ok(mut entity_commands) = commands.get_entity(entity) {
                         entity_commands.try_despawn();
@@ -1742,8 +1734,7 @@ fn enemy_ai(
                 * plan.speed_multiplier
                 * chilled_slow_multiplier(chilled)
                 * time.delta_secs();
-            transform.translation.x = transform.translation.x.clamp(-11.5, 11.5);
-            transform.translation.z = transform.translation.z.clamp(-7.5, 7.5);
+            transform.translation = clamp_world_translation(transform.translation);
             if plan.facing_direction.length_squared() > 0.0 {
                 animation.facing_yaw = plan.facing_direction.x.atan2(plan.facing_direction.z);
                 moved = true;
@@ -2359,8 +2350,7 @@ fn handle_treasure_fiend_ai(
     let direction = treasure_flee_direction(flat_to_player);
     transform.translation +=
         direction * enemy.move_speed * chilled_slow_multiplier(chilled) * time.delta_secs();
-    transform.translation.x = transform.translation.x.clamp(-11.5, 11.5);
-    transform.translation.z = transform.translation.z.clamp(-7.5, 7.5);
+    transform.translation = clamp_world_translation(transform.translation);
     if direction.length_squared() > 0.0 {
         transform.rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
     }
@@ -4597,11 +4587,20 @@ mod tests {
     #[test]
     fn nemesis_spawns_near_checkpoint_with_elite_affixes() {
         let checkpoint = Vec3::new(10.4, 0.0, -6.4);
-        let position = nemesis_spawn_position(checkpoint);
+        let offset = chapter_world_position(ChapterId::AshenReliquary, Vec3::new(2.6, 0.0, -1.8));
+        let position = nemesis_spawn_position(ChapterId::AshenReliquary, checkpoint);
         let affixes = nemesis_affixes();
 
-        assert!(position.x <= 10.8);
-        assert!(position.z >= -6.8);
+        assert_eq!(position, checkpoint + offset);
+        assert!(
+            nemesis_spawn_position(ChapterId::HollowBastion, checkpoint).x < checkpoint.x,
+            "the mirrored chapter should spawn the nemesis on the opposite flank"
+        );
+        let distant_checkpoint = Vec3::new(10_000.0, 0.0, -10_000.0);
+        assert_eq!(
+            nemesis_spawn_position(ChapterId::AshenReliquary, distant_checkpoint),
+            clamp_world_translation(distant_checkpoint + offset)
+        );
         assert!(affixes.contains(&EnemyAffix::Frenzied));
         assert!(affixes.contains(&EnemyAffix::Vampiric));
         assert!(affixes.contains(&EnemyAffix::Jailer));
