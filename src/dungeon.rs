@@ -1306,7 +1306,7 @@ fn attach_objective_markers(
     let ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.16, 0.74, 1.0, 0.42),
         emissive: Color::srgb(0.04, 0.28, 0.52).into(),
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         ..default()
     });
 

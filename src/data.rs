@@ -166,6 +166,12 @@ mod tests {
         let stalker = catalog.get("bone_stalker").expect("fast stalker");
         let marksman = catalog.get("ashen_marksman").expect("ranged marksman");
         let brute = catalog.get("reliquary_brute").expect("heavy brute");
+        let hollow_stalker = catalog
+            .get("hollow_stalker")
+            .expect("chapter two fast stalker");
+        let choir_marksman = catalog
+            .get("choir_marksman")
+            .expect("chapter two ranged marksman");
 
         assert_eq!(stalker.attack_kind, EnemyAttackKind::Melee);
         assert!(stalker.move_speed > guard.move_speed + 0.6);
@@ -178,6 +184,13 @@ mod tests {
         assert_eq!(brute.attack_kind, EnemyAttackKind::Shockwave);
         assert!(brute.max_health > guard.max_health * 1.8);
         assert!(brute.attack_damage > marksman.attack_damage);
+
+        assert_eq!(hollow_stalker.attack_kind, EnemyAttackKind::Melee);
+        assert!(hollow_stalker.move_speed > 3.0);
+        assert_eq!(hollow_stalker.model, "hollow_stalker.glb");
+        assert_eq!(choir_marksman.attack_kind, EnemyAttackKind::Projectile);
+        assert!(choir_marksman.attack_range > marksman.attack_range);
+        assert_eq!(choir_marksman.model, "choir_marksman.glb");
     }
 
     #[test]
@@ -379,7 +392,7 @@ mod tests {
 
         assert_eq!(warden.display_name, "Seal Warden Vhal");
         assert_eq!(warden.attack_kind, EnemyAttackKind::Projectile);
-        assert_eq!(warden.model, "cultist.glb");
+        assert_eq!(warden.model, "seal_warden.glb");
         assert!(warden.max_health > cultist.max_health * 2.0);
         assert!(warden.gold_min > cultist.gold_min);
         assert!(warden.xp_reward > cultist.xp_reward);

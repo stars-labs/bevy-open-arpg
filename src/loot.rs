@@ -3057,7 +3057,7 @@ fn spawn_death_remains(
     let material = materials.add(StandardMaterial {
         base_color: style.color.with_alpha(style.alpha),
         emissive: style.emissive.into(),
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         perceptual_roughness: 0.92,
         ..default()
     });
@@ -3279,7 +3279,7 @@ fn spawn_loot_drop(
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color.with_alpha(loot_ground_ring_alpha(&weapon.quality)),
                 emissive: color.into(),
-                alpha_mode: AlphaMode::Blend,
+                alpha_mode: AlphaMode::Opaque,
                 ..default()
             })),
             Transform::from_xyz(0.0, 0.025, 0.0).with_scale(ground_ring.base_scale),
@@ -3301,7 +3301,7 @@ fn spawn_loot_drop(
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: color.with_alpha(0.34),
                     emissive: color.into(),
-                    alpha_mode: AlphaMode::Blend,
+                    alpha_mode: AlphaMode::Opaque,
                     ..default()
                 })),
                 Transform::from_xyz(0.0, beam_height * 0.5 + 0.16, 0.0),

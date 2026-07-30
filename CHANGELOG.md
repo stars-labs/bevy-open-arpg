@@ -16,6 +16,11 @@
 
 ## Unreleased
 - Replaced the enclosed arena with an unbounded, deterministic wilderness that streams 48 m chunks around the player, unloads distant terrain, recreates seeded biome dressing on return, preserves an authored main-quest origin region, and migrates movement, fog, navigation, local-radar UI, actors, objectives, and legacy saves away from fixed world bounds.
+- Added deterministic wilderness encounters that recreate chapter-specific formations from the world seed and chunk coordinate, scale pack size, affixes, and distance pressure with difficulty, and unload with their home chunks.
+- Reworked both chapter rosters around distinct vanguard, skirmisher, caster, marksman, juggernaut, warden, treasure, nemesis, and boss roles with role-specific movement and signature attacks. Difficulty now also scales movement speed, attack cadence, projectile speed, warning windows, signature frequency, and wilderness pack pressure instead of only health and damage.
+- Added three signature skills per boss: Malrec uses Ashen Guillotine, Crucible Rings, and Keeper's Cage; Nyxara uses Soul Fissure Choir, Soul Lance, and Hollow Crescendo. Higher difficulties accelerate their skill cycles, and stagger interrupts active boss hazards.
+- Added `tools/blender/generate_enemy_roster.py` as a reproducible Blender pipeline for the expanded enemy silhouettes and boss-skill VFX.
+- Replaced runtime transparent PBR effects with opaque WebGPU-safe materials, aligned boss hazard hit areas with their Blender telegraphs, and queued capped wilderness encounters for retry instead of dropping them.
 - Reworked the main menu and core HUD, inventory, character, and talent interfaces with generated Reliquary artwork and a clearer icon-driven hierarchy.
 - Added Chapter II, The Hollow Bastion, with a distinct enemy roster, Bell Warden encounter, Soul Font ritual, Nyxara boss fight, lore, story beats, HUD guidance, and six Blender-generated GLB assets with named hit bones.
 - Added campaign chapter transitions that carry the hero build and companion forward, persist active chapter identity in saves, and advance difficulty only after Chapter II.

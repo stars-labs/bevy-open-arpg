@@ -9,8 +9,22 @@ fn chapter_runtime_assets_exist() {
         "assets/audio/ambient_theme.wav",
         "assets/models/hero.glb",
         "assets/models/skeleton.glb",
+        "assets/models/ashbone_guard.glb",
         "assets/models/cultist.glb",
         "assets/models/butcher.glb",
+        "assets/models/bone_stalker.glb",
+        "assets/models/ashen_marksman.glb",
+        "assets/models/treasure_imp.glb",
+        "assets/models/seal_warden.glb",
+        "assets/models/keeper.glb",
+        "assets/models/nemesis.glb",
+        "assets/models/hollow_thrall.glb",
+        "assets/models/hollow_stalker.glb",
+        "assets/models/choir_acolyte.glb",
+        "assets/models/choir_marksman.glb",
+        "assets/models/hollow_reaver.glb",
+        "assets/models/bell_warden.glb",
+        "assets/models/hollow_matron.glb",
         "assets/models/sword.glb",
         "assets/models/chest.glb",
         "assets/models/altar.glb",
@@ -57,7 +71,13 @@ fn chapter_runtime_assets_exist() {
         "assets/models/loot_prism.glb",
         "assets/models/objective_sigil.glb",
         "assets/models/ember_vent.glb",
+        "assets/models/soul_font.glb",
+        "assets/models/soul_fissure.glb",
         "assets/models/boss_summon_portal.glb",
+        "assets/models/keeper_cleaver_wave.glb",
+        "assets/models/keeper_chain_cage.glb",
+        "assets/models/matron_soul_lance.glb",
+        "assets/models/matron_crescendo.glb",
         "assets/models/affix_ember_aura.glb",
         "assets/models/affix_arcane_aura.glb",
         "assets/models/affix_frost_aura.glb",
@@ -89,6 +109,22 @@ fn chapter_runtime_assets_exist() {
         "assets/images/generated/ui/talent-sigils-reliquary.png",
     ] {
         assert!(Path::new(path).exists(), "missing runtime asset: {path}");
+    }
+}
+
+#[test]
+fn webgpu_runtime_avoids_transparent_pbr_materials() {
+    for entry in fs::read_dir("src").unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("AlphaMode::Blend"),
+            "{} can trigger the unsupported pbr_alpha_blend pipeline",
+            path.display()
+        );
     }
 }
 
@@ -223,8 +259,22 @@ fn character_models_keep_named_hit_bones() {
     for path in [
         "assets/models/hero.glb",
         "assets/models/skeleton.glb",
+        "assets/models/ashbone_guard.glb",
         "assets/models/cultist.glb",
         "assets/models/butcher.glb",
+        "assets/models/bone_stalker.glb",
+        "assets/models/ashen_marksman.glb",
+        "assets/models/treasure_imp.glb",
+        "assets/models/seal_warden.glb",
+        "assets/models/keeper.glb",
+        "assets/models/nemesis.glb",
+        "assets/models/hollow_thrall.glb",
+        "assets/models/hollow_stalker.glb",
+        "assets/models/choir_acolyte.glb",
+        "assets/models/choir_marksman.glb",
+        "assets/models/hollow_reaver.glb",
+        "assets/models/bell_warden.glb",
+        "assets/models/hollow_matron.glb",
     ] {
         let bytes = fs::read(path).unwrap();
         for bone in [
@@ -233,15 +283,80 @@ fn character_models_keep_named_hit_bones() {
             "hit_weapon",
             "hit_left",
             "hit_right",
-            "hit_head_contact_zone",
-            "hit_chest_contact_zone",
-            "hit_weapon_contact_zone",
         ] {
             assert!(
                 contains_ascii(&bytes, bone),
                 "{path} is missing Blender hit bone {bone}"
             );
         }
+    }
+}
+
+#[test]
+fn generated_enemy_roster_keeps_contact_zones_and_effect_sockets() {
+    for path in [
+        "assets/models/ashbone_guard.glb",
+        "assets/models/bone_stalker.glb",
+        "assets/models/ashen_marksman.glb",
+        "assets/models/treasure_imp.glb",
+        "assets/models/seal_warden.glb",
+        "assets/models/keeper.glb",
+        "assets/models/nemesis.glb",
+        "assets/models/hollow_stalker.glb",
+        "assets/models/choir_marksman.glb",
+        "assets/models/bell_warden.glb",
+    ] {
+        let bytes = fs::read(path).unwrap();
+        for marker in [
+            "hit_head_marker",
+            "hit_chest_marker",
+            "hit_weapon_marker",
+            "hit_left_marker",
+            "hit_right_marker",
+            "hit_head_contact_zone",
+            "hit_chest_contact_zone",
+            "hit_weapon_contact_zone",
+            "hit_left_contact_zone",
+            "hit_right_contact_zone",
+            "socket_weapon",
+            "socket_cast",
+            "socket_head_fx",
+            "socket_chest_fx",
+            "socket_ground_fx",
+        ] {
+            assert!(
+                contains_ascii(&bytes, marker),
+                "{path} is missing generated combat marker {marker}"
+            );
+        }
+    }
+}
+
+#[test]
+fn boss_skill_models_keep_readable_effect_nodes() {
+    for (path, marker) in [
+        (
+            "assets/models/keeper_cleaver_wave.glb",
+            "keeper cleaver wave core",
+        ),
+        (
+            "assets/models/keeper_chain_cage.glb",
+            "keeper chain cage ring",
+        ),
+        (
+            "assets/models/matron_soul_lance.glb",
+            "matron soul lance core",
+        ),
+        (
+            "assets/models/matron_crescendo.glb",
+            "matron crescendo crown",
+        ),
+    ] {
+        let bytes = fs::read(path).unwrap();
+        assert!(
+            contains_ascii(&bytes, marker),
+            "{path} is missing expected Boss ability marker {marker}"
+        );
     }
 }
 

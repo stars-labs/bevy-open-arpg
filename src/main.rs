@@ -1,5 +1,6 @@
 mod assets;
 mod bestiary;
+mod boss;
 mod bounty;
 mod challenge;
 mod chapter;
@@ -95,6 +96,7 @@ use bevy::sprite_render::SpriteRenderPlugin;
 use bevy::ui_render::{GlobalUiDebugOptions, UiRenderPlugin};
 use bevy::window::{ExitCondition, WindowCloseRequested};
 use bevy::winit::WinitPlugin;
+use boss::BossAbilitiesPlugin;
 use bounty::BountyPlugin;
 use challenge::ChallengePlugin;
 use chapter::{ActiveChapter, ChapterId, ChapterPlugin, ChapterProgress};
@@ -313,6 +315,60 @@ impl Difficulty {
             Self::Nightmare => 1.3,
             Self::Hell => 1.7,
             Self::Torment => 2.15,
+        }
+    }
+
+    /// Higher difficulties make enemies more decisive instead of only making
+    /// their health bars larger.
+    pub fn enemy_speed_multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Nightmare => 1.06,
+            Self::Hell => 1.12,
+            Self::Torment => 1.18,
+        }
+    }
+
+    pub fn enemy_attack_cooldown_multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Nightmare => 0.92,
+            Self::Hell => 0.84,
+            Self::Torment => 0.76,
+        }
+    }
+
+    pub fn enemy_projectile_speed_multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Nightmare => 1.08,
+            Self::Hell => 1.16,
+            Self::Torment => 1.25,
+        }
+    }
+
+    pub fn enemy_warning_window_multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Nightmare => 0.96,
+            Self::Hell => 0.92,
+            Self::Torment => 0.88,
+        }
+    }
+
+    pub fn enemy_signature_interval(self) -> u32 {
+        match self {
+            Self::Normal => 4,
+            Self::Nightmare => 3,
+            Self::Hell | Self::Torment => 2,
+        }
+    }
+
+    pub fn wilderness_pack_bonus(self) -> usize {
+        match self {
+            Self::Normal => 0,
+            Self::Nightmare => 1,
+            Self::Hell | Self::Torment => 2,
         }
     }
 
@@ -792,6 +848,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     ));
     app.add_plugins((
         EnemyPlugin,
+        BossAbilitiesPlugin,
         CombatPlugin,
         FeedbackPlugin,
         RiftPlugin,
@@ -3044,6 +3101,30 @@ mod tests {
         assert!(
             Difficulty::Torment.enemy_health_multiplier()
                 > Difficulty::Normal.enemy_health_multiplier()
+        );
+        assert!(
+            Difficulty::Torment.enemy_speed_multiplier()
+                > Difficulty::Normal.enemy_speed_multiplier()
+        );
+        assert!(
+            Difficulty::Torment.enemy_attack_cooldown_multiplier()
+                < Difficulty::Normal.enemy_attack_cooldown_multiplier()
+        );
+        assert!(
+            Difficulty::Torment.enemy_projectile_speed_multiplier()
+                > Difficulty::Normal.enemy_projectile_speed_multiplier()
+        );
+        assert!(
+            Difficulty::Torment.enemy_warning_window_multiplier()
+                < Difficulty::Normal.enemy_warning_window_multiplier()
+        );
+        assert!(
+            Difficulty::Torment.enemy_signature_interval()
+                < Difficulty::Normal.enemy_signature_interval()
+        );
+        assert!(
+            Difficulty::Torment.wilderness_pack_bonus()
+                > Difficulty::Normal.wilderness_pack_bonus()
         );
         assert!(Difficulty::Nightmare.reward_multiplier() > Difficulty::Normal.reward_multiplier());
         assert!(Difficulty::Torment.reward_multiplier() > Difficulty::Hell.reward_multiplier());

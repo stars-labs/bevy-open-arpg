@@ -16,10 +16,12 @@ use crate::{
         PlayerHitReact, PlayerHitReactKind, apply_player_damage_with_evade, mitigated_damage,
         total_armor,
     },
+    procedural_world::{CHUNK_SIZE, CHUNK_UNLOAD_RADIUS},
     rift::SpawnRiftWave,
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Component)]
 pub struct Enemy {
@@ -54,8 +56,10 @@ fn chapter_enemy_id(chapter: ChapterId, base_id: &str) -> &str {
         return base_id;
     }
     match base_id {
-        "skeleton" | "bone_stalker" => "hollow_thrall",
-        "cultist" | "ashen_marksman" => "choir_acolyte",
+        "skeleton" => "hollow_thrall",
+        "bone_stalker" => "hollow_stalker",
+        "cultist" => "choir_acolyte",
+        "ashen_marksman" => "choir_marksman",
         "reliquary_brute" => "hollow_reaver",
         "seal_warden" => "bell_warden",
         "keeper" => "hollow_matron",
@@ -63,16 +67,80 @@ fn chapter_enemy_id(chapter: ChapterId, base_id: &str) -> &str {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EnemyCombatRole {
+    Vanguard,
+    Skirmisher,
+    Caster,
+    Marksman,
+    Juggernaut,
+    Warden,
+    Treasure,
+    Nemesis,
+    Boss,
+}
+
+pub fn enemy_combat_role(id: &str) -> EnemyCombatRole {
+    match id {
+        "bone_stalker" | "hollow_stalker" => EnemyCombatRole::Skirmisher,
+        "cultist" | "choir_acolyte" => EnemyCombatRole::Caster,
+        "ashen_marksman" | "choir_marksman" => EnemyCombatRole::Marksman,
+        "reliquary_brute" | "hollow_reaver" => EnemyCombatRole::Juggernaut,
+        "seal_warden" | "bell_warden" => EnemyCombatRole::Warden,
+        "treasure_imp" => EnemyCombatRole::Treasure,
+        "nemesis" => EnemyCombatRole::Nemesis,
+        "keeper" | "hollow_matron" => EnemyCombatRole::Boss,
+        _ => EnemyCombatRole::Vanguard,
+    }
+}
+
 fn enemy_scene(assets: &GameAssets, model: &str) -> Handle<WorldAsset> {
+    debug_assert!(
+        enemy_model_is_supported(model),
+        "enemy catalog references unmapped model {model}"
+    );
     match model {
+        "ashbone_guard.glb" => assets.ashbone_guard.clone(),
         "cultist.glb" => assets.cultist.clone(),
         "butcher.glb" => assets.butcher.clone(),
+        "bone_stalker.glb" => assets.bone_stalker.clone(),
+        "ashen_marksman.glb" => assets.ashen_marksman.clone(),
+        "treasure_imp.glb" => assets.treasure_imp.clone(),
+        "seal_warden.glb" => assets.seal_warden.clone(),
+        "keeper.glb" => assets.keeper.clone(),
+        "nemesis.glb" => assets.nemesis.clone(),
         "hollow_thrall.glb" => assets.hollow_thrall.clone(),
+        "hollow_stalker.glb" => assets.hollow_stalker.clone(),
         "choir_acolyte.glb" => assets.choir_acolyte.clone(),
+        "choir_marksman.glb" => assets.choir_marksman.clone(),
         "hollow_reaver.glb" => assets.hollow_reaver.clone(),
+        "bell_warden.glb" => assets.bell_warden.clone(),
         "hollow_matron.glb" => assets.hollow_matron.clone(),
         _ => assets.skeleton.clone(),
     }
+}
+
+fn enemy_model_is_supported(model: &str) -> bool {
+    matches!(
+        model,
+        "skeleton.glb"
+            | "ashbone_guard.glb"
+            | "cultist.glb"
+            | "butcher.glb"
+            | "bone_stalker.glb"
+            | "ashen_marksman.glb"
+            | "treasure_imp.glb"
+            | "seal_warden.glb"
+            | "keeper.glb"
+            | "nemesis.glb"
+            | "hollow_thrall.glb"
+            | "hollow_stalker.glb"
+            | "choir_acolyte.glb"
+            | "choir_marksman.glb"
+            | "hollow_reaver.glb"
+            | "bell_warden.glb"
+            | "hollow_matron.glb"
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +188,59 @@ impl EnemyAffix {
 
 #[derive(Component)]
 pub struct EnemyEntity;
+
+#[derive(Component, Debug)]
+struct EnemySkillCycle {
+    attacks: u32,
+    signature_interval: u32,
+}
+
+impl EnemySkillCycle {
+    fn new(difficulty: Difficulty) -> Self {
+        Self {
+            attacks: 0,
+            signature_interval: difficulty.enemy_signature_interval().max(1),
+        }
+    }
+
+    fn advance(&mut self) -> bool {
+        self.attacks = self.attacks.saturating_add(1);
+        self.attacks.is_multiple_of(self.signature_interval)
+    }
+}
+
+/// Marks an enemy that belongs to a streamed wilderness encounter.
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+pub struct WildernessEnemy {
+    pub chapter: ChapterId,
+    pub chunk_x: i64,
+    pub chunk_z: i64,
+}
+
+#[derive(Message, Debug, Clone, Copy)]
+pub struct SpawnWildernessEncounter {
+    pub chapter: ChapterId,
+    pub chunk_x: i64,
+    pub chunk_z: i64,
+    pub center: Vec3,
+    pub seed: u64,
+}
+
+#[derive(Resource, Default)]
+struct PendingWildernessEncounters {
+    events: VecDeque<SpawnWildernessEncounter>,
+}
+
+#[derive(Resource)]
+struct EnemyRuntimeVfx {
+    flat_box: Handle<Mesh>,
+    flat_disc: Handle<Mesh>,
+    impact_sphere: Handle<Mesh>,
+    projectile_sphere: Handle<Mesh>,
+    warning_materials: [Handle<StandardMaterial>; 3],
+    impact_materials: [Handle<StandardMaterial>; 3],
+    projectile_materials: HashMap<&'static str, Handle<StandardMaterial>>,
+}
 
 #[derive(Component)]
 struct EnemyAnimation {
@@ -577,6 +698,7 @@ type EnemyAiQuery<'w, 's> = Query<
         Option<&'static mut TreasureFiend>,
         Option<&'static mut EnemyHitReact>,
         Option<&'static mut EnemyAttackWarning>,
+        &'static mut EnemySkillCycle,
     ),
 >;
 type EnemyMotionVisualQuery<'w, 's> = Query<
@@ -610,12 +732,23 @@ struct EnemySpawnResources<'w, 's> {
     active_chapter: Res<'w, ActiveChapter>,
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum EnemySet {
+    BossPhase,
+}
+
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<EnemyKilled>()
+        app.init_resource::<PendingWildernessEncounters>()
+            .add_message::<EnemyKilled>()
             .add_message::<SpawnNemesis>()
             .add_message::<SpawnAshenThreatWave>()
-            .add_systems(OnEnter(GameState::InGame), spawn_enemies)
+            .add_message::<SpawnWildernessEncounter>()
+            .add_systems(Startup, setup_enemy_runtime_vfx)
+            .add_systems(
+                OnEnter(GameState::InGame),
+                (clear_pending_wilderness_encounters, spawn_enemies).chain(),
+            )
             .add_systems(
                 Update,
                 (
@@ -625,7 +758,6 @@ impl Plugin for EnemyPlugin {
                     tick_elite_affix_auras,
                     attach_main_quest_enemy_markers,
                     update_main_quest_enemy_markers,
-                    boss_phase_transition,
                     tick_enemy_attack_telegraphs,
                     move_enemy_projectiles,
                     spawn_sanctum_wave,
@@ -638,8 +770,106 @@ impl Plugin for EnemyPlugin {
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
-            .add_systems(OnExit(GameState::InGame), despawn_enemies);
+            .add_systems(
+                Update,
+                boss_phase_transition
+                    .in_set(EnemySet::BossPhase)
+                    .run_if(in_state(GameState::InGame).and_then(not_paused)),
+            )
+            .add_systems(
+                Update,
+                (
+                    despawn_unloaded_wilderness_enemies,
+                    spawn_wilderness_encounters,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::InGame).and_then(not_paused)),
+            )
+            .add_systems(
+                OnExit(GameState::InGame),
+                (despawn_enemies, clear_pending_wilderness_encounters).chain(),
+            );
     }
+}
+
+fn clear_pending_wilderness_encounters(mut pending: ResMut<PendingWildernessEncounters>) {
+    pending.events.clear();
+}
+
+fn setup_enemy_runtime_vfx(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let warning_materials = [
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_warning_color(&EnemyAttackKind::Melee),
+        ),
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_warning_color(&EnemyAttackKind::Projectile),
+        ),
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_warning_color(&EnemyAttackKind::Shockwave),
+        ),
+    ];
+    let impact_materials = [
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_impact_style(&EnemyAttackKind::Melee, 1.0).color,
+        ),
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_impact_style(&EnemyAttackKind::Projectile, 1.0).color,
+        ),
+        add_opaque_vfx_material(
+            &mut materials,
+            enemy_attack_impact_style(&EnemyAttackKind::Shockwave, 1.0).color,
+        ),
+    ];
+
+    let choir_shot = add_opaque_vfx_material(&mut materials, Color::srgb(0.10, 0.88, 1.0));
+    let reliquary_shot = add_opaque_vfx_material(&mut materials, Color::srgb(1.0, 0.62, 0.10));
+    let hollow_spell = add_opaque_vfx_material(&mut materials, Color::srgb(0.18, 0.72, 1.0));
+    let cinder_spell = add_opaque_vfx_material(&mut materials, Color::srgb(1.0, 0.22, 0.04));
+    let bell_note = add_opaque_vfx_material(&mut materials, Color::srgb(0.46, 0.26, 1.0));
+    let seal_orb = add_opaque_vfx_material(&mut materials, Color::srgb(0.66, 0.18, 1.0));
+    let projectile_materials = HashMap::from([
+        ("Choir Trident Volley", choir_shot.clone()),
+        ("Choir Lance", choir_shot),
+        ("Reliquary Trident Volley", reliquary_shot.clone()),
+        ("Reliquary Bolt", reliquary_shot),
+        ("Hollow Duet", hollow_spell.clone()),
+        ("Hollow Note", hollow_spell),
+        ("Cinder Duet", cinder_spell.clone()),
+        ("Cinder Bolt", cinder_spell),
+        ("Bell Warden Note", bell_note),
+        ("Seal Warden Orb", seal_orb),
+    ]);
+
+    commands.insert_resource(EnemyRuntimeVfx {
+        flat_box: meshes.add(Cuboid::new(1.0, 0.04, 1.0)),
+        flat_disc: meshes.add(Cylinder::new(1.0, 0.045)),
+        impact_sphere: meshes.add(Sphere::new(1.0)),
+        projectile_sphere: meshes.add(Sphere::new(0.16)),
+        warning_materials,
+        impact_materials,
+        projectile_materials,
+    });
+}
+
+fn add_opaque_vfx_material(
+    materials: &mut Assets<StandardMaterial>,
+    color: Color,
+) -> Handle<StandardMaterial> {
+    materials.add(StandardMaterial {
+        base_color: color,
+        emissive: color.into(),
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    })
 }
 
 fn spawn_enemies(
@@ -711,6 +941,257 @@ fn spawn_enemies(
             }
         },
     });
+}
+
+// Keep streamed wilderness packs bounded for the WebAssembly/WebGPU build.
+const MAX_ACTIVE_WILDERNESS_ENEMIES: usize = 32;
+
+fn wilderness_pack_fits(active_count: usize, pack_size: usize) -> bool {
+    active_count.saturating_add(pack_size) <= MAX_ACTIVE_WILDERNESS_ENEMIES
+}
+
+fn spawn_wilderness_encounters(
+    mut resources: EnemySpawnResources,
+    mut events: MessageReader<SpawnWildernessEncounter>,
+    mut pending: ResMut<PendingWildernessEncounters>,
+    active_wilderness: Query<&WildernessEnemy>,
+    player: Query<&Transform, With<Player>>,
+) {
+    let active_homes = active_wilderness
+        .iter()
+        .map(|enemy| (enemy.chapter, enemy.chunk_x, enemy.chunk_z))
+        .collect::<HashSet<_>>();
+    for event in events.read().copied() {
+        let key = (event.chapter, event.chunk_x, event.chunk_z);
+        if !active_homes.contains(&key)
+            && !pending
+                .events
+                .iter()
+                .any(|queued| (queued.chapter, queued.chunk_x, queued.chunk_z) == key)
+        {
+            pending.events.push_back(event);
+        }
+    }
+
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    let player_chunk_x = (player_transform.translation.x / CHUNK_SIZE).floor() as i64;
+    let player_chunk_z = (player_transform.translation.z / CHUNK_SIZE).floor() as i64;
+    pending.events.retain(|event| {
+        event.chapter == resources.active_chapter.0
+            && event
+                .chunk_x
+                .abs_diff(player_chunk_x)
+                .max(event.chunk_z.abs_diff(player_chunk_z))
+                <= CHUNK_UNLOAD_RADIUS as u64
+    });
+
+    let mut active_count = active_wilderness.iter().count();
+    while let Some(event) = pending.events.front().copied() {
+        let specs = wilderness_encounter_specs(event.chapter, resources.difficulty.current, event);
+        if !wilderness_pack_fits(active_count, specs.len()) {
+            break;
+        }
+        pending.events.pop_front();
+
+        for spec in specs {
+            let Some(tuning) = resources.catalog.get(spec.id) else {
+                continue;
+            };
+            let mut scaled_tuning = tuning.clone();
+            let threat_multiplier =
+                wilderness_distance_threat_multiplier(event.chunk_x, event.chunk_z);
+            scaled_tuning.max_health *= threat_multiplier;
+            scaled_tuning.attack_damage *= threat_multiplier.sqrt();
+            scaled_tuning.xp_reward =
+                scale_reward(scaled_tuning.xp_reward, threat_multiplier.max(1.0));
+            scaled_tuning.gold_min =
+                scale_reward(scaled_tuning.gold_min, threat_multiplier.max(1.0));
+            scaled_tuning.gold_max =
+                scale_reward(scaled_tuning.gold_max, threat_multiplier.max(1.0));
+
+            let entity = spawn_enemy(
+                &mut resources.commands,
+                &resources.assets,
+                EnemySpawnSpec {
+                    scene: enemy_scene(&resources.assets, &scaled_tuning.model),
+                    tuning: &scaled_tuning,
+                    position: event.center + spec.offset,
+                    difficulty: resources.difficulty.current,
+                    modifier: *resources.modifier,
+                    affixes: spec.affixes,
+                },
+            );
+            resources
+                .commands
+                .entity(entity)
+                .try_insert(WildernessEnemy {
+                    chapter: event.chapter,
+                    chunk_x: event.chunk_x,
+                    chunk_z: event.chunk_z,
+                });
+            active_count += 1;
+        }
+    }
+}
+
+fn despawn_unloaded_wilderness_enemies(
+    mut commands: Commands,
+    active_chapter: Res<ActiveChapter>,
+    player: Query<&Transform, (With<Player>, Without<WildernessEnemy>)>,
+    enemies: Query<(Entity, &WildernessEnemy, &Transform)>,
+) {
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    let player_chunk_x = (player_transform.translation.x / CHUNK_SIZE).floor() as i64;
+    let player_chunk_z = (player_transform.translation.z / CHUNK_SIZE).floor() as i64;
+
+    for (entity, home, transform) in &enemies {
+        let home_distance = home
+            .chunk_x
+            .abs_diff(player_chunk_x)
+            .max(home.chunk_z.abs_diff(player_chunk_z));
+        let current_chunk_x = (transform.translation.x / CHUNK_SIZE).floor() as i64;
+        let current_chunk_z = (transform.translation.z / CHUNK_SIZE).floor() as i64;
+        let current_distance = current_chunk_x
+            .abs_diff(player_chunk_x)
+            .max(current_chunk_z.abs_diff(player_chunk_z));
+        if (home.chapter != active_chapter.0
+            || (home_distance > CHUNK_UNLOAD_RADIUS as u64
+                && current_distance > CHUNK_UNLOAD_RADIUS as u64))
+            && let Ok(mut entity_commands) = commands.get_entity(entity)
+        {
+            entity_commands.try_despawn();
+        }
+    }
+}
+
+struct WildernessEncounterSpec {
+    id: &'static str,
+    offset: Vec3,
+    affixes: Vec<EnemyAffix>,
+}
+
+fn wilderness_encounter_specs(
+    chapter: ChapterId,
+    difficulty: Difficulty,
+    event: SpawnWildernessEncounter,
+) -> Vec<WildernessEncounterSpec> {
+    let mut rng = EncounterRng::new(event.seed);
+    let variant = rng.index(4);
+    let base_size = 2 + rng.index(2);
+    let size = (base_size + difficulty.wilderness_pack_bonus()).min(5);
+    let base_roles: [&str; 5] = match variant {
+        0 => [
+            "skeleton",
+            "bone_stalker",
+            "bone_stalker",
+            "ashen_marksman",
+            "skeleton",
+        ],
+        1 => [
+            "skeleton",
+            "cultist",
+            "ashen_marksman",
+            "bone_stalker",
+            "cultist",
+        ],
+        2 => [
+            "reliquary_brute",
+            "skeleton",
+            "ashen_marksman",
+            "skeleton",
+            "bone_stalker",
+        ],
+        _ => [
+            "skeleton",
+            "skeleton",
+            "ashen_marksman",
+            "cultist",
+            "reliquary_brute",
+        ],
+    };
+
+    (0..size)
+        .map(|index| {
+            let angle = rng.range_f32(0.0, std::f32::consts::TAU);
+            let radius = rng.range_f32(3.2, 9.4);
+            WildernessEncounterSpec {
+                id: chapter_enemy_id(chapter, base_roles[index]),
+                offset: Vec3::new(angle.cos() * radius, 0.0, angle.sin() * radius),
+                affixes: wilderness_enemy_affixes(difficulty, event.seed, index, size),
+            }
+        })
+        .collect()
+}
+
+fn wilderness_enemy_affixes(
+    difficulty: Difficulty,
+    seed: u64,
+    index: usize,
+    pack_size: usize,
+) -> Vec<EnemyAffix> {
+    let desired = match difficulty {
+        Difficulty::Normal if index == 0 && seed.is_multiple_of(5) => 1,
+        Difficulty::Normal => 0,
+        Difficulty::Nightmare if index == 0 => 1,
+        Difficulty::Nightmare => 0,
+        Difficulty::Hell if index == 0 => 2,
+        Difficulty::Hell if index + 1 == pack_size => 1,
+        Difficulty::Hell => 0,
+        Difficulty::Torment if index == 0 => 2,
+        Difficulty::Torment if index + 1 == pack_size => 2,
+        Difficulty::Torment => 0,
+    };
+    const POOL: [EnemyAffix; 9] = [
+        EnemyAffix::Frenzied,
+        EnemyAffix::Vampiric,
+        EnemyAffix::Molten,
+        EnemyAffix::Shielded,
+        EnemyAffix::Arcane,
+        EnemyAffix::Jailer,
+        EnemyAffix::Frozen,
+        EnemyAffix::Desecrator,
+        EnemyAffix::Reflective,
+    ];
+    let start = ((seed.rotate_left((index as u32 * 7) % 64) >> 24) as usize) % POOL.len();
+    (0..desired)
+        .map(|offset| POOL[(start + offset * 3) % POOL.len()])
+        .collect()
+}
+
+fn wilderness_distance_threat_multiplier(chunk_x: i64, chunk_z: i64) -> f32 {
+    let distance = chunk_x.abs().max(chunk_z.abs()) as f32;
+    (1.0 + (distance / 12.0).floor() * 0.08).clamp(1.0, 1.80)
+}
+
+struct EncounterRng {
+    state: u64,
+}
+
+impl EncounterRng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = self.state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
+    }
+
+    fn index(&mut self, upper_bound: usize) -> usize {
+        (self.next_u64() % upper_bound as u64) as usize
+    }
+
+    fn range_f32(&mut self, min: f32, max: f32) -> f32 {
+        let unit = ((self.next_u64() >> 40) as f32) * (1.0 / 16_777_216.0);
+        min + (max - min) * unit
+    }
 }
 
 fn champion_pack_spawns() -> [(String, Vec3, Vec<EnemyAffix>); 5] {
@@ -1165,16 +1646,7 @@ fn spawn_boss(
                 position: boss_position,
                 difficulty: difficulty.current,
                 modifier: *modifier,
-                affixes: vec![
-                    EnemyAffix::Molten,
-                    EnemyAffix::Vampiric,
-                    EnemyAffix::Shielded,
-                    EnemyAffix::Arcane,
-                    EnemyAffix::Jailer,
-                    EnemyAffix::Frozen,
-                    EnemyAffix::Desecrator,
-                    EnemyAffix::Reflective,
-                ],
+                affixes: boss_starting_affixes(active_chapter.0),
             },
         );
         commands.entity(boss).try_insert(BossPhase {
@@ -1183,6 +1655,19 @@ fn spawn_boss(
             enrage_timer: Timer::from_seconds(BOSS_ENRAGE_DELAY_SECS, TimerMode::Once),
         });
         commands.entity(boss).try_insert(BossStagger::default());
+    }
+}
+
+fn boss_starting_affixes(chapter: ChapterId) -> Vec<EnemyAffix> {
+    match chapter {
+        ChapterId::AshenReliquary => vec![
+            EnemyAffix::Molten,
+            EnemyAffix::Vampiric,
+            EnemyAffix::Shielded,
+        ],
+        ChapterId::HollowBastion => {
+            vec![EnemyAffix::Arcane, EnemyAffix::Frozen, EnemyAffix::Shielded]
+        }
     }
 }
 
@@ -1199,7 +1684,7 @@ fn spawn_nemesis(
             &mut resources.commands,
             &resources.assets,
             EnemySpawnSpec {
-                scene: resources.assets.skeleton.clone(),
+                scene: enemy_scene(&resources.assets, &tuning.model),
                 tuning,
                 position: nemesis_spawn_position(resources.active_chapter.0, event.checkpoint),
                 difficulty: resources.difficulty.current,
@@ -1244,7 +1729,9 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
         * if is_elite { 1.8 } else { 1.0 };
     let has_frenzied = affixes.contains(&EnemyAffix::Frenzied);
     let display_name = display_name_with_affixes(&tuning.display_name, &affixes);
-    let attack_cooldown = tuning.attack_cooldown * if has_frenzied { 0.72 } else { 1.0 };
+    let attack_cooldown = tuning.attack_cooldown
+        * difficulty.enemy_attack_cooldown_multiplier()
+        * if has_frenzied { 0.72 } else { 1.0 };
     let base_scale = if is_elite { 1.12 } else { 1.0 };
     let entity = commands
         .spawn((
@@ -1266,11 +1753,14 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
                 attack_range: tuning.attack_range,
                 attack_timer: Timer::from_seconds(attack_cooldown, TimerMode::Once),
                 aggro_range: tuning.aggro_range,
-                move_speed: tuning.move_speed * if has_frenzied { 1.28 } else { 1.0 },
+                move_speed: tuning.move_speed
+                    * difficulty.enemy_speed_multiplier()
+                    * if has_frenzied { 1.28 } else { 1.0 },
                 gold_min: scale_reward(tuning.gold_min, reward_multiplier),
                 gold_max: scale_reward(tuning.gold_max, reward_multiplier),
                 xp_reward: scale_reward(tuning.xp_reward, reward_multiplier),
             },
+            EnemySkillCycle::new(difficulty),
             EnemyAnimation::new(base_scale),
             EnemyEntity,
             Name::new(display_name),
@@ -1577,8 +2067,10 @@ fn scale_reward(value: u32, multiplier: f32) -> u32 {
 #[allow(clippy::too_many_arguments)]
 fn enemy_ai(
     time: Res<Time>,
+    difficulty: Res<DifficultySettings>,
     mut commands: Commands,
     mut feedback: EnemyFeedbackWriters,
+    vfx: Res<EnemyRuntimeVfx>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut enemies: EnemyAiQuery,
@@ -1609,6 +2101,7 @@ fn enemy_ai(
         treasure_fiend,
         hit_react,
         attack_warning,
+        mut skill_cycle,
     ) in &mut enemies
     {
         let mut hit_react_power = 0.0;
@@ -1743,6 +2236,8 @@ fn enemy_ai(
             if let Ok(mut entity_commands) = commands.get_entity(entity) {
                 entity_commands.remove::<EnemyAttackWarning>();
             }
+            let role = enemy_combat_role(&enemy.id);
+            let signature_attack = skill_cycle.advance();
             animation.trigger_attack(match enemy.attack_kind {
                 EnemyAttackKind::Melee => 0.32,
                 EnemyAttackKind::Projectile => 0.42,
@@ -1750,8 +2245,7 @@ fn enemy_ai(
             });
             spawn_enemy_attack_impact(
                 &mut commands,
-                &mut meshes,
-                &mut materials,
+                &vfx,
                 transform.translation,
                 flat_to_player.normalize_or_zero(),
                 &enemy.attack_kind,
@@ -1759,7 +2253,9 @@ fn enemy_ai(
             );
             match enemy.attack_kind {
                 EnemyAttackKind::Melee => {
-                    let damage = mitigated_damage(enemy.attack_damage, player_armor);
+                    let raw_damage = enemy.attack_damage
+                        * signature_attack_damage_multiplier(role, signature_attack);
+                    let damage = mitigated_damage(raw_damage, player_armor);
                     let taken = apply_player_damage_with_evade(
                         &mut player_health,
                         &mut barrier,
@@ -1787,18 +2283,41 @@ fn enemy_ai(
                     );
                     trigger_player_hit_react(&mut commands, player_entity, taken);
                     trigger_vampiric_heal(&enemy, &mut health);
+                    if signature_attack {
+                        let signature = match role {
+                            EnemyCombatRole::Vanguard => Some(("Shield Bash", 0.26, 0.68)),
+                            EnemyCombatRole::Skirmisher => Some(("Pouncing Rend", 0.42, 0.52)),
+                            EnemyCombatRole::Nemesis => Some(("Soul Hunt", 0.48, 0.46)),
+                            _ => None,
+                        };
+                        if let Some((label, duration_secs, speed_multiplier)) = signature {
+                            commands.entity(player_entity).try_insert(Jailed {
+                                timer: Timer::from_seconds(duration_secs, TimerMode::Once),
+                                speed_multiplier,
+                            });
+                            feedback.combat_events.write(CombatEvent {
+                                text: format!("{} used {label}", enemy.display_name),
+                            });
+                        }
+                    }
                 }
-                EnemyAttackKind::Projectile => spawn_projectile(
+                EnemyAttackKind::Projectile => spawn_role_projectile_volley(
                     &mut commands,
-                    &mut meshes,
-                    &mut materials,
+                    &vfx,
                     transform.translation + Vec3::Y,
                     flat_to_player.normalize_or_zero(),
                     enemy.attack_damage,
+                    &enemy,
+                    role,
+                    signature_attack,
+                    difficulty.current,
                 ),
                 EnemyAttackKind::Shockwave => {
-                    if distance <= enemy.attack_range + 0.85 {
-                        let damage = mitigated_damage(enemy.attack_damage, player_armor);
+                    let signature_bonus = if signature_attack { 1.10 } else { 0.0 };
+                    if distance <= enemy.attack_range + 0.85 + signature_bonus {
+                        let raw_damage = enemy.attack_damage
+                            * signature_attack_damage_multiplier(role, signature_attack);
+                        let damage = mitigated_damage(raw_damage, player_armor);
                         let taken = apply_player_damage_with_evade(
                             &mut player_health,
                             &mut barrier,
@@ -1833,9 +2352,26 @@ fn enemy_ai(
                         &mut materials,
                         transform.translation,
                     );
+                    if signature_attack && role == EnemyCombatRole::Juggernaut {
+                        spawn_juggernaut_quake_line(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            transform.translation,
+                            flat_to_player.normalize_or_zero(),
+                            enemy.attack_damage * 0.62,
+                        );
+                        feedback.combat_events.write(CombatEvent {
+                            text: format!(
+                                "{} split the ground with a quake line",
+                                enemy.display_name
+                            ),
+                        });
+                    }
                 }
             }
-            if enemy.affixes.contains(&EnemyAffix::Arcane) {
+            let release_control_affix = signature_attack && !matches!(role, EnemyCombatRole::Boss);
+            if release_control_affix && enemy.affixes.contains(&EnemyAffix::Arcane) {
                 spawn_arcane_sentry(
                     &mut commands,
                     &mut meshes,
@@ -1844,7 +2380,7 @@ fn enemy_ai(
                     enemy.attack_damage * 0.55,
                 );
             }
-            if enemy.affixes.contains(&EnemyAffix::Jailer) {
+            if release_control_affix && enemy.affixes.contains(&EnemyAffix::Jailer) {
                 spawn_jailer_prison(
                     &mut commands,
                     &mut meshes,
@@ -1852,15 +2388,11 @@ fn enemy_ai(
                     player_transform.translation,
                     enemy.attack_damage * 0.35,
                 );
-                commands.entity(player_entity).try_insert(Jailed {
-                    timer: Timer::from_seconds(1.15, TimerMode::Once),
-                    speed_multiplier: 0.18,
-                });
                 feedback.combat_events.write(CombatEvent {
-                    text: "Jailer affix: ash chains bind your movement".to_string(),
+                    text: "Jailer affix: ash chains are forming—move".to_string(),
                 });
             }
-            if enemy.affixes.contains(&EnemyAffix::Frozen) {
+            if release_control_affix && enemy.affixes.contains(&EnemyAffix::Frozen) {
                 spawn_frozen_orb(
                     &mut commands,
                     &mut meshes,
@@ -1872,7 +2404,7 @@ fn enemy_ai(
                     text: "Frozen affix: frost burst forming".to_string(),
                 });
             }
-            if enemy.affixes.contains(&EnemyAffix::Desecrator) {
+            if release_control_affix && enemy.affixes.contains(&EnemyAffix::Desecrator) {
                 spawn_desecrator_pool(
                     &mut commands,
                     &mut meshes,
@@ -1884,7 +2416,7 @@ fn enemy_ai(
                     text: "Desecrator affix: corrupted ground opens".to_string(),
                 });
             }
-            if matches!(enemy.id.as_str(), "seal_warden" | "bell_warden") {
+            if signature_attack && role == EnemyCombatRole::Warden {
                 spawn_seal_warden_rune(
                     &mut commands,
                     &mut meshes,
@@ -1899,12 +2431,12 @@ fn enemy_ai(
             enemy.attack_timer.reset();
         } else {
             let remaining = enemy.attack_timer.remaining_secs();
-            let warning_window = enemy_attack_warning_window(&enemy.attack_kind);
+            let warning_window = enemy_attack_warning_window(&enemy.attack_kind)
+                * difficulty.current.enemy_warning_window_multiplier();
             if !attack_warning_active && remaining > 0.08 && remaining <= warning_window {
                 spawn_enemy_attack_warning(
                     &mut commands,
-                    &mut meshes,
-                    &mut materials,
+                    &vfx,
                     EnemyAttackWarningSpec {
                         origin: transform.translation,
                         direction: flat_to_player.normalize_or_zero(),
@@ -1950,20 +2482,35 @@ fn enemy_movement_plan(
     distance: f32,
 ) -> Option<EnemyMovementPlan> {
     let to_player = horizontal_ai_direction(flat_to_player);
-    if enemy.id == "ashen_marksman" && distance < marksman_min_spacing(enemy) {
+    let role = enemy_combat_role(&enemy.id);
+    if matches!(
+        role,
+        EnemyCombatRole::Marksman | EnemyCombatRole::Caster | EnemyCombatRole::Warden
+    ) && distance < ranged_min_spacing(enemy, role)
+    {
         let away = -to_player;
         let strafe = marksman_strafe_direction(enemy_position, to_player);
         return Some(EnemyMovementPlan {
             movement_direction: (away * 0.82 + strafe * 0.46).normalize_or_zero(),
             facing_direction: to_player,
-            speed_multiplier: 1.16,
+            speed_multiplier: if role == EnemyCombatRole::Marksman {
+                1.16
+            } else {
+                0.92
+            },
         });
     }
 
     let desired_range = enemy_desired_attack_range(enemy);
     if distance > desired_range {
+        let movement_direction = if role == EnemyCombatRole::Skirmisher {
+            let strafe = marksman_strafe_direction(enemy_position, to_player);
+            (to_player * 0.90 + strafe * 0.34).normalize_or_zero()
+        } else {
+            to_player
+        };
         return Some(EnemyMovementPlan {
-            movement_direction: to_player,
+            movement_direction,
             facing_direction: to_player,
             speed_multiplier: enemy_approach_speed_multiplier(enemy),
         });
@@ -1973,10 +2520,11 @@ fn enemy_movement_plan(
 }
 
 fn enemy_desired_attack_range(enemy: &Enemy) -> f32 {
-    match enemy.id.as_str() {
-        "bone_stalker" => enemy.attack_range * 0.88,
-        "ashen_marksman" => enemy.attack_range * 0.88,
-        "reliquary_brute" => enemy.attack_range * 0.92,
+    match enemy_combat_role(&enemy.id) {
+        EnemyCombatRole::Skirmisher => enemy.attack_range * 0.88,
+        EnemyCombatRole::Marksman => enemy.attack_range * 0.88,
+        EnemyCombatRole::Caster | EnemyCombatRole::Warden => enemy.attack_range * 0.82,
+        EnemyCombatRole::Juggernaut => enemy.attack_range * 0.92,
         _ => match enemy.attack_kind {
             EnemyAttackKind::Melee | EnemyAttackKind::Shockwave => enemy.attack_range,
             EnemyAttackKind::Projectile => enemy.attack_range * 0.82,
@@ -1984,14 +2532,25 @@ fn enemy_desired_attack_range(enemy: &Enemy) -> f32 {
     }
 }
 
+#[cfg(test)]
 fn marksman_min_spacing(enemy: &Enemy) -> f32 {
-    enemy.attack_range * 0.46
+    ranged_min_spacing(enemy, EnemyCombatRole::Marksman)
+}
+
+fn ranged_min_spacing(enemy: &Enemy, role: EnemyCombatRole) -> f32 {
+    enemy.attack_range
+        * match role {
+            EnemyCombatRole::Marksman => 0.46,
+            EnemyCombatRole::Caster => 0.38,
+            EnemyCombatRole::Warden => 0.34,
+            _ => 0.30,
+        }
 }
 
 fn enemy_approach_speed_multiplier(enemy: &Enemy) -> f32 {
-    match enemy.id.as_str() {
-        "bone_stalker" => 1.18,
-        "reliquary_brute" => 0.74,
+    match enemy_combat_role(&enemy.id) {
+        EnemyCombatRole::Skirmisher => 1.18,
+        EnemyCombatRole::Juggernaut => 0.74,
         _ => 1.0,
     }
 }
@@ -2788,6 +3347,14 @@ fn enemy_attack_warning_forward_offset(kind: &EnemyAttackKind, reach: f32) -> f3
     }
 }
 
+fn enemy_attack_kind_index(kind: &EnemyAttackKind) -> usize {
+    match kind {
+        EnemyAttackKind::Melee => 0,
+        EnemyAttackKind::Projectile => 1,
+        EnemyAttackKind::Shockwave => 2,
+    }
+}
+
 fn enemy_attack_telegraph_pulse(progress: f32) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
     1.0 + progress * 0.30 + (progress * std::f32::consts::TAU * 2.0).sin().abs() * 0.10
@@ -2802,12 +3369,12 @@ fn enemy_attack_warning_color(kind: &EnemyAttackKind) -> Color {
 }
 
 impl EnemyAttackTelegraph {
-    fn new(duration_secs: f32) -> Self {
+    fn new(duration_secs: f32, base_scale: Vec3) -> Self {
         let duration_secs = duration_secs.max(0.12);
         Self {
             timer: Timer::from_seconds(duration_secs, TimerMode::Once),
             duration_secs,
-            base_scale: Vec3::ONE,
+            base_scale,
         }
     }
 
@@ -2818,17 +3385,10 @@ impl EnemyAttackTelegraph {
 
 fn spawn_enemy_attack_warning(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    vfx: &EnemyRuntimeVfx,
     spec: EnemyAttackWarningSpec,
 ) {
-    let color = enemy_attack_warning_color(spec.kind);
-    let material = materials.add(StandardMaterial {
-        base_color: color,
-        emissive: color.into(),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
+    let material = vfx.warning_materials[enemy_attack_kind_index(spec.kind)].clone();
     let direction = spec.direction.normalize_or_zero();
     let yaw = direction.x.atan2(direction.z);
     let duration_secs = spec.duration_secs.max(0.12);
@@ -2838,37 +3398,42 @@ fn spawn_enemy_attack_warning(
 
     match spec.kind {
         EnemyAttackKind::Melee => {
+            let base_scale = Vec3::new(width, 1.0, reach);
             commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(width, 0.04, reach))),
+                Mesh3d(vfx.flat_box.clone()),
                 MeshMaterial3d(material),
                 Transform::from_translation(
                     spec.origin + direction * forward_offset + Vec3::Y * 0.035,
                 )
-                .with_rotation(Quat::from_rotation_y(yaw)),
-                EnemyAttackTelegraph::new(duration_secs),
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(base_scale),
+                EnemyAttackTelegraph::new(duration_secs, base_scale),
                 EnemyEntity,
                 Name::new("Melee Attack Telegraph"),
             ));
         }
         EnemyAttackKind::Projectile => {
+            let base_scale = Vec3::new(width, 1.0, reach);
             commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(width, 0.04, reach))),
+                Mesh3d(vfx.flat_box.clone()),
                 MeshMaterial3d(material),
                 Transform::from_translation(
                     spec.origin + direction * forward_offset + Vec3::Y * 0.045,
                 )
-                .with_rotation(Quat::from_rotation_y(yaw)),
-                EnemyAttackTelegraph::new(duration_secs),
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(base_scale),
+                EnemyAttackTelegraph::new(duration_secs, base_scale),
                 EnemyEntity,
                 Name::new("Projectile Attack Telegraph"),
             ));
         }
         EnemyAttackKind::Shockwave => {
+            let base_scale = Vec3::new(reach, 1.0, reach);
             commands.spawn((
-                Mesh3d(meshes.add(Cylinder::new(reach, 0.045))),
+                Mesh3d(vfx.flat_disc.clone()),
                 MeshMaterial3d(material),
-                Transform::from_translation(spec.origin + Vec3::Y * 0.04),
-                EnemyAttackTelegraph::new(duration_secs),
+                Transform::from_translation(spec.origin + Vec3::Y * 0.04).with_scale(base_scale),
+                EnemyAttackTelegraph::new(duration_secs, base_scale),
                 EnemyEntity,
                 Name::new("Shockwave Attack Telegraph"),
             ));
@@ -2930,24 +3495,18 @@ fn enemy_attack_impact_transform(
 
 fn spawn_enemy_attack_impact(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    vfx: &EnemyRuntimeVfx,
     origin: Vec3,
     direction: Vec3,
     kind: &EnemyAttackKind,
     attack_range: f32,
 ) {
     let style = enemy_attack_impact_style(kind, attack_range);
-    let material = materials.add(StandardMaterial {
-        base_color: style.color,
-        emissive: style.color.into(),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
+    let material = vfx.impact_materials[enemy_attack_kind_index(kind)].clone();
     let mesh = match kind {
-        EnemyAttackKind::Melee => meshes.add(Cuboid::new(1.0, 0.04, 1.0)),
-        EnemyAttackKind::Projectile => meshes.add(Sphere::new(1.0)),
-        EnemyAttackKind::Shockwave => meshes.add(Cylinder::new(1.0, 0.045)),
+        EnemyAttackKind::Melee => vfx.flat_box.clone(),
+        EnemyAttackKind::Projectile => vfx.impact_sphere.clone(),
+        EnemyAttackKind::Shockwave => vfx.flat_disc.clone(),
     };
     commands.spawn((
         Mesh3d(mesh),
@@ -2990,7 +3549,187 @@ fn tick_enemy_attack_telegraphs(
     }
 }
 
-fn spawn_projectile(
+fn signature_attack_damage_multiplier(role: EnemyCombatRole, signature: bool) -> f32 {
+    if !signature {
+        return 1.0;
+    }
+    match role {
+        EnemyCombatRole::Skirmisher => 1.42,
+        EnemyCombatRole::Juggernaut => 1.28,
+        EnemyCombatRole::Nemesis => 1.34,
+        EnemyCombatRole::Vanguard => 1.16,
+        EnemyCombatRole::Caster
+        | EnemyCombatRole::Marksman
+        | EnemyCombatRole::Warden
+        | EnemyCombatRole::Treasure
+        | EnemyCombatRole::Boss => 1.0,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_role_projectile_volley(
+    commands: &mut Commands,
+    vfx: &EnemyRuntimeVfx,
+    origin: Vec3,
+    direction: Vec3,
+    damage: f32,
+    enemy: &Enemy,
+    role: EnemyCombatRole,
+    signature: bool,
+    difficulty: Difficulty,
+) {
+    let is_hollow = matches!(
+        enemy.id.as_str(),
+        "choir_acolyte" | "choir_marksman" | "bell_warden"
+    );
+    let (angles, damage_multiplier, base_speed, impact, _color, name): (
+        &[f32],
+        f32,
+        f32,
+        ProjectileImpact,
+        Color,
+        &'static str,
+    ) = match (role, signature, is_hollow) {
+        (EnemyCombatRole::Marksman, true, true) => (
+            &[-0.20, 0.0, 0.20],
+            0.72,
+            8.4,
+            ProjectileImpact::None,
+            Color::srgb(0.10, 0.88, 1.0),
+            "Choir Trident Volley",
+        ),
+        (EnemyCombatRole::Marksman, true, false) => (
+            &[-0.18, 0.0, 0.18],
+            0.72,
+            8.4,
+            ProjectileImpact::None,
+            Color::srgb(1.0, 0.62, 0.10),
+            "Reliquary Trident Volley",
+        ),
+        (EnemyCombatRole::Marksman, false, true) => (
+            &[0.0],
+            1.0,
+            8.1,
+            ProjectileImpact::None,
+            Color::srgb(0.10, 0.88, 1.0),
+            "Choir Lance",
+        ),
+        (EnemyCombatRole::Marksman, false, false) => (
+            &[0.0],
+            1.0,
+            8.1,
+            ProjectileImpact::None,
+            Color::srgb(1.0, 0.62, 0.10),
+            "Reliquary Bolt",
+        ),
+        (EnemyCombatRole::Caster, true, true) => (
+            &[-0.11, 0.11],
+            0.78,
+            6.7,
+            ProjectileImpact::Arcane,
+            Color::srgb(0.18, 0.72, 1.0),
+            "Hollow Duet",
+        ),
+        (EnemyCombatRole::Caster, true, false) => (
+            &[-0.10, 0.10],
+            0.78,
+            6.7,
+            ProjectileImpact::Burning,
+            Color::srgb(1.0, 0.22, 0.04),
+            "Cinder Duet",
+        ),
+        (EnemyCombatRole::Caster, false, true) => (
+            &[0.0],
+            1.0,
+            6.2,
+            ProjectileImpact::Arcane,
+            Color::srgb(0.18, 0.72, 1.0),
+            "Hollow Note",
+        ),
+        (EnemyCombatRole::Warden, _, true) => (
+            &[0.0],
+            1.0,
+            6.8,
+            ProjectileImpact::Arcane,
+            Color::srgb(0.46, 0.26, 1.0),
+            "Bell Warden Note",
+        ),
+        (EnemyCombatRole::Warden, _, false) => (
+            &[0.0],
+            1.0,
+            6.8,
+            ProjectileImpact::Arcane,
+            Color::srgb(0.66, 0.18, 1.0),
+            "Seal Warden Orb",
+        ),
+        _ => (
+            &[0.0],
+            1.0,
+            6.2,
+            ProjectileImpact::Burning,
+            Color::srgb(1.0, 0.22, 0.04),
+            "Cinder Bolt",
+        ),
+    };
+
+    for angle in angles {
+        let shot_direction = Quat::from_rotation_y(*angle)
+            .mul_vec3(direction)
+            .normalize_or_zero();
+        spawn_projectile(
+            commands,
+            vfx,
+            EnemyProjectileSpec {
+                origin,
+                direction: shot_direction,
+                damage: damage * damage_multiplier,
+                speed: base_speed * difficulty.enemy_projectile_speed_multiplier(),
+                radius: if role == EnemyCombatRole::Marksman {
+                    0.44
+                } else {
+                    0.55
+                },
+                impact,
+                name,
+            },
+        );
+    }
+}
+
+struct EnemyProjectileSpec {
+    origin: Vec3,
+    direction: Vec3,
+    damage: f32,
+    speed: f32,
+    radius: f32,
+    impact: ProjectileImpact,
+    name: &'static str,
+}
+
+fn spawn_projectile(commands: &mut Commands, vfx: &EnemyRuntimeVfx, spec: EnemyProjectileSpec) {
+    let material = vfx
+        .projectile_materials
+        .get(spec.name)
+        .expect("projectile VFX material must be cached")
+        .clone();
+    commands.spawn((
+        Mesh3d(vfx.projectile_sphere.clone()),
+        MeshMaterial3d(material),
+        Transform::from_translation(spec.origin + spec.direction * 0.45),
+        EnemyProjectile {
+            damage: spec.damage,
+            velocity: spec.direction * spec.speed,
+            radius: spec.radius,
+            lifetime: Timer::from_seconds(2.0, TimerMode::Once),
+            arm_timer: None,
+            impact: spec.impact,
+        },
+        EnemyEntity,
+        Name::new(spec.name.to_string()),
+    ));
+}
+
+fn spawn_juggernaut_quake_line(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -2998,26 +3737,33 @@ fn spawn_projectile(
     direction: Vec3,
     damage: f32,
 ) {
-    let color = Color::srgb(1.0, 0.22, 0.04);
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.16))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
-            emissive: color.into(),
-            ..default()
-        })),
-        Transform::from_translation(origin + direction * 0.45),
-        EnemyProjectile {
-            damage,
-            velocity: direction * 6.2,
-            radius: 0.55,
-            lifetime: Timer::from_seconds(2.0, TimerMode::Once),
-            arm_timer: None,
-            impact: ProjectileImpact::Burning,
-        },
-        EnemyEntity,
-        Name::new("Cinder Bolt"),
-    ));
+    let color = Color::srgb(0.86, 0.20, 0.035);
+    let mesh = meshes.add(Cylinder::new(0.84, 0.055));
+    let material = materials.add(StandardMaterial {
+        base_color: color,
+        emissive: color.with_luminance(0.42).into(),
+        alpha_mode: AlphaMode::Opaque,
+        perceptual_roughness: 0.64,
+        ..default()
+    });
+    for step in 1..=3 {
+        let arm_secs = 0.28 + step as f32 * 0.13;
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material.clone()),
+            Transform::from_translation(origin + direction * (step as f32 * 1.35) + Vec3::Y * 0.06),
+            EnemyProjectile {
+                damage,
+                velocity: Vec3::ZERO,
+                radius: 1.05,
+                lifetime: Timer::from_seconds(arm_secs + 0.72, TimerMode::Once),
+                arm_timer: Some(Timer::from_seconds(arm_secs, TimerMode::Once)),
+                impact: ProjectileImpact::None,
+            },
+            EnemyEntity,
+            Name::new(format!("Juggernaut Quake {step}")),
+        ));
+    }
 }
 
 fn spawn_shockwave_marker(
@@ -3032,7 +3778,7 @@ fn spawn_shockwave_marker(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: color.into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(origin + Vec3::new(0.0, 0.04, 0.0)),
@@ -3062,7 +3808,7 @@ pub fn spawn_molten_death_pool(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: color.into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(origin + Vec3::new(0.0, 0.08, 0.0)),
@@ -3092,7 +3838,7 @@ fn spawn_arcane_sentry(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.20, 0.05, 0.42).into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(target + Vec3::new(0.0, 0.09, 0.0)),
@@ -3122,7 +3868,7 @@ fn spawn_jailer_prison(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.35, 0.04, 0.02).into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(target + Vec3::new(0.0, 0.12, 0.0)),
@@ -3152,7 +3898,7 @@ fn spawn_frozen_orb(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.04, 0.18, 0.42).into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(target + Vec3::new(0.0, 0.1, 0.0)),
@@ -3182,7 +3928,7 @@ fn spawn_desecrator_pool(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.42, 0.0, 0.03).into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(target + Vec3::new(0.0, 0.095, 0.0)),
@@ -3212,7 +3958,7 @@ fn spawn_seal_warden_rune(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.44, 0.08, 0.58).into(),
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Opaque,
             ..default()
         })),
         Transform::from_translation(target + Vec3::new(0.0, 0.105, 0.0)),
@@ -3497,7 +4243,7 @@ fn spawn_player_damage_impact(
     let material = materials.add(StandardMaterial {
         base_color: style.color,
         emissive: style.color.into(),
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         ..default()
     });
     let mesh = match kind {
@@ -3984,6 +4730,139 @@ mod tests {
                 .iter()
                 .any(|(_, _, affixes)| affixes.contains(&EnemyAffix::Reflective))
         );
+    }
+
+    #[test]
+    fn chapter_two_preserves_skirmisher_marksman_and_heavy_roles() {
+        assert_eq!(
+            chapter_enemy_id(ChapterId::HollowBastion, "skeleton"),
+            "hollow_thrall"
+        );
+        assert_eq!(
+            chapter_enemy_id(ChapterId::HollowBastion, "bone_stalker"),
+            "hollow_stalker"
+        );
+        assert_eq!(
+            chapter_enemy_id(ChapterId::HollowBastion, "cultist"),
+            "choir_acolyte"
+        );
+        assert_eq!(
+            chapter_enemy_id(ChapterId::HollowBastion, "ashen_marksman"),
+            "choir_marksman"
+        );
+        assert_eq!(
+            chapter_enemy_id(ChapterId::HollowBastion, "reliquary_brute"),
+            "hollow_reaver"
+        );
+        assert_eq!(
+            enemy_combat_role("hollow_stalker"),
+            EnemyCombatRole::Skirmisher
+        );
+        assert_eq!(
+            enemy_combat_role("choir_marksman"),
+            EnemyCombatRole::Marksman
+        );
+        assert_eq!(
+            enemy_combat_role("hollow_reaver"),
+            EnemyCombatRole::Juggernaut
+        );
+    }
+
+    #[test]
+    fn every_enemy_catalog_model_has_an_explicit_runtime_mapping() {
+        let catalog: EnemyCatalog =
+            ron::from_str(include_str!("../assets/data/enemies.ron")).unwrap();
+        for enemy in catalog.enemies {
+            assert!(
+                enemy_model_is_supported(&enemy.model),
+                "{} uses unmapped model {}",
+                enemy.id,
+                enemy.model
+            );
+        }
+    }
+
+    #[test]
+    fn difficulty_controls_signature_attack_frequency() {
+        let mut normal = EnemySkillCycle::new(Difficulty::Normal);
+        let normal_pattern = (0..4).map(|_| normal.advance()).collect::<Vec<_>>();
+        let mut torment = EnemySkillCycle::new(Difficulty::Torment);
+        let torment_pattern = (0..4).map(|_| torment.advance()).collect::<Vec<_>>();
+
+        assert_eq!(normal_pattern, vec![false, false, false, true]);
+        assert_eq!(torment_pattern, vec![false, true, false, true]);
+        assert!(
+            signature_attack_damage_multiplier(EnemyCombatRole::Skirmisher, true)
+                > signature_attack_damage_multiplier(EnemyCombatRole::Vanguard, true)
+        );
+    }
+
+    #[test]
+    fn wilderness_encounters_are_reproducible_and_scale_pack_pressure() {
+        let event = SpawnWildernessEncounter {
+            chapter: ChapterId::AshenReliquary,
+            chunk_x: 12,
+            chunk_z: -8,
+            center: Vec3::new(600.0, 0.0, -360.0),
+            seed: 0xA55E_1234,
+        };
+        let first = wilderness_encounter_specs(ChapterId::AshenReliquary, Difficulty::Hell, event);
+        let second = wilderness_encounter_specs(ChapterId::AshenReliquary, Difficulty::Hell, event);
+        let normal =
+            wilderness_encounter_specs(ChapterId::AshenReliquary, Difficulty::Normal, event);
+
+        assert_eq!(first.len(), second.len());
+        assert!(
+            first
+                .iter()
+                .zip(second.iter())
+                .all(|(left, right)| left.id == right.id
+                    && left.offset == right.offset
+                    && left.affixes == right.affixes)
+        );
+        assert!(first.len() > normal.len());
+        assert!(first.len() <= 5);
+        assert!(first.iter().any(|spec| !spec.affixes.is_empty()));
+        assert!(wilderness_pack_fits(30, 2));
+        assert!(!wilderness_pack_fits(31, 2));
+        assert!(
+            wilderness_distance_threat_multiplier(120, -4)
+                > wilderness_distance_threat_multiplier(2, -4)
+        );
+        assert!(wilderness_distance_threat_multiplier(10_000, 0) <= 1.80);
+    }
+
+    #[test]
+    fn wilderness_chapter_two_uses_its_own_roster() {
+        let event = SpawnWildernessEncounter {
+            chapter: ChapterId::HollowBastion,
+            chunk_x: 8,
+            chunk_z: 8,
+            center: Vec3::ZERO,
+            seed: 17,
+        };
+        let specs =
+            wilderness_encounter_specs(ChapterId::HollowBastion, Difficulty::Torment, event);
+        assert!(specs.iter().all(|spec| matches!(
+            spec.id,
+            "hollow_thrall"
+                | "hollow_stalker"
+                | "choir_acolyte"
+                | "choir_marksman"
+                | "hollow_reaver"
+        )));
+    }
+
+    #[test]
+    fn bosses_use_small_chapter_specific_affix_sets() {
+        let malrec = boss_starting_affixes(ChapterId::AshenReliquary);
+        let nyxara = boss_starting_affixes(ChapterId::HollowBastion);
+
+        assert_eq!(malrec.len(), 3);
+        assert_eq!(nyxara.len(), 3);
+        assert!(malrec.contains(&EnemyAffix::Molten));
+        assert!(nyxara.contains(&EnemyAffix::Arcane));
+        assert_ne!(malrec, nyxara);
     }
 
     #[test]

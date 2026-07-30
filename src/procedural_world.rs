@@ -2,6 +2,7 @@ use crate::{
     GameState,
     chapter::{ActiveChapter, ChapterId},
     dungeon::{DungeonEntity, OutdoorScenery, chapter_world_layout, chapter_world_position},
+    enemy::SpawnWildernessEncounter,
     not_paused,
     player::Player,
 };
@@ -196,6 +197,7 @@ fn stream_procedural_chunks(
     world_seed: Res<ProceduralWorldSeed>,
     assets: Res<ProceduralWorldAssets>,
     mut loaded: ResMut<LoadedProceduralChunks>,
+    mut encounter_events: MessageWriter<SpawnWildernessEncounter>,
 ) {
     let Ok(player_transform) = player.single() else {
         return;
@@ -227,6 +229,15 @@ fn stream_procedural_chunks(
             coord,
         );
         loaded.entities.insert(coord, entity);
+        if should_spawn_wilderness_encounter(world_seed.0, active_chapter.0, coord) {
+            encounter_events.write(SpawnWildernessEncounter {
+                chapter: active_chapter.0,
+                chunk_x: coord.x,
+                chunk_z: coord.z,
+                center: coord.center(),
+                seed: chunk_seed(world_seed.0, active_chapter.0, coord),
+            });
+        }
     }
 }
 
@@ -346,6 +357,21 @@ fn chunks_to_unload(
         .into_iter()
         .filter(|coord| coord.chebyshev_distance(center) > CHUNK_UNLOAD_RADIUS)
         .collect()
+}
+
+fn should_spawn_wilderness_encounter(
+    world_seed: u64,
+    chapter: ChapterId,
+    coord: ChunkCoord,
+) -> bool {
+    let center = coord.center();
+    let layout = chapter_world_layout(chapter);
+    if center.distance(layout.player_spawn) < CHUNK_SIZE * 1.35
+        || is_story_clearance(chapter, xz(center))
+    {
+        return false;
+    }
+    chunk_seed(world_seed, chapter, coord) % 100 < 46
 }
 
 fn generate_chunk_plan(world_seed: u64, chapter: ChapterId, coord: ChunkCoord) -> ChunkPlan {
@@ -718,5 +744,33 @@ mod tests {
             retained.len()
                 <= ((CHUNK_UNLOAD_RADIUS * 2 + 1) * (CHUNK_UNLOAD_RADIUS * 2 + 1)) as usize
         );
+    }
+
+    #[test]
+    fn wilderness_encounter_selection_is_stable_and_keeps_story_origin_safe() {
+        let seed = 0xA55E_1234_5678_9ABC;
+        let chapter = ChapterId::AshenReliquary;
+        let origin = ChunkCoord::from_world(chapter_world_layout(chapter).player_spawn);
+        assert!(!should_spawn_wilderness_encounter(seed, chapter, origin));
+
+        let decisions = (-12..=12)
+            .flat_map(|z| {
+                (-12..=12).map(move |x| {
+                    should_spawn_wilderness_encounter(seed, chapter, ChunkCoord { x, z })
+                })
+            })
+            .collect::<Vec<_>>();
+        let repeated = (-12..=12)
+            .flat_map(|z| {
+                (-12..=12).map(move |x| {
+                    should_spawn_wilderness_encounter(seed, chapter, ChunkCoord { x, z })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(decisions, repeated);
+        let encounter_count = decisions.iter().filter(|spawn| **spawn).count();
+        assert!(encounter_count > 120);
+        assert!(encounter_count < 360);
     }
 }

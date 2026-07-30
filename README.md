@@ -14,7 +14,7 @@ The playable campaign has two connected chapters:
 - **Chapter I: The Ashen Reliquary** culminates in Malrec, Keeper of Ash.
 - **Chapter II: The Hollow Bastion** adds the Hollowbound vanguard, Choir reliquary, Vesper the Bell Warden, the Soul Font, and Nyxara the Hollow Matron.
 
-Each chapter anchors its main quest in a hand-authored origin region, then streams a deterministic procedural wilderness without a hard map edge. The world loads 48 m terrain chunks around the hero, unloads distant chunks, and recreates the same biome, rocks, deadwood, crystals, and ruins whenever a seed and chunk coordinate are revisited. The minimap is a player-centered local radar; the objective compass leads back to distant story landmarks.
+Each chapter anchors its main quest in a hand-authored origin region, then streams a deterministic procedural wilderness without a hard map edge. The world loads 48 m terrain chunks around the hero, unloads distant chunks, and recreates the same biome, rocks, deadwood, crystals, ruins, and chapter-specific enemy formation whenever a seed and chunk coordinate are revisited. Distant packs gain measured threat while their size and affixes follow the selected difficulty. The minimap is a player-centered local radar; the objective compass leads back to distant story landmarks.
 
 Continuing from Chapter I carries the hero's level, equipment, inventory, talents, runes, codex, gems, armory, potion upgrades, and companion into Chapter II. Completing Chapter II advances the difficulty and begins the next campaign cycle.
 
@@ -340,7 +340,7 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Keep found weapons in a limited inventory while higher-scoring gear auto-equips based on damage, crit, health, armor, and quality.
 - Manually cycle equipped weapons from the inventory to trade damage, armor, crit, health, and legendary powers.
 - Save and load player progress, Ember Paragon rank and XP, companion rank, XP, stance, and command cooldown, fury, barrier, evade state, Nephalem Surge charge, active window, Surge kill progress, Ashen Pylon kill progress, Ashen Threat meter and surge progress, boss break count, Primal Ember Cache rewards, Echo Keystones, claimed primal-cache items, Malrec Soul Sigils, opened Soul Sigil Trophy Caches, primal-infusion count, Treasure Vault openings, Nemesis kills, champion pack progress, cursed ambush progress, breakable smash progress, health-globe pickup progress, Last Stand potion progress, shrine resonance progress, Ashen Alchemy recipe progress, loot filter progress, Codex Adept kill progress, Set Adept kill progress, Gem Adept socket progress, Affix Hunter progress, Affix Codex mask progress, Reliquary Altar start bonuses, and whether Malrec enraged, soul ward checkpoint and revive count, shrine and Ashen Pylon buffs, selected and active elixir type, used elixir types, potion-use count, attuned codex power, three armory loadout slots, Glory stacks, Valor stacks, talents, inventory, legendary equipment, socketed gems, charms, gold, ember shards, affix essence, ancient augment count, salvage cache progress, kills, chapter state, blood obelisk and Ember Rift states, bounty progress, challenge progress, mastery rank, difficulty, active ordeal and rotating ordeal affix, lore journal, milestones, bestiary, used objectives including the renewal well, and smashed breakables with a local RON save file; best-clear records, per-difficulty clear counts, lifetime kills, lifetime gold, best rating, hero legacy combat records, failed-run Soul Remnant totals, and shared stash material banks are stored separately in `saves/profile.ron`.
-- Choose Normal, Nightmare, Hell, or Torment before starting; higher difficulties scale enemy health, enemy damage, XP, and gold.
+- Choose Normal, Nightmare, Hell, or Torment before starting; higher difficulties scale enemy health, damage, movement speed, attack cadence, projectile speed, warning windows, signature-skill frequency, wilderness pack size, XP, and gold.
 - Difficulties unlock from persistent profile clears: Normal is open by default, then Nightmare after a Normal clear, Hell after a Nightmare clear, and Torment after a Hell clear.
 - After victory, replay the current difficulty with `R` or push to the next difficulty with `Space` / `Enter`; the victory recap calls out the newly unlocked next difficulty, and Torment clears stay on Torment for repeated endgame runs.
 - Each difficulty activates a base chapter ordeal: Ashen Echoes, Blood Tithe, Emberstorm, or Torment Brand modify enemy toughness, incoming damage, hazard damage, and rewards.
@@ -389,15 +389,15 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Spend level-up talent points on damage, survivability, or cooldown reduction; investing in Wrath, Vigor, and Focus completes Talent Adept.
 - Keep earning Ember Paragon XP after level 6; each Paragon rank rotates permanent damage, health, critical chance, and armor gains for long-tail progression, and rank 1 completes the Paragon Awakened challenge and Ember Paragon milestone.
 - Cycle skill runes for dash cleanse/reap, rupture expose/hemorrhage, and nova ember/frost variants; landing hits with Reap dash, Hemorrhage rupture, and Frost nova in one run completes Rune Weaver.
-- Chapter mobs now cover distinct combat roles: Ashbone Guards hold the line, Ashbone Stalkers rush and punish greed, Ashen Reliquary Marksmen pressure movement with long-range projectiles, Reliquary Bonebreakers telegraph heavy shockwaves, Cinder Acolytes ignite the player, and dash slash clears burning.
+- Both chapters now field distinct combat roles: Ashbone Guards and Hollowbound Thralls hold the line; Ashbone and Hollowbound Stalkers rush and flank; Cinder and Choir casters control space; Reliquary Marksmen and Hollow Cantors maintain range; Bonebreakers and Soul Reavers advance slowly behind heavy shockwaves; and each warden carries a signature rune attack.
 - Combat, chapter objectives, and interactable sites use Blender-generated hero and enemy silhouettes, named hit bones, shrines, wells, rifts, pylons, lore pages, breakables, slash arcs, hit sparks, bone shatters, bone-impact bursts, blood sprays, execution blood seals, arcane impacts, holy impacts, ember impacts, frost impacts, void impacts, guard-clash sparks, armor-break shards, soul-ward hits, hit-bone runes, hit-bone locks, marrow flashes, fracture echoes, shadow bursts, headshot bursts, critical bone crowns, critical bursts, dash shadow trails, stagger bursts, objective sigils, ember vents, boss summoning seals, pulsing elite affix aura rings with colored threat lights, and high-value loot prisms for readable hit, movement, hazard, mainline, boss-break, exploration, elite-pressure, and death-reward feedback.
 - Regenerate the Hollow Bastion enemy, boss, Soul Font, and soul-fissure GLBs with Blender using `blender --background --python tools/blender/generate_hollow_bastion.py`.
 - Key reliquary sites, shrines, rifts, ember vents, and the boss summoning seal cast colored pulsing point lights so threats and rewards read clearly in the isometric dungeon.
 - Combat events play generated, gain-balanced audio cues for hits, criticals, loot, danger warnings, enemy deaths, victory, and defeat, with boss and clear cues mixed above common hit spam.
 - Hit feedback is placed at named hit-bone contact zones such as head, chest, weapon, left, and right so criticals, skeletons, guarded enemies, arcane elites, jailer/frozen enemies, vampiric or desecrator enemies, cultists, Seal Warden Vhal, and bosses read differently in motion.
 - Critical hits and important elite, treasure, nemesis, and boss kills trigger short camera shake for heavier combat impact.
-- Malrec uses a close-range ember shockwave with a visible ground marker.
-- Build Malrec's stagger meter with direct skill hits, then punish the exposed Keeper during a short bonus-damage window.
+- Malrec cycles Ashen Guillotine, alternating Crucible Rings, and Keeper's Cage; Nyxara answers with Soul Fissure Choir, Soul Lance lanes, and an interruptible Hollow Crescendo. Their third skill unlocks in phase two or immediately on Hell and Torment, while difficulty shortens skill cooldowns and hazard warning times.
+- Build either boss's stagger meter with direct attacks to cancel active signature hazards and open a short bonus-damage window.
 - Malrec enters a second phase below half health, summons an affixed stalker, marksman, and Bonebreaker wave, then escalates into Ashen Enrage with marksman/brute pressure if the fight drags on; the HUD tracks phase, health percentage, stagger, and enrage countdown.
 - Ember vents create timed dungeon hazards that punish poor positioning.
 - Elite enemies appear with Frenzied, Vampiric, Molten, Shielded, Arcane, Jailer, Frozen, Desecrator, and Reflective affixes that change speed, sustain, death hazards, damage resistance, space control, movement control, corrupted ground pressure, reflected damage pressure, and affix essence rewards; slaying three multi-affix elites completes Affix Hunter, and cataloguing six distinct elite affix types completes Affix Codex.
@@ -408,11 +408,15 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 
 ## Assets
 
-Run the Blender generator after changing model scripts:
+Run the Blender generators after changing model scripts:
 
 ```bash
 blender --background --python tools/blender/generate_assets.py
+blender --background --python tools/blender/generate_hollow_bastion.py
+blender --background --python tools/blender/generate_enemy_roster.py
 ```
+
+The roster generator reproducibly rebuilds the differentiated enemy silhouettes and the Malrec/Nyxara signature-skill VFX in `assets/models/`.
 
 Regenerate local audio cues after changing sound scripts:
 

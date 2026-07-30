@@ -5763,25 +5763,38 @@ fn action_guide_boss_pressure(
     }
     if boss.enrage_started {
         return Some(match progress.chapter_id() {
-            ChapterId::AshenReliquary => "Ashen Enrage: kite vents, burst after slam".to_string(),
+            ChapterId::AshenReliquary => {
+                "Ashen Enrage: cross Crucible Rings, avoid Keeper's Cage".to_string()
+            }
             ChapterId::HollowBastion => {
-                "Hollow Crescendo: kite soul fissures, burst after toll".to_string()
+                "Hollow Crescendo: leave Soul Fissure Choir, sidestep Soul Lance".to_string()
             }
         });
     }
     if boss.phase_two_started && boss.enrage_remaining_secs <= 6.0 {
+        let pressure = match progress.chapter_id() {
+            ChapterId::AshenReliquary => "Ashen Enrage",
+            ChapterId::HollowBastion => "Crescendo",
+        };
         return Some(format!(
-            "Enrage soon: Q/E break {}/{} before fire",
+            "{pressure} soon: Q/E break {}/{}",
             boss.stagger_meter.round(),
             boss.stagger_threshold.round()
         ));
     }
     if boss.phase_two_started {
-        return Some(format!(
-            "Phase two: build stagger {}/{}; hold Y",
-            boss.stagger_meter.round(),
-            boss.stagger_threshold.round()
-        ));
+        return Some(match progress.chapter_id() {
+            ChapterId::AshenReliquary => format!(
+                "Phase two: cross Crucible Rings; stagger {}/{}",
+                boss.stagger_meter.round(),
+                boss.stagger_threshold.round()
+            ),
+            ChapterId::HollowBastion => format!(
+                "Phase two: clear soul fissures; stagger {}/{}",
+                boss.stagger_meter.round(),
+                boss.stagger_threshold.round()
+            ),
+        });
     }
     None
 }
@@ -10023,8 +10036,18 @@ fn action_belt_target_prompt(target: &TargetInfo, evade: &Evade) -> Option<Strin
     if details.contains("window: burst now") {
         return Some("Y burst window".to_string());
     }
-    if details.contains("break before enrage") {
+    if details.contains("break before")
+        && (details.contains("Enrage")
+            || details.contains("Crescendo")
+            || details.contains("enrage"))
+    {
         return Some("RMB/Q break".to_string());
+    }
+    if details.contains("Soul Fissure Choir") || details.contains("Soul Lance") {
+        return Some(evade_or_move_prompt(evade, "leave fissures"));
+    }
+    if details.contains("Ashen Guillotine") || details.contains("Crucible Rings") {
+        return Some(evade_or_move_prompt(evade, "cross rings"));
     }
     if details.contains("kite fire") {
         return Some(evade_or_move_prompt(evade, "kite fire"));
@@ -10494,10 +10517,10 @@ fn boss_hud_summary(
     boon: Option<&ChapterBoon>,
 ) -> String {
     let health_percent = percent(health.current, health.max).round();
-    let phase_text = boss_hud_phase_text(phase, staggered);
-    let tactic_text = boss_hud_tactic(health_percent, phase, stagger, staggered);
+    let phase_text = boss_hud_phase_text(enemy, phase, staggered);
+    let tactic_text = boss_hud_tactic(enemy, health_percent, phase, stagger, staggered);
     let stagger_text = boss_stagger_summary(stagger, staggered);
-    let mechanic_text = boss_hud_mechanic_text(health_percent, phase, stagger, staggered);
+    let mechanic_text = boss_hud_mechanic_text(enemy, health_percent, phase, stagger, staggered);
     let boon_text = boss_boon_summary(boon);
     format!(
         "{} {:.0}% | {} | {}\n{} | {} | {}",
@@ -10511,25 +10534,40 @@ fn boss_hud_summary(
     )
 }
 
-fn boss_hud_phase_text(phase: &BossPhase, staggered: Option<&Staggered>) -> String {
+fn boss_is_hollow_matron(enemy: &Enemy) -> bool {
+    enemy.id == "hollow_matron"
+}
+
+fn boss_hud_phase_text(enemy: &Enemy, phase: &BossPhase, staggered: Option<&Staggered>) -> String {
     if let Some(staggered) = staggered {
         return format!("EXECUTE {:.0}s", staggered.timer.remaining_secs().ceil());
     }
     if phase.enrage_started() {
-        return "ENRAGED".to_string();
+        return if boss_is_hollow_matron(enemy) {
+            "HOLLOW CRESCENDO".to_string()
+        } else {
+            "ASHEN ENRAGE".to_string()
+        };
     }
     if phase.phase_two_started() {
         let remaining = phase.enrage_remaining_secs().ceil();
-        return if remaining <= 6.0 {
-            format!("DANGER ENRAGE {remaining:.0}s")
+        return if boss_is_hollow_matron(enemy) {
+            if remaining <= 6.0 {
+                format!("DANGER CRESCENDO {remaining:.0}s")
+            } else {
+                format!("Phase II Crescendo {remaining:.0}s")
+            }
+        } else if remaining <= 6.0 {
+            format!("DANGER ASHEN ENRAGE {remaining:.0}s")
         } else {
-            format!("Phase II enrage {remaining:.0}s")
+            format!("Phase II Ashen Enrage {remaining:.0}s")
         };
     }
     "Phase I".to_string()
 }
 
 fn boss_hud_tactic(
+    enemy: &Enemy,
     health_percent: f32,
     phase: &BossPhase,
     stagger: Option<&BossStagger>,
@@ -10539,32 +10577,55 @@ fn boss_hud_tactic(
         return "Burst: Y/Q/E now".to_string();
     }
     if phase.enrage_started() {
-        return if health_percent <= 18.0 {
-            "Kill now, kite fire".to_string()
+        return if boss_is_hollow_matron(enemy) {
+            if health_percent <= 18.0 {
+                "Finish Nyxara; leave fissures".to_string()
+            } else {
+                "Leave fissures; sidestep Soul Lance".to_string()
+            }
+        } else if health_percent <= 18.0 {
+            "Kill now; dodge Ashen Guillotine".to_string()
         } else {
-            "Kite fire, punish gaps".to_string()
+            "Cross Crucible Rings; avoid Cage".to_string()
         };
     }
     if phase.phase_two_started() {
         let percent_to_break = boss_hud_stagger_percent(stagger, staggered);
-        return if phase.enrage_remaining_secs() <= 3.0 {
-            "DANGER: all burst or kite".to_string()
+        return if boss_is_hollow_matron(enemy) && phase.enrage_remaining_secs() <= 3.0 {
+            "DANGER: burst or clear fissures".to_string()
+        } else if phase.enrage_remaining_secs() <= 3.0 {
+            "DANGER: burst or cross Rings".to_string()
+        } else if boss_is_hollow_matron(enemy) && phase.enrage_remaining_secs() <= 6.0 {
+            "DANGER: break before Crescendo".to_string()
         } else if phase.enrage_remaining_secs() <= 6.0 {
-            "DANGER: break now".to_string()
+            "DANGER: break before Ashen Enrage".to_string()
         } else if percent_to_break >= 72.0 {
-            "Break soon: save burst".to_string()
+            if boss_is_hollow_matron(enemy) {
+                "Break soon; save burst for Crescendo".to_string()
+            } else {
+                "Break soon; save burst for Rings".to_string()
+            }
+        } else if boss_is_hollow_matron(enemy) {
+            "Build stagger before Crescendo".to_string()
         } else {
-            "Build stagger before enrage".to_string()
+            "Build stagger before Ashen Enrage".to_string()
         };
     }
     if health_percent <= 55.0 {
-        "Push phase II with Surge".to_string()
+        if boss_is_hollow_matron(enemy) {
+            "Push phase II; expect Fissure Choir".to_string()
+        } else {
+            "Push phase II; expect Crucible Rings".to_string()
+        }
+    } else if boss_is_hollow_matron(enemy) {
+        "Read Soul Lance; hold potion".to_string()
     } else {
-        "Build fury and hold potion".to_string()
+        "Read Ashen Guillotine; hold potion".to_string()
     }
 }
 
 fn boss_hud_mechanic_text(
+    enemy: &Enemy,
     health_percent: f32,
     phase: &BossPhase,
     stagger: Option<&BossStagger>,
@@ -10578,19 +10639,34 @@ fn boss_hud_mechanic_text(
         );
     }
     if phase.enrage_started() {
-        return "ENRAGE floor fire; punish gaps".to_string();
+        return if boss_is_hollow_matron(enemy) {
+            "Fissure Choir + Soul Lance + Crescendo".to_string()
+        } else {
+            "Guillotine + Rings + Keeper's Cage".to_string()
+        };
     }
     if phase.phase_two_started() {
         let stagger_percent = boss_hud_stagger_percent(stagger, staggered).round();
+        let pressure = if boss_is_hollow_matron(enemy) {
+            "Crescendo"
+        } else {
+            "Ashen Enrage"
+        };
         return format!(
-            "Stagger {stagger_percent:.0}% before enrage {:.0}s",
+            "Stagger {stagger_percent:.0}% before {pressure} {:.0}s",
             phase.enrage_remaining_secs().ceil()
         );
     }
     if health_percent <= 55.0 {
-        "Transition soon: boon, potion, Surge".to_string()
+        if boss_is_hollow_matron(enemy) {
+            "Transition: Soul Fissure Choir next".to_string()
+        } else {
+            "Transition: Crucible Rings next".to_string()
+        }
+    } else if boss_is_hollow_matron(enemy) {
+        "Soul Lance -> Soul Fissure Choir".to_string()
     } else {
-        "Read swings; build Fury".to_string()
+        "Ashen Guillotine -> Crucible Rings".to_string()
     }
 }
 
@@ -22394,7 +22470,7 @@ mod tests {
                 staggered_remaining_secs: 0.0,
             }),
         });
-        assert!(guide.contains("Phase two: build stagger 40/125; hold Y"));
+        assert!(guide.contains("Phase two: cross Crucible Rings; stagger 40/125"));
 
         let guide = action_guide_summary(ActionGuideInputs {
             progress: &progress,
@@ -22420,7 +22496,7 @@ mod tests {
                 staggered_remaining_secs: 0.0,
             }),
         });
-        assert!(guide.contains("Enrage soon: Q/E break 92/125 before fire"));
+        assert!(guide.contains("Ashen Enrage soon: Q/E break 92/125"));
 
         let guide = action_guide_summary(ActionGuideInputs {
             progress: &progress,
@@ -22446,7 +22522,7 @@ mod tests {
                 staggered_remaining_secs: 0.0,
             }),
         });
-        assert!(guide.contains("Ashen Enrage: kite vents, burst after slam"));
+        assert!(guide.contains("Ashen Enrage: cross Crucible Rings, avoid Keeper's Cage"));
 
         let guide = action_guide_summary(ActionGuideInputs {
             progress: &progress,
@@ -22473,6 +22549,38 @@ mod tests {
             }),
         });
         assert!(guide.contains("Execute window: Y/Q/E burst Malrec 3s"));
+
+        let mut hollow_progress = ChapterProgress::for_chapter(ChapterId::HollowBastion);
+        hollow_progress.phase = ChapterPhase::Boss;
+        let hollow_guide = action_guide_summary(ActionGuideInputs {
+            progress: &hollow_progress,
+            stats: &stats,
+            boon: &boon,
+            bounty: &bounty,
+            obelisk: &obelisk,
+            rift: &rift,
+            health: &health,
+            potions: &potions,
+            death_ward: &death_ward,
+            surge: &surge,
+            level: &test_level(3),
+            talents: &test_talents(0, 1, 1, 1),
+            equipment: &equipment,
+            companion: &companion,
+            boss: Some(BossActionGuideState {
+                phase_two_started: true,
+                enrage_started: true,
+                enrage_remaining_secs: 0.0,
+                stagger_meter: 20.0,
+                stagger_threshold: 125.0,
+                staggered_remaining_secs: 0.0,
+            }),
+        });
+        assert!(
+            hollow_guide
+                .contains("Hollow Crescendo: leave Soul Fissure Choir, sidestep Soul Lance")
+        );
+        assert!(!hollow_guide.contains("kite fire"));
     }
 
     #[test]
@@ -23696,7 +23804,7 @@ mod tests {
 
     #[test]
     fn boss_hud_summary_prioritizes_execute_window_when_staggered() {
-        let enemy = Enemy {
+        let mut enemy = Enemy {
             id: "keeper".to_string(),
             display_name: "Malrec, Keeper of Ash".to_string(),
             affixes: vec![],
@@ -23760,8 +23868,8 @@ mod tests {
         };
         let phase_two = boss_hud_summary(&enemy, &health, &phase, Some(&near_break), None, None);
         assert!(phase_two.contains("Phase II"));
-        assert!(phase_two.contains("Stagger 77% before enrage 12s"));
-        assert!(phase_two.contains("Break soon: save burst"));
+        assert!(phase_two.contains("Stagger 77% before Ashen Enrage 12s"));
+        assert!(phase_two.contains("Break soon; save burst for Rings"));
 
         let danger_phase = BossPhase::new_phase_two(5.2);
         let danger = boss_hud_summary(
@@ -23772,9 +23880,9 @@ mod tests {
             None,
             None,
         );
-        assert!(danger.contains("DANGER ENRAGE 6s"));
-        assert!(danger.contains("Stagger 77% before enrage 6s"));
-        assert!(danger.contains("DANGER: break now"));
+        assert!(danger.contains("DANGER ASHEN ENRAGE 6s"));
+        assert!(danger.contains("Stagger 77% before Ashen Enrage 6s"));
+        assert!(danger.contains("DANGER: break before Ashen Enrage"));
 
         let last_call_phase = BossPhase::new_phase_two(2.4);
         let last_call = boss_hud_summary(
@@ -23785,8 +23893,8 @@ mod tests {
             None,
             None,
         );
-        assert!(last_call.contains("DANGER ENRAGE 3s"));
-        assert!(last_call.contains("DANGER: all burst or kite"));
+        assert!(last_call.contains("DANGER ASHEN ENRAGE 3s"));
+        assert!(last_call.contains("DANGER: burst or cross Rings"));
 
         let enrage = BossPhase::new_enraged();
         let low_health = Health {
@@ -23794,9 +23902,36 @@ mod tests {
             max: 200.0,
         };
         let enraged = boss_hud_summary(&enemy, &low_health, &enrage, Some(&stagger), None, None);
-        assert!(enraged.contains("ENRAGED"));
-        assert!(enraged.contains("ENRAGE floor fire"));
-        assert!(enraged.contains("Kill now, kite fire"));
+        assert!(enraged.contains("ASHEN ENRAGE"));
+        assert!(enraged.contains("Guillotine + Rings + Keeper's Cage"));
+        assert!(enraged.contains("Kill now; dodge Ashen Guillotine"));
+
+        enemy.id = "hollow_matron".to_string();
+        enemy.display_name = "Nyxara, Hollow Matron".to_string();
+        let matron_phase_two =
+            boss_hud_summary(&enemy, &health, &phase, Some(&near_break), None, None);
+        assert!(matron_phase_two.contains("Phase II Crescendo 12s"));
+        assert!(matron_phase_two.contains("Stagger 77% before Crescendo 12s"));
+        assert!(matron_phase_two.contains("Break soon; save burst for Crescendo"));
+
+        let matron_danger = boss_hud_summary(
+            &enemy,
+            &health,
+            &danger_phase,
+            Some(&near_break),
+            None,
+            None,
+        );
+        assert!(matron_danger.contains("DANGER CRESCENDO 6s"));
+        assert!(matron_danger.contains("DANGER: break before Crescendo"));
+
+        let matron_enraged =
+            boss_hud_summary(&enemy, &low_health, &enrage, Some(&stagger), None, None);
+        assert!(matron_enraged.contains("HOLLOW CRESCENDO"));
+        assert!(matron_enraged.contains("Fissure Choir + Soul Lance + Crescendo"));
+        assert!(matron_enraged.contains("Finish Nyxara; leave fissures"));
+        assert!(!matron_enraged.contains("kite fire"));
+        assert!(!matron_enraged.contains("Guillotine"));
     }
 
     #[test]

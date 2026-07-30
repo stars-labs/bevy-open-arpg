@@ -1,6 +1,5 @@
 use crate::{
     AudioSettings, GameState,
-    bestiary::chapter_enemy_counterplay,
     combat::BasicAttackIntent,
     data::EnemyAttackKind,
     enemy::{
@@ -1061,7 +1060,7 @@ fn attach_enemy_health_bars(
     let focus_ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.78, 0.18, 0.78),
         emissive: Color::srgb(1.0, 0.45, 0.08).into(),
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         ..default()
     });
 
@@ -1599,7 +1598,11 @@ fn target_info_from_enemy(
 fn enemy_target_subtitle(enemy: &Enemy, boss_phase: Option<&BossPhase>) -> String {
     if let Some(phase) = boss_phase {
         let phase_label = if phase.enrage_started() {
-            "BOSS - ENRAGED"
+            match enemy.id.as_str() {
+                "hollow_matron" => "BOSS - HOLLOW CRESCENDO",
+                "keeper" => "BOSS - ASHEN ENRAGE",
+                _ => "BOSS - ENRAGED",
+            }
         } else if phase.phase_two_started() {
             "BOSS - PHASE II"
         } else {
@@ -1611,10 +1614,13 @@ fn enemy_target_subtitle(enemy: &Enemy, boss_phase: Option<&BossPhase>) -> Strin
     let role = enemy_role_label(enemy);
     let attack = enemy_attack_kind_label(&enemy.attack_kind);
     if let Some(role) = role {
-        return if tier.is_empty() {
+        return if tier.is_empty()
+            || tier.eq_ignore_ascii_case(role)
+            || role
+                .split_whitespace()
+                .any(|word| word.eq_ignore_ascii_case(tier))
+        {
             format!("{role} - {attack}")
-        } else if tier.eq_ignore_ascii_case(role) {
-            format!("{tier} - {attack}")
         } else {
             format!("{tier} {role} - {attack}")
         };
@@ -1626,19 +1632,94 @@ fn enemy_target_subtitle(enemy: &Enemy, boss_phase: Option<&BossPhase>) -> Strin
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnemyRoleProfile {
+    label: &'static str,
+    tactic_role: &'static str,
+    tip: &'static str,
+}
+
+fn enemy_role_profile(enemy_id: &str) -> Option<EnemyRoleProfile> {
+    let (label, tactic_role, tip) = match enemy_id {
+        "skeleton" => (
+            "Ash Vanguard",
+            "ash vanguard",
+            "sidestep Shield Bash, punish guard",
+        ),
+        "bone_stalker" => (
+            "Ash Stalker",
+            "ash stalker",
+            "sidestep Pouncing Rend, punish recovery",
+        ),
+        "cultist" => (
+            "Cinder Caster",
+            "cinder caster",
+            "split Cinder Duet, punish channel",
+        ),
+        "ashen_marksman" => (
+            "Ash Marksman",
+            "ash marksman",
+            "close gap, weave through Trident Volley",
+        ),
+        "reliquary_brute" => (
+            "Ash Juggernaut",
+            "ash juggernaut",
+            "sidestep quake line, punish slam",
+        ),
+        "seal_warden" => ("Seal Warden", "seal warden", "break ward, leave Seal rune"),
+        "hollow_thrall" => (
+            "Hollow Vanguard",
+            "hollow vanguard",
+            "sidestep Shield Bash, punish soul guard",
+        ),
+        "hollow_stalker" => (
+            "Hollow Stalker",
+            "hollow stalker",
+            "sidestep Pouncing Rend, punish recovery",
+        ),
+        "choir_acolyte" => (
+            "Choir Caster",
+            "choir caster",
+            "split Hollow Duet, punish chant",
+        ),
+        "choir_marksman" => (
+            "Choir Cantor",
+            "choir cantor",
+            "close gap, weave through Trident Volley",
+        ),
+        "hollow_reaver" => (
+            "Hollow Juggernaut",
+            "hollow juggernaut",
+            "sidestep quake line, punish reave",
+        ),
+        "bell_warden" => (
+            "Bell Warden",
+            "bell warden",
+            "break soul ward, leave Bell rune",
+        ),
+        "treasure_imp" => ("Treasure", "treasure", "burst before escape"),
+        "keeper" => (
+            "Ash Boss",
+            "ash boss",
+            "break stagger; read Guillotine, Rings, Cage",
+        ),
+        "hollow_matron" => (
+            "Hollow Boss",
+            "hollow boss",
+            "break Crescendo; dodge Fissures and Soul Lance",
+        ),
+        "nemesis" => ("Nemesis", "nemesis", "kite affixes, save burst"),
+        _ => return None,
+    };
+    Some(EnemyRoleProfile {
+        label,
+        tactic_role,
+        tip,
+    })
+}
+
 fn enemy_role_label(enemy: &Enemy) -> Option<&'static str> {
-    match enemy.id.as_str() {
-        "skeleton" => Some("Guard"),
-        "bone_stalker" => Some("Chaser"),
-        "cultist" => Some("Caster"),
-        "seal_warden" => Some("Warden"),
-        "ashen_marksman" => Some("Marksman"),
-        "reliquary_brute" => Some("Heavy"),
-        "treasure_imp" => Some("Treasure"),
-        "keeper" => Some("Boss"),
-        "nemesis" => Some("Nemesis"),
-        _ => None,
-    }
+    enemy_role_profile(&enemy.id).map(|profile| profile.label)
 }
 
 fn enemy_attack_kind_label(kind: &EnemyAttackKind) -> &'static str {
@@ -1702,21 +1783,10 @@ fn seal_warden_ward_detail(ward: &SealWardenWard) -> String {
 }
 
 fn enemy_role_tactic(enemy: &Enemy) -> Option<String> {
-    let role = match enemy.id.as_str() {
-        "skeleton" => "guard",
-        "bone_stalker" => "chaser",
-        "cultist" => "caster",
-        "seal_warden" => "warden",
-        "ashen_marksman" => "marksman",
-        "reliquary_brute" => "heavy",
-        "treasure_imp" => "treasure",
-        "keeper" => "boss",
-        "nemesis" => "nemesis",
-        _ => return None,
-    };
+    let profile = enemy_role_profile(&enemy.id)?;
     Some(format!(
-        "role: {role} | tip: {}",
-        chapter_enemy_counterplay(&enemy.id)
+        "role: {} | tip: {}",
+        profile.tactic_role, profile.tip
     ))
 }
 
@@ -1730,16 +1800,33 @@ fn enemy_threat_action_summary(
     }
     if let Some(phase) = boss_phase {
         if phase.enrage_started() {
-            return Some("danger: kite fire, burst after slam".to_string());
+            return Some(match enemy.id.as_str() {
+                "hollow_matron" => {
+                    "danger: leave Soul Fissure Choir, sidestep Soul Lance".to_string()
+                }
+                "keeper" => "danger: sidestep Ashen Guillotine, cross Crucible Rings".to_string(),
+                _ => "danger: kite hazards, punish recovery".to_string(),
+            });
         }
         if phase.phase_two_started() && phase.enrage_remaining_secs() <= 6.0 {
-            return Some("danger: break before enrage".to_string());
+            return Some(match enemy.id.as_str() {
+                "hollow_matron" => "danger: break before Hollow Crescendo".to_string(),
+                "keeper" => "danger: break before Ashen Enrage".to_string(),
+                _ => "danger: break before enrage".to_string(),
+            });
         }
     }
     let remaining = enemy.attack_timer.remaining_secs();
-    if enemy.id == "seal_warden" && remaining <= enemy_attack_imminent_window(&enemy.attack_kind) {
+    if matches!(enemy.id.as_str(), "seal_warden" | "bell_warden")
+        && remaining <= enemy_attack_imminent_window(&enemy.attack_kind)
+    {
         return Some(format!(
-            "incoming: leave seal rune {:.1}s",
+            "incoming: leave {} rune {:.1}s",
+            if enemy.id == "bell_warden" {
+                "toll"
+            } else {
+                "seal"
+            },
             remaining.max(0.0)
         ));
     }
@@ -2589,7 +2676,7 @@ mod tests {
 
         assert!(info.visible);
         assert_eq!(info.name, "Frenzied Arcane Cultist");
-        assert_eq!(info.subtitle, "ELITE Caster - Projectile");
+        assert_eq!(info.subtitle, "ELITE Cinder Caster - Projectile");
         assert!(info.health_line.contains("44/80 HP"));
         assert!(info.health_line.contains("55%"));
         assert!(info.details.contains("Frenzied / Arcane"));
@@ -2608,61 +2695,74 @@ mod tests {
             current: 70.0,
             max: 100.0,
         };
-
-        let mut stalker = test_enemy("bone_stalker", vec![]);
-        stalker.attack_kind = crate::data::EnemyAttackKind::Melee;
-        let stalker_info = target_info_from_enemy(&stalker, &health, None, None, None, None);
-        assert_eq!(stalker_info.subtitle, "Chaser - Melee");
-        assert!(
-            stalker_info
-                .details
-                .contains("role: chaser | tip: kite rush, punish whiffs")
-        );
-
-        let mut marksman = test_enemy("ashen_marksman", vec![]);
-        marksman.attack_kind = crate::data::EnemyAttackKind::Projectile;
-        let marksman_info = target_info_from_enemy(&marksman, &health, None, None, None, None);
-        assert_eq!(marksman_info.subtitle, "Marksman - Projectile");
-        assert!(
-            marksman_info
-                .details
-                .contains("role: marksman | tip: close gap, sidestep bolts")
-        );
-
-        let mut brute = test_enemy("reliquary_brute", vec![EnemyAffix::Molten]);
-        brute.attack_kind = crate::data::EnemyAttackKind::Shockwave;
-        let brute_info = target_info_from_enemy(&brute, &health, None, None, None, None);
-        assert_eq!(brute_info.subtitle, "RARE Heavy - Shockwave");
-        assert!(
-            brute_info
-                .details
-                .contains("role: heavy | tip: bait shockwave, punish slam")
-        );
-
-        let guard_info = target_info_from_enemy(
-            &test_enemy("skeleton", vec![]),
-            &health,
-            None,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(guard_info.subtitle, "Guard - Melee");
-        assert!(
-            guard_info
-                .details
-                .contains("role: guard | tip: flank shield guard")
-        );
-
-        let mut cultist = test_enemy("cultist", vec![]);
-        cultist.attack_kind = crate::data::EnemyAttackKind::Projectile;
-        let cultist_info = target_info_from_enemy(&cultist, &health, None, None, None, None);
-        assert_eq!(cultist_info.subtitle, "Caster - Projectile");
-        assert!(
-            cultist_info
-                .details
-                .contains("role: caster | tip: dash through fire")
-        );
+        for (id, attack_kind, subtitle, tactic) in [
+            (
+                "skeleton",
+                crate::data::EnemyAttackKind::Melee,
+                "Ash Vanguard - Melee",
+                "role: ash vanguard | tip: sidestep Shield Bash, punish guard",
+            ),
+            (
+                "bone_stalker",
+                crate::data::EnemyAttackKind::Melee,
+                "Ash Stalker - Melee",
+                "role: ash stalker | tip: sidestep Pouncing Rend, punish recovery",
+            ),
+            (
+                "cultist",
+                crate::data::EnemyAttackKind::Projectile,
+                "Cinder Caster - Projectile",
+                "role: cinder caster | tip: split Cinder Duet, punish channel",
+            ),
+            (
+                "ashen_marksman",
+                crate::data::EnemyAttackKind::Projectile,
+                "Ash Marksman - Projectile",
+                "role: ash marksman | tip: close gap, weave through Trident Volley",
+            ),
+            (
+                "reliquary_brute",
+                crate::data::EnemyAttackKind::Shockwave,
+                "Ash Juggernaut - Shockwave",
+                "role: ash juggernaut | tip: sidestep quake line, punish slam",
+            ),
+            (
+                "hollow_thrall",
+                crate::data::EnemyAttackKind::Melee,
+                "Hollow Vanguard - Melee",
+                "role: hollow vanguard | tip: sidestep Shield Bash, punish soul guard",
+            ),
+            (
+                "hollow_stalker",
+                crate::data::EnemyAttackKind::Melee,
+                "Hollow Stalker - Melee",
+                "role: hollow stalker | tip: sidestep Pouncing Rend, punish recovery",
+            ),
+            (
+                "choir_acolyte",
+                crate::data::EnemyAttackKind::Projectile,
+                "Choir Caster - Projectile",
+                "role: choir caster | tip: split Hollow Duet, punish chant",
+            ),
+            (
+                "choir_marksman",
+                crate::data::EnemyAttackKind::Projectile,
+                "Choir Cantor - Projectile",
+                "role: choir cantor | tip: close gap, weave through Trident Volley",
+            ),
+            (
+                "hollow_reaver",
+                crate::data::EnemyAttackKind::Shockwave,
+                "Hollow Juggernaut - Shockwave",
+                "role: hollow juggernaut | tip: sidestep quake line, punish reave",
+            ),
+        ] {
+            let mut enemy = test_enemy(id, vec![]);
+            enemy.attack_kind = attack_kind;
+            let info = target_info_from_enemy(&enemy, &health, None, None, None, None);
+            assert_eq!(info.subtitle, subtitle, "{id}");
+            assert!(info.details.contains(tactic), "{id}: {}", info.details);
+        }
 
         let mut warden = test_enemy("seal_warden", vec![]);
         warden.attack_kind = crate::data::EnemyAttackKind::Projectile;
@@ -2672,11 +2772,11 @@ mod tests {
             broken: false,
         };
         let warden_info = target_info_from_enemy(&warden, &health, None, None, None, Some(&ward));
-        assert_eq!(warden_info.subtitle, "WARDEN - Projectile");
+        assert_eq!(warden_info.subtitle, "Seal Warden - Projectile");
         assert!(
             warden_info
                 .details
-                .contains("role: warden | tip: break ward, sidestep runes")
+                .contains("role: seal warden | tip: break ward, leave Seal rune")
         );
         assert!(warden_info.details.contains("ward 18/45"));
         let broken_ward = SealWardenWard {
@@ -2688,6 +2788,17 @@ mod tests {
             target_info_from_enemy(&warden, &health, None, None, None, Some(&broken_ward));
         assert!(broken_warden_info.details.contains("ward broken: punish"));
 
+        let mut bell_warden = test_enemy("bell_warden", vec![]);
+        bell_warden.attack_kind = crate::data::EnemyAttackKind::Projectile;
+        let bell_info =
+            target_info_from_enemy(&bell_warden, &health, None, None, None, Some(&ward));
+        assert_eq!(bell_info.subtitle, "Bell Warden - Projectile");
+        assert!(
+            bell_info
+                .details
+                .contains("role: bell warden | tip: break soul ward, leave Bell rune")
+        );
+
         let keeper_info = target_info_from_enemy(
             &test_enemy("keeper", vec![]),
             &health,
@@ -2696,11 +2807,26 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(keeper_info.subtitle, "BOSS - Melee");
+        assert_eq!(keeper_info.subtitle, "Ash Boss - Melee");
         assert!(
             keeper_info
                 .details
-                .contains("role: boss | tip: break stagger, deny enrage")
+                .contains("role: ash boss | tip: break stagger; read Guillotine, Rings, Cage")
+        );
+
+        let matron_info = target_info_from_enemy(
+            &test_enemy("hollow_matron", vec![]),
+            &health,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(matron_info.subtitle, "Hollow Boss - Melee");
+        assert!(
+            matron_info.details.contains(
+                "role: hollow boss | tip: break Crescendo; dodge Fissures and Soul Lance"
+            )
         );
     }
 
@@ -2735,6 +2861,11 @@ mod tests {
         let warden_info = target_info_from_enemy(&enemy, &health, None, None, None, None);
         assert!(warden_info.details.contains("incoming: leave seal rune"));
 
+        enemy.id = "bell_warden".to_string();
+        enemy.display_name = "Vesper, Bell Warden".to_string();
+        let bell_info = target_info_from_enemy(&enemy, &health, None, None, None, None);
+        assert!(bell_info.details.contains("incoming: leave toll rune"));
+
         let staggered = Staggered {
             timer: Timer::from_seconds(1.0, TimerMode::Once),
             damage_multiplier: 1.4,
@@ -2744,18 +2875,47 @@ mod tests {
         assert!(stagger_info.details.contains("window: burst now"));
 
         let boss_phase = BossPhase::new_phase_two(5.8);
-        let boss_info =
+        enemy.id = "keeper".to_string();
+        enemy.display_name = "Malrec, Keeper of Ash".to_string();
+        let keeper_info =
             target_info_from_enemy(&enemy, &health, None, None, Some(&boss_phase), None);
-        assert!(boss_info.details.contains("danger: break before enrage"));
+        assert!(
+            keeper_info
+                .details
+                .contains("danger: break before Ashen Enrage")
+        );
+        assert_eq!(keeper_info.subtitle, "BOSS - PHASE II");
+
+        enemy.id = "hollow_matron".to_string();
+        enemy.display_name = "Nyxara, Hollow Matron".to_string();
+        let matron_info =
+            target_info_from_enemy(&enemy, &health, None, None, Some(&boss_phase), None);
+        assert!(
+            matron_info
+                .details
+                .contains("danger: break before Hollow Crescendo")
+        );
 
         let enraged = BossPhase::new_enraged();
-        let enraged_info =
+        let matron_enraged =
             target_info_from_enemy(&enemy, &health, None, None, Some(&enraged), None);
         assert!(
-            enraged_info
+            matron_enraged
                 .details
-                .contains("danger: kite fire, burst after slam")
+                .contains("danger: leave Soul Fissure Choir, sidestep Soul Lance")
         );
+        assert_eq!(matron_enraged.subtitle, "BOSS - HOLLOW CRESCENDO");
+        assert!(!matron_enraged.details.contains("kite fire"));
+
+        enemy.id = "keeper".to_string();
+        let keeper_enraged =
+            target_info_from_enemy(&enemy, &health, None, None, Some(&enraged), None);
+        assert!(
+            keeper_enraged
+                .details
+                .contains("danger: sidestep Ashen Guillotine, cross Crucible Rings")
+        );
+        assert_eq!(keeper_enraged.subtitle, "BOSS - ASHEN ENRAGE");
     }
 
     #[test]

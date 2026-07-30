@@ -536,6 +536,11 @@ struct PendingAttackInputs<'w, 's> {
 
 pub struct CombatPlugin;
 
+#[derive(SystemSet, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum CombatSet {
+    PlayerDamage,
+}
+
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CombatComboState>()
@@ -548,9 +553,14 @@ impl Plugin for CombatPlugin {
             .add_systems(
                 Update,
                 (
-                    (player_attacks, resolve_pending_player_arc_attacks).chain(),
-                    tick_conduit_lightning,
-                    tick_enemy_burning,
+                    (
+                        player_attacks,
+                        resolve_pending_player_arc_attacks,
+                        tick_conduit_lightning,
+                        tick_enemy_burning,
+                    )
+                        .chain()
+                        .in_set(CombatSet::PlayerDamage),
                     tick_hit_flash,
                     tick_combat_vfx,
                     tick_vulnerable,
@@ -1814,6 +1824,10 @@ fn damage_text(source: &str, damage: f32, critical: bool) -> String {
     }
 }
 
+fn is_boss_enemy(enemy: &Enemy) -> bool {
+    matches!(enemy.id.as_str(), "keeper" | "hollow_matron")
+}
+
 fn hit_impact_profile(
     enemy: &Enemy,
     critical: bool,
@@ -1822,7 +1836,7 @@ fn hit_impact_profile(
 ) -> HitImpactProfile {
     let tier = if boss_break {
         HitImpactTier::BossBreak
-    } else if enemy.id == "keeper" {
+    } else if is_boss_enemy(enemy) {
         HitImpactTier::Boss
     } else if enemy.id == "seal_warden"
         || enemy.id == "nemesis"
@@ -1947,7 +1961,7 @@ fn trigger_boss_stagger(
     stagger: Option<Mut<BossStagger>>,
     staggered: Option<&Staggered>,
 ) -> bool {
-    if enemy.id != "keeper" || staggered.is_some() {
+    if !can_trigger_boss_stagger(enemy, staggered) {
         return false;
     }
     let Some(mut stagger) = stagger else {
@@ -1957,11 +1971,19 @@ fn trigger_boss_stagger(
         commands.entity(hit.entity).try_insert(boss_staggered());
         spawn_stagger_vfx(commands, vfx, hit.target, enemy);
         combat_events.write(CombatEvent {
-            text: "Malrec staggered: punish the exposed keeper".to_string(),
+            text: boss_stagger_event_text(enemy),
         });
         return true;
     }
     false
+}
+
+fn can_trigger_boss_stagger(enemy: &Enemy, staggered: Option<&Staggered>) -> bool {
+    is_boss_enemy(enemy) && staggered.is_none()
+}
+
+fn boss_stagger_event_text(enemy: &Enemy) -> String {
+    format!("{} staggered: punish the opening", enemy.display_name)
 }
 
 fn apply_boss_break_reward(
@@ -2486,7 +2508,7 @@ fn spawn_shadow_trail_vfx(
 fn select_hit_bone(enemy: &Enemy, critical: bool) -> HitBone {
     if critical {
         HitBone::Head
-    } else if matches!(enemy.id.as_str(), "keeper" | "butcher" | "seal_warden") {
+    } else if is_boss_enemy(enemy) || matches!(enemy.id.as_str(), "butcher" | "seal_warden") {
         HitBone::Chest
     } else if enemy
         .affixes
@@ -2557,7 +2579,7 @@ fn select_hit_effect(enemy: &Enemy, hit_bone: HitBone, critical: bool) -> HitEff
             HitEffect::Bone
         };
     }
-    if matches!(enemy.id.as_str(), "keeper" | "butcher") {
+    if is_boss_enemy(enemy) || enemy.id == "butcher" {
         return if matches!(hit_bone, HitBone::Chest) {
             HitEffect::Execution
         } else {
@@ -2905,8 +2927,10 @@ fn hit_bone_scale(hit_bone: HitBone) -> f32 {
 }
 
 fn enemy_hit_bone_scale(enemy: &Enemy) -> f32 {
+    if is_boss_enemy(enemy) {
+        return 1.18;
+    }
     match enemy.id.as_str() {
-        "keeper" => 1.18,
         "cultist" | "treasure_imp" => 0.92,
         "seal_warden" => 1.06,
         "skeleton" | "nemesis" => 0.86,
@@ -3783,12 +3807,18 @@ mod tests {
         warden.id = "seal_warden".to_string();
         let mut keeper = test_enemy(vec![]);
         keeper.id = "keeper".to_string();
+        let mut hollow_matron = test_enemy(vec![]);
+        hollow_matron.id = "hollow_matron".to_string();
 
         assert_eq!(select_hit_bone(&normal, false), HitBone::Left);
         assert_eq!(select_hit_bone(&guarded, false), HitBone::Weapon);
         assert_eq!(select_hit_bone(&cultist, false), HitBone::Right);
         assert_eq!(select_hit_bone(&warden, false), HitBone::Chest);
         assert_eq!(select_hit_bone(&keeper, false), HitBone::Chest);
+        assert_eq!(
+            select_hit_bone(&hollow_matron, false),
+            select_hit_bone(&keeper, false)
+        );
         assert_eq!(select_hit_bone(&normal, true), HitBone::Head);
     }
 
@@ -3798,9 +3828,15 @@ mod tests {
         skeleton.id = "skeleton".to_string();
         let mut keeper = test_enemy(vec![]);
         keeper.id = "keeper".to_string();
+        let mut hollow_matron = test_enemy(vec![]);
+        hollow_matron.id = "hollow_matron".to_string();
 
         assert!(
             hit_bone_offset(HitBone::Head, &keeper).y > hit_bone_offset(HitBone::Head, &skeleton).y
+        );
+        assert_eq!(
+            hit_bone_offset(HitBone::Head, &hollow_matron),
+            hit_bone_offset(HitBone::Head, &keeper)
         );
         assert!(hit_bone_scale(HitBone::Head) > hit_bone_scale(HitBone::Left));
     }
@@ -3811,6 +3847,8 @@ mod tests {
         skeleton.id = "skeleton".to_string();
         let mut keeper = test_enemy(vec![]);
         keeper.id = "keeper".to_string();
+        let mut hollow_matron = test_enemy(vec![]);
+        hollow_matron.id = "hollow_matron".to_string();
 
         assert_eq!(
             select_hit_effect(&skeleton, HitBone::Head, false),
@@ -3910,6 +3948,14 @@ mod tests {
         );
         assert_eq!(
             select_hit_effect(&keeper, HitBone::Weapon, false),
+            HitEffect::Blood
+        );
+        assert_eq!(
+            select_hit_effect(&hollow_matron, HitBone::Chest, false),
+            HitEffect::Execution
+        );
+        assert_eq!(
+            select_hit_effect(&hollow_matron, HitBone::Weapon, false),
             HitEffect::Blood
         );
         assert_eq!(
@@ -4223,6 +4269,32 @@ mod tests {
     }
 
     #[test]
+    fn chapter_bosses_share_stagger_rules_and_use_their_display_names() {
+        let mut malrec = test_enemy(vec![]);
+        malrec.id = "keeper".to_string();
+        malrec.display_name = "Malrec, Keeper of Ash".to_string();
+        let mut nyxara = test_enemy(vec![]);
+        nyxara.id = "hollow_matron".to_string();
+        nyxara.display_name = "Nyxara, Hollow Matron".to_string();
+        let normal = test_enemy(vec![]);
+        let staggered = boss_staggered();
+
+        assert!(can_trigger_boss_stagger(&malrec, None));
+        assert!(can_trigger_boss_stagger(&nyxara, None));
+        assert!(!can_trigger_boss_stagger(&normal, None));
+        assert!(!can_trigger_boss_stagger(&malrec, Some(&staggered)));
+        assert!(!can_trigger_boss_stagger(&nyxara, Some(&staggered)));
+        assert_eq!(
+            boss_stagger_event_text(&malrec),
+            "Malrec, Keeper of Ash staggered: punish the opening"
+        );
+        assert_eq!(
+            boss_stagger_event_text(&nyxara),
+            "Nyxara, Hollow Matron staggered: punish the opening"
+        );
+    }
+
+    #[test]
     fn hit_impact_profiles_promote_elites_bosses_and_breaks() {
         let normal = test_enemy(vec![]);
         let elite = test_enemy(vec![EnemyAffix::Shielded]);
@@ -4230,6 +4302,8 @@ mod tests {
         nemesis.id = "nemesis".to_string();
         let mut boss = test_enemy(vec![]);
         boss.id = "keeper".to_string();
+        let mut hollow_matron = test_enemy(vec![]);
+        hollow_matron.id = "hollow_matron".to_string();
 
         assert_eq!(
             hit_impact_profile(&normal, false, 1.0, false).tier,
@@ -4250,6 +4324,10 @@ mod tests {
                 impact_scale: 1.0,
                 tier: HitImpactTier::Boss,
             }
+        );
+        assert_eq!(
+            hit_impact_profile(&hollow_matron, true, 1.0, false),
+            hit_impact_profile(&boss, true, 1.0, false)
         );
         assert_eq!(
             hit_impact_profile(&boss, false, 1.0, true).tier,
