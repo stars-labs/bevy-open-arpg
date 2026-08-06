@@ -30,7 +30,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
       - name: Check formatting
@@ -47,7 +47,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
       - name: Install Linux native dependencies
@@ -67,7 +67,7 @@ jobs:
             libxrandr-dev \
             pkg-config
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
@@ -94,7 +94,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
       - name: Install Linux native dependencies
@@ -115,7 +115,7 @@ jobs:
             libxrandr-dev \
             pkg-config
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
@@ -139,12 +139,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-targets: true
           cache-on-failure: false
