@@ -146,7 +146,11 @@ fn prepare(
         enemy.attack_damage = 0.0;
         enemy.attack_timer = Timer::from_seconds(1000.0, TimerMode::Once);
         health.max = 500.0;
-        health.current = 500.0;
+        health.current = if case.name == "summon-kill" {
+            38.0
+        } else {
+            500.0
+        };
         if let Ok((camera, camera_transform)) = cameras.single()
             && let Ok(point) =
                 camera.world_to_viewport(camera_transform, transform.translation + Vec3::Y * 0.6)

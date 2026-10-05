@@ -1,5 +1,7 @@
 # Changelog
 
+- Add an opt-in native development prototype for directed spirit summons: basic-hit marking, chasing, skill-triggered heavy attacks, and death/leash/pause safeguards, with measured input recordings.
+
 - Add three selectable hero classes with distinct basic attacks, passives, resources, models, six active skills each, rune loadouts, level unlocks, and native save persistence.
 
 - Add readable skill release silhouettes: directional heavy cuts, expanding shockwaves, tapered movement trails, and charged ground impacts, with rune palettes and real strike timing.

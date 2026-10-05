@@ -13,6 +13,8 @@ use bevy::prelude::*;
 #[derive(Message, Clone, Copy, Debug)]
 pub(super) struct ContactFeedback {
     pub target: Entity,
+    #[cfg_attr(not(feature = "dev_tools"), allow(dead_code))]
+    pub cast: u32,
     pub position: Vec3,
     pub source: Vec3,
     pub skill: Option<SkillCast>,

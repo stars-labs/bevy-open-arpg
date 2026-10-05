@@ -9119,3 +9119,42 @@ mod tests {
         assert!(summary.contains("Focus 8 [Flow+Tempest]"));
     }
 }
+
+/// Reuse the real limb rig in the explicit native summon experiment.
+#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+pub(crate) fn summon_limb_transform(
+    index: usize,
+    phase: f32,
+    moving: bool,
+    progress: f32,
+    heavy: bool,
+) -> Transform {
+    let motion = if heavy {
+        PlayerAttackMotion::Rupture
+    } else {
+        PlayerAttackMotion::Basic
+    };
+    let pose = player_limb_pose(
+        PLAYER_LIMBS[index],
+        if moving { 1.0 } else { 0.0 },
+        false,
+        phase,
+        motion,
+        progress,
+    );
+    Transform::from_translation(pose.translation)
+        .with_rotation(pose.rotation)
+        .with_scale(pose.scale)
+}
+#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+pub(crate) fn summon_weapon_transform(progress: f32, heavy: bool) -> Transform {
+    let motion = if heavy {
+        PlayerAttackMotion::Rupture
+    } else {
+        PlayerAttackMotion::Basic
+    };
+    let pose = player_visual_pose(0.0, false, 0.0, 0.0, motion, progress);
+    Transform::from_translation(pose.weapon_translation)
+        .with_rotation(player_weapon_rotation(&pose))
+        .with_scale(pose.weapon_scale)
+}

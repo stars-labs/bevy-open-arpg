@@ -4,6 +4,10 @@ mod ranged;
 mod review;
 mod skill_vfx;
 mod skill_vfx_art;
+#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+mod summon_logic;
+#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+mod summon_review;
 
 use crate::{
     GameState, RunStats,
@@ -815,7 +819,10 @@ pub enum CombatSet {
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-        review::install(app);
+        {
+            review::install(app);
+            summon_review::install(app);
+        }
         app.add_plugins((
             presentation::CombatPresentationPlugin,
             skill_vfx::SkillVfxPlugin,
@@ -2385,6 +2392,7 @@ fn apply_strike(
             outcome.damaging_hits += 1;
             commands.write_message(ContactFeedback {
                 target: entity,
+                cast: profile.cast,
                 position: hit_bone_world_position(transform.translation, enemy, critical),
                 source: strike.source,
                 skill: profile.skill,

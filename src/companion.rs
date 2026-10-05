@@ -92,6 +92,10 @@ pub struct CompanionPlugin;
 
 impl Plugin for CompanionPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+        if std::env::var("BEVY_OPEN_ARPG_SUMMON_REVIEW").is_ok() {
+            return;
+        }
         app.add_systems(OnEnter(GameState::InGame), spawn_companion)
             .add_systems(
                 Update,
