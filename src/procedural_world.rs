@@ -83,14 +83,10 @@ struct LoadedProceduralChunks {
 struct ProceduralWorldAssets {
     ground_mesh: Handle<Mesh>,
     ground_materials: [Handle<StandardMaterial>; 4],
-    rock_mesh: Handle<Mesh>,
-    rock_material: Handle<StandardMaterial>,
-    dead_tree_mesh: Handle<Mesh>,
-    dead_tree_material: Handle<StandardMaterial>,
-    crystal_mesh: Handle<Mesh>,
-    crystal_material: Handle<StandardMaterial>,
-    ruin_mesh: Handle<Mesh>,
-    ruin_material: Handle<StandardMaterial>,
+    rock: Handle<WorldAsset>,
+    dead_tree: Handle<WorldAsset>,
+    crystal: Handle<WorldAsset>,
+    ruin: Handle<WorldAsset>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -142,7 +138,6 @@ fn setup_procedural_world(
         ChapterId::AshenReliquary => assets.ashen_ground_albedo.clone(),
         ChapterId::HollowBastion => assets.hollow_ground_albedo.clone(),
     };
-    let stone_detail = assets.stone_detail.clone();
     let ground_mesh = meshes.add(Cuboid::new(
         CHUNK_SIZE + 0.08,
         GROUND_THICKNESS,
@@ -163,40 +158,10 @@ fn setup_procedural_world(
     commands.insert_resource(ProceduralWorldAssets {
         ground_mesh,
         ground_materials,
-        rock_mesh: meshes.add(Sphere::new(1.0)),
-        rock_material: materials.add(StandardMaterial {
-            base_color: palette.rock,
-            base_color_texture: Some(stone_detail.clone()),
-            uv_transform: Affine2::from_scale(Vec2::splat(2.4)),
-            alpha_mode: AlphaMode::Opaque,
-            perceptual_roughness: 0.94,
-            ..default()
-        }),
-        dead_tree_mesh: meshes.add(Cylinder::new(0.42, 2.8)),
-        dead_tree_material: materials.add(StandardMaterial {
-            base_color: palette.dead_tree,
-            alpha_mode: AlphaMode::Opaque,
-            perceptual_roughness: 0.99,
-            ..default()
-        }),
-        crystal_mesh: meshes.add(Cone::new(0.58, 2.6)),
-        crystal_material: materials.add(StandardMaterial {
-            base_color: palette.crystal,
-            emissive: palette.crystal.with_luminance(0.16).into(),
-            alpha_mode: AlphaMode::Opaque,
-            metallic: 0.18,
-            perceptual_roughness: 0.43,
-            ..default()
-        }),
-        ruin_mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        ruin_material: materials.add(StandardMaterial {
-            base_color: palette.ruin,
-            base_color_texture: Some(stone_detail),
-            uv_transform: Affine2::from_scale(Vec2::splat(2.0)),
-            alpha_mode: AlphaMode::Opaque,
-            perceptual_roughness: 0.88,
-            ..default()
-        }),
+        rock: assets.scenery_rock.clone(),
+        dead_tree: assets.scenery_dead_tree.clone(),
+        crystal: assets.scenery_crystal.clone(),
+        ruin: assets.scenery_ruin.clone(),
     });
     commands.insert_resource(LoadedProceduralChunks {
         chapter: active_chapter.0,
@@ -287,36 +252,15 @@ fn spawn_chunk(
         ));
 
         for spec in plan.decorations {
-            let (mesh, material, name, height) = match spec.kind {
-                DecorationKind::Rock => (
-                    &assets.rock_mesh,
-                    &assets.rock_material,
-                    "Procedural Ridge Rock",
-                    spec.scale.y,
-                ),
-                DecorationKind::DeadTree => (
-                    &assets.dead_tree_mesh,
-                    &assets.dead_tree_material,
-                    "Procedural Dead Tree",
-                    1.4 * spec.scale.y,
-                ),
-                DecorationKind::Crystal => (
-                    &assets.crystal_mesh,
-                    &assets.crystal_material,
-                    "Procedural Crystal",
-                    1.3 * spec.scale.y,
-                ),
-                DecorationKind::Ruin => (
-                    &assets.ruin_mesh,
-                    &assets.ruin_material,
-                    "Procedural Ruin",
-                    0.5 * spec.scale.y,
-                ),
+            let (scene, name) = match spec.kind {
+                DecorationKind::Rock => (&assets.rock, "Weathered Ridge Rock"),
+                DecorationKind::DeadTree => (&assets.dead_tree, "Twisted Dead Tree"),
+                DecorationKind::Crystal => (&assets.crystal, "Relic Crystal Cluster"),
+                DecorationKind::Ruin => (&assets.ruin, "Broken Gothic Arch"),
             };
             parent.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                Transform::from_translation(spec.local_position + Vec3::Y * height)
+                WorldAssetRoot(scene.clone()),
+                Transform::from_translation(spec.local_position)
                     .with_rotation(Quat::from_rotation_y(spec.yaw))
                     .with_scale(spec.scale),
                 OutdoorScenery,
@@ -638,10 +582,6 @@ impl SplitMix64 {
 
 struct ChapterPalette {
     ground: [Color; 4],
-    rock: Color,
-    dead_tree: Color,
-    crystal: Color,
-    ruin: Color,
 }
 
 fn chapter_palette(chapter: ChapterId) -> ChapterPalette {
@@ -653,10 +593,6 @@ fn chapter_palette(chapter: ChapterId) -> ChapterPalette {
                 Color::srgb(0.76, 0.76, 0.72),
                 Color::srgb(1.00, 0.72, 0.55),
             ],
-            rock: Color::srgb(0.48, 0.42, 0.36),
-            dead_tree: Color::srgb(0.115, 0.074, 0.050),
-            crystal: Color::srgb(0.62, 0.105, 0.025),
-            ruin: Color::srgb(0.56, 0.48, 0.40),
         },
         ChapterId::HollowBastion => ChapterPalette {
             ground: [
@@ -665,10 +601,6 @@ fn chapter_palette(chapter: ChapterId) -> ChapterPalette {
                 Color::srgb(0.76, 0.82, 0.84),
                 Color::srgb(0.52, 0.94, 0.98),
             ],
-            rock: Color::srgb(0.30, 0.48, 0.50),
-            dead_tree: Color::srgb(0.050, 0.095, 0.098),
-            crystal: Color::srgb(0.025, 0.48, 0.68),
-            ruin: Color::srgb(0.34, 0.52, 0.54),
         },
     }
 }

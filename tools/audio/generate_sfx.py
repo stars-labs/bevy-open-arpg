@@ -120,3 +120,44 @@ def ambient_theme(duration=24.0):
 
 
 write_wav("ambient_theme", ambient_theme())
+
+
+def contact_material(kind, duration, seed):
+    """Short physical transients: filtered grit plus damped material resonances.
+
+    No rising game-tone chirps. Each identity differs in attack, bandwidth and tail.
+    """
+    rng = random.Random(seed)
+    specs = {
+        'steel': (165.0, [830.0, 1427.0, 2131.0], .34, .045, .010),
+        'expose': (125.0, [570.0, 1133.0, 1759.0], .47, .070, .006),
+        'blood': (95.0, [240.0, 371.0], .66, .040, .015),
+        'cleanse': (280.0, [1175.0, 1760.0], .15, .090, .023),
+        'reap': (82.0, [160.0, 237.0], .43, .085, .024),
+        'ember': (130.0, [470.0, 793.0], .75, .043, .008),
+        'frost': (225.0, [1717.0, 2393.0, 3211.0], .38, .058, .004),
+    }
+    body_hz, modes, grit, decay, attack = specs[kind]
+    low = previous = 0.0
+    samples=[]
+    for index in range(int(duration*RATE)):
+        t=index/RATE
+        noise=rng.uniform(-1.0,1.0)
+        low += .12*(noise-low)
+        high = noise - previous
+        previous = noise
+        filtered = low*2.0 if kind in ('blood','reap') else high*.48
+        body=math.sin(math.tau*body_hz*t)*math.exp(-t/.045)*.34
+        ringing=sum(math.sin(math.tau*f*t)*math.exp(-t/(decay*(1+i*.14)))
+                    for i,f in enumerate(modes))/len(modes)*.20
+        transient=filtered*grit*math.exp(-t/decay)
+        if kind=='ember': transient *= .6+.4*math.sin(t*math.tau*83)**2
+        onset=min(1.0,t/attack)
+        tail=min(1.0,max(duration-t,0)/.020)
+        samples.append((body+ringing+transient)*onset*tail)
+    peak=max(abs(sample) for sample in samples)
+    return [sample*.76/max(peak,.001) for sample in samples]
+
+
+for index, kind in enumerate(['steel','expose','blood','cleanse','reap','ember','frost']):
+    write_wav('contact_'+kind, contact_material(kind, .19 if kind=='steel' else .26, 151+index))

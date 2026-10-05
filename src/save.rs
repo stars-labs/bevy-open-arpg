@@ -1,9 +1,11 @@
 use crate::{
     Difficulty, DifficultySettings, GameState, RunStats,
+    assets::GameAssets,
     bestiary::{Bestiary, BestiaryEntry},
     bounty::BountyProgress,
     challenge::{ChallengeProgress, ChapterChallenges},
     chapter::{ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind},
+    class::{ClassCatalog, HeroClass, SelectedClass, SkillLoadout},
     companion::{CompanionBond, CompanionStance},
     dungeon::{Breakable, Interactable, chapter_world_position},
     feedback::CombatEvent,
@@ -14,11 +16,12 @@ use crate::{
     ordeal::{ChapterModifier, ChapterModifierKind, OrdealAffix},
     player::{
         ARMORY_SLOT_COUNT, Armory, ArmoryLoadout, Barrier, ChapterBoon, ChapterBoonChoice, Charm,
-        ConduitBuff, DamageBonus, DashRune, DeathWard, EMBER_PARAGON_BASE_XP, ElixirBelt,
-        ElixirBuff, ElixirKind, EmberParagon, Equipment, Evade, FortuneBuff, Fury, GearSlot,
-        GloryBuff, Health, Inventory, InventoryItem, LegendaryCodex, LegendaryPower, NovaRune,
-        Player, PlayerLevel, PotionBelt, RelicBuff, RuptureRune, SkillRunes, SocketedGem,
+        ConduitBuff, DamageBonus, DeathWard, EMBER_PARAGON_BASE_XP, ElixirBelt, ElixirBuff,
+        ElixirKind, EmberParagon, Equipment, Evade, FortuneBuff, Fury, GearSlot, GloryBuff, Health,
+        Inventory, InventoryItem, LegendaryCodex, LegendaryPower, MAX_SKILL_COST_DISCOUNT, Player,
+        PlayerLevel, PlayerVisualRoot, PotionBelt, RelicBuff, SkillCooldowns, SocketedGem,
         SurgeBuff, Talents, TownPortal, configure_elixir_buff, potion_cooldown_secs_for_capacity,
+        rebuild_hero_visuals,
     },
     rift::EmberRift,
     story::{StoryBeat, StoryDialogueEvent, StoryLog, StoryPresentationReset, dialogue_events_for},
@@ -54,9 +57,14 @@ impl PendingLoadGame {
     }
 }
 
-pub fn prepare_load_request(pending: &mut PendingLoadGame, active_chapter: &mut ActiveChapter) {
+pub fn prepare_load_request(
+    pending: &mut PendingLoadGame,
+    active_chapter: &mut ActiveChapter,
+    selected: &mut SelectedClass,
+) {
     if let Ok(save) = read_save(SAVE_PATH) {
         active_chapter.0 = save.chapter.chapter;
+        selected.0 = save.player.class;
     }
     pending.request();
 }
@@ -67,18 +75,6 @@ fn default_fury_max() -> f32 {
 
 fn default_fury_basic_gain() -> f32 {
     18.0
-}
-
-fn default_dash_cost() -> f32 {
-    25.0
-}
-
-fn default_nova_cost() -> f32 {
-    45.0
-}
-
-fn default_rupture_cost() -> f32 {
-    32.0
 }
 
 fn default_barrier_max() -> f32 {
@@ -304,12 +300,12 @@ struct SaveStats {
     health_globes_collected: u32,
     #[serde(default)]
     surge_kills: u32,
-    #[serde(default)]
-    reap_dash_hits: u32,
-    #[serde(default)]
-    hemorrhage_rupture_hits: u32,
-    #[serde(default)]
-    frost_nova_hits: u32,
+    #[serde(default, alias = "reap_dash_hits")]
+    reap_hits: u32,
+    #[serde(default, alias = "hemorrhage_rupture_hits")]
+    hemorrhage_hits: u32,
+    #[serde(default, alias = "frost_nova_hits")]
+    frost_hits: u32,
     #[serde(default)]
     armory_loadouts_saved: u32,
     #[serde(default)]
@@ -438,12 +434,15 @@ struct SavePlayer {
     fury_max: f32,
     #[serde(default = "default_fury_basic_gain")]
     fury_basic_gain: f32,
-    #[serde(default = "default_dash_cost")]
-    dash_cost: f32,
-    #[serde(default = "default_nova_cost")]
-    nova_cost: f32,
-    #[serde(default = "default_rupture_cost")]
-    rupture_cost: f32,
+    #[serde(default)]
+    fury_regen: f32,
+    #[serde(default)]
+    skill_cost_discount: f32,
+    /// Saves written before classes existed hold the original knight.
+    #[serde(default)]
+    class: HeroClass,
+    #[serde(default)]
+    loadout: SkillLoadout,
     equipment: SaveEquipment,
     #[serde(default)]
     charm: Charm,
@@ -539,12 +538,6 @@ struct SavePlayer {
     talent_vigor: u32,
     #[serde(default)]
     talent_focus: u32,
-    #[serde(default)]
-    dash_rune: DashRune,
-    #[serde(default)]
-    nova_rune: NovaRune,
-    #[serde(default)]
-    rupture_rune: RuptureRune,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -651,8 +644,8 @@ type LoadPlayerStateQuery<'w, 's> = Query<
     With<Player>,
 >;
 
-type SaveRunesQuery<'w, 's> = Query<'w, 's, &'static SkillRunes, With<Player>>;
-type LoadRunesQuery<'w, 's> = Query<'w, 's, &'static mut SkillRunes, With<Player>>;
+type SaveRunesQuery<'w, 's> = Query<'w, 's, &'static SkillLoadout, With<Player>>;
+type LoadRunesQuery<'w, 's> = Query<'w, 's, &'static mut SkillLoadout, With<Player>>;
 type SaveCompanionQuery<'w, 's> = Query<'w, 's, &'static CompanionBond, With<Player>>;
 type LoadCompanionQuery<'w, 's> = Query<'w, 's, &'static mut CompanionBond, With<Player>>;
 type SaveArmoryQuery<'w, 's> = Query<'w, 's, &'static Armory, With<Player>>;
@@ -721,6 +714,11 @@ type LoadResources<'w> = (
 struct LoadGameInputs<'w, 's> {
     commands: Commands<'w, 's>,
     resources: LoadResources<'w>,
+    selected: ResMut<'w, SelectedClass>,
+    catalog: Res<'w, ClassCatalog>,
+    assets: Res<'w, GameAssets>,
+    visual_roots: Query<'w, 's, (Entity, &'static ChildOf), With<PlayerVisualRoot>>,
+    cooldowns: Query<'w, 's, (Entity, &'static mut SkillCooldowns), With<Player>>,
     player_core: LoadPlayerCoreQuery<'w, 's>,
     player_state: LoadPlayerStateQuery<'w, 's>,
     runes: LoadRunesQuery<'w, 's>,
@@ -744,6 +742,7 @@ struct LoadGameInputs<'w, 's> {
 #[derive(SystemParam)]
 struct SaveGameInputs<'w, 's> {
     resources: SaveResources<'w>,
+    selected: Res<'w, SelectedClass>,
     player_core: SavePlayerCoreQuery<'w, 's>,
     player_state: SavePlayerStateQuery<'w, 's>,
     runes: SaveRunesQuery<'w, 's>,
@@ -790,6 +789,7 @@ fn save_game(keyboard: Res<ButtonInput<KeyCode>>, mut inputs: SaveGameInputs) {
         story,
     ) = inputs.resources;
     let Ok(snapshot) = snapshot_from_world(SnapshotInputs {
+        selected: &inputs.selected,
         stats: &stats,
         difficulty: &difficulty,
         modifier: &modifier,
@@ -863,6 +863,15 @@ fn load_game(
         mut story,
     ) = inputs.resources;
     let load_result = read_save(SAVE_PATH).and_then(|save| {
+        adopt_saved_class(
+            &save,
+            &mut inputs.selected,
+            &inputs.catalog,
+            &inputs.assets,
+            &mut inputs.commands,
+            &inputs.visual_roots,
+            &mut inputs.cooldowns,
+        );
         apply_save(
             &save,
             ApplyResources {
@@ -916,6 +925,28 @@ fn load_game(
     inputs.events.write(CombatEvent { text: status });
 }
 
+/// A save may hold a different class than the hero on screen: swap body, weapon and
+/// basic-attack rhythm before the rest of the save is applied.
+fn adopt_saved_class(
+    save: &SaveGame,
+    selected: &mut SelectedClass,
+    catalog: &ClassCatalog,
+    assets: &GameAssets,
+    commands: &mut Commands,
+    visual_roots: &Query<(Entity, &ChildOf), With<PlayerVisualRoot>>,
+    cooldowns: &mut Query<(Entity, &mut SkillCooldowns), With<Player>>,
+) {
+    if save.player.class == selected.0 {
+        return;
+    }
+    selected.0 = save.player.class;
+    let class = catalog.get(save.player.class);
+    for (player, mut cooldowns) in cooldowns {
+        *cooldowns = SkillCooldowns::ready(class.basic.cycle);
+        rebuild_hero_visuals(commands, assets, player, visual_roots, save.player.class);
+    }
+}
+
 struct SnapshotInputs<'a, 'w, 's> {
     stats: &'a RunStats,
     difficulty: &'a DifficultySettings,
@@ -930,6 +961,7 @@ struct SnapshotInputs<'a, 'w, 's> {
     obelisk: &'a BloodObelisk,
     rift: &'a EmberRift,
     story: &'a StoryLog,
+    selected: &'a SelectedClass,
     player_core: &'a SavePlayerCoreQuery<'w, 's>,
     player_state: &'a SavePlayerStateQuery<'w, 's>,
     runes: &'a SaveRunesQuery<'w, 's>,
@@ -1071,9 +1103,9 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
             breakables_smashed: inputs.stats.breakables_smashed,
             health_globes_collected: inputs.stats.health_globes_collected,
             surge_kills: inputs.stats.surge_kills,
-            reap_dash_hits: inputs.stats.reap_dash_hits,
-            hemorrhage_rupture_hits: inputs.stats.hemorrhage_rupture_hits,
-            frost_nova_hits: inputs.stats.frost_nova_hits,
+            reap_hits: inputs.stats.reap_hits,
+            hemorrhage_hits: inputs.stats.hemorrhage_hits,
+            frost_hits: inputs.stats.frost_hits,
             armory_loadouts_saved: inputs.stats.armory_loadouts_saved,
             town_portal_returns: inputs.stats.town_portal_returns,
             pylon_kills: inputs.stats.pylon_kills,
@@ -1148,9 +1180,10 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
             fury_current: fury.current,
             fury_max: fury.max,
             fury_basic_gain: fury.basic_gain,
-            dash_cost: fury.dash_cost,
-            nova_cost: fury.nova_cost,
-            rupture_cost: fury.rupture_cost,
+            fury_regen: fury.regen_per_sec,
+            skill_cost_discount: fury.cost_discount,
+            class: inputs.selected.0,
+            loadout: *runes,
             equipment: SaveEquipment {
                 weapon_name: equipment.weapon_name.clone(),
                 quality: equipment.quality.clone(),
@@ -1261,9 +1294,6 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
             talent_wrath: talents.wrath,
             talent_vigor: talents.vigor,
             talent_focus: talents.focus,
-            dash_rune: runes.dash,
-            nova_rune: runes.nova,
-            rupture_rune: runes.rupture,
         },
     })
 }
@@ -1454,9 +1484,9 @@ fn apply_save(
     resources.stats.breakables_smashed = save.stats.breakables_smashed;
     resources.stats.health_globes_collected = save.stats.health_globes_collected;
     resources.stats.surge_kills = save.stats.surge_kills;
-    resources.stats.reap_dash_hits = save.stats.reap_dash_hits;
-    resources.stats.hemorrhage_rupture_hits = save.stats.hemorrhage_rupture_hits;
-    resources.stats.frost_nova_hits = save.stats.frost_nova_hits;
+    resources.stats.reap_hits = save.stats.reap_hits;
+    resources.stats.hemorrhage_hits = save.stats.hemorrhage_hits;
+    resources.stats.frost_hits = save.stats.frost_hits;
     resources.stats.armory_loadouts_saved = save.stats.armory_loadouts_saved;
     resources.stats.town_portal_returns = save.stats.town_portal_returns;
     resources.stats.pylon_kills = save.stats.pylon_kills;
@@ -1528,9 +1558,11 @@ fn apply_save(
     fury.max = save.player.fury_max.max(1.0);
     fury.current = save.player.fury_current.clamp(0.0, fury.max);
     fury.basic_gain = save.player.fury_basic_gain.max(0.0);
-    fury.dash_cost = save.player.dash_cost.max(0.0);
-    fury.nova_cost = save.player.nova_cost.max(0.0);
-    fury.rupture_cost = save.player.rupture_cost.max(0.0);
+    fury.regen_per_sec = save.player.fury_regen.max(0.0);
+    fury.cost_discount = save
+        .player
+        .skill_cost_discount
+        .clamp(0.0, MAX_SKILL_COST_DISCOUNT);
     equipment.weapon_name = save.player.equipment.weapon_name.clone();
     equipment.quality = save.player.equipment.quality.clone();
     equipment.crit_chance = save.player.equipment.crit_chance;
@@ -1640,9 +1672,7 @@ fn apply_save(
     talents.wrath = save.player.talent_wrath;
     talents.vigor = save.player.talent_vigor;
     talents.focus = save.player.talent_focus;
-    runes.dash = save.player.dash_rune;
-    runes.nova = save.player.nova_rune;
-    runes.rupture = save.player.rupture_rune;
+    *runes = save.player.loadout;
     Ok(())
 }
 
@@ -1950,9 +1980,9 @@ mod tests {
                 breakables_smashed: 4,
                 health_globes_collected: 3,
                 surge_kills: 3,
-                reap_dash_hits: 1,
-                hemorrhage_rupture_hits: 2,
-                frost_nova_hits: 3,
+                reap_hits: 1,
+                hemorrhage_hits: 2,
+                frost_hits: 3,
                 armory_loadouts_saved: 3,
                 town_portal_returns: 1,
                 pylon_kills: 3,
@@ -2350,9 +2380,9 @@ mod tests {
         assert!(!parsed.stats.champion_pack_reward_claimed);
         assert_eq!(parsed.stats.treasure_vaults_opened, 0);
         assert_eq!(parsed.stats.health_globes_collected, 0);
-        assert_eq!(parsed.stats.reap_dash_hits, 0);
-        assert_eq!(parsed.stats.hemorrhage_rupture_hits, 0);
-        assert_eq!(parsed.stats.frost_nova_hits, 0);
+        assert_eq!(parsed.stats.reap_hits, 0);
+        assert_eq!(parsed.stats.hemorrhage_hits, 0);
+        assert_eq!(parsed.stats.frost_hits, 0);
         assert_eq!(parsed.stats.armory_loadouts_saved, 0);
         assert_eq!(parsed.stats.town_portal_returns, 0);
         assert_eq!(parsed.stats.breakables_smashed, 0);

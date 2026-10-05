@@ -1,6 +1,6 @@
 """Apply deterministic detail textures and culling policy to runtime GLBs.
 
-Run with Blender 5.1:
+Run with Blender 5.1 or 5.2 (the version is part of the fingerprint):
     blender --background --factory-startup \
         --python tools/blender/postprocess_glb_materials.py
 
@@ -42,12 +42,18 @@ PIPELINE_MARKER_KEY = "bevy_material_pipeline"
 DETAIL_CLASS_KEY = "bevy_detail_class"
 DETAIL_BY_MATERIAL = {
     "aged bone": "bone",
+    "ash charcoal cloth": "cloth",
+    "ash grey leather": "cloth",
+    "ashpriest violet cloth": "cloth",
     "bastion iron": "metal",
+    "bow sinew": "cloth",
+    "charred staff wood": "stone",
     "charcoal cloth": "cloth",
     "choir cloth": "cloth",
     "cold worn steel": "metal",
     "dull relic gold": "metal",
     "hollow bone": "bone",
+    "hunter teal cloth": "cloth",
     "hollow obsidian": "stone",
     "matron silver": "metal",
     "old leather": "cloth",
@@ -73,7 +79,9 @@ VFX_GLBS = frozenset(
         "affix_ward_aura.glb",
         "arcane_impact.glb",
         "armor_break.glb",
+        "ash_lance.glb",
         "blood_spray.glb",
+        "bone_arrow.glb",
         "bone_fracture_echo.glb",
         "bone_impact.glb",
         "bone_shatter.glb",
@@ -82,11 +90,13 @@ VFX_GLBS = frozenset(
         "crit_burst.glb",
         "desecrator_burst.glb",
         "elite_affix_break.glb",
+        "ember_bolt.glb",
         "ember_impact.glb",
         "ember_vent.glb",
         "execution_burst.glb",
         "frenzy_impact.glb",
         "frost_impact.glb",
+        "ground_sigil.glb",
         "guard_clash.glb",
         "headshot_burst.glb",
         "hit_bone_lock.glb",
@@ -95,7 +105,6 @@ VFX_GLBS = frozenset(
         "holy_impact.glb",
         "keeper_chain_cage.glb",
         "keeper_cleaver_wave.glb",
-        "loot_prism.glb",
         "marrow_flash.glb",
         "matron_crescendo.glb",
         "matron_soul_lance.glb",
@@ -106,6 +115,7 @@ VFX_GLBS = frozenset(
         "soul_fissure.glb",
         "soul_ward_hit.glb",
         "stagger_burst.glb",
+        "sunder_wave.glb",
         "vampiric_siphon.glb",
         "void_impact.glb",
     }
@@ -424,9 +434,9 @@ def process(path: Path) -> tuple[int, int, bool]:
 
 
 def main() -> None:
-    if bpy.app.version[:2] != (5, 1):
+    if bpy.app.version[:2] not in ((5, 1), (5, 2)):
         raise RuntimeError(
-            f"this deterministic pipeline requires Blender 5.1, found "
+            f"this deterministic pipeline requires Blender 5.1 or 5.2, found "
             f"{bpy.app.version_string}"
         )
     args = parse_args()

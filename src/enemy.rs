@@ -1,3 +1,6 @@
+mod vfx;
+use vfx::{GroundMark, ground_mark, projectile_bolt};
+
 use crate::{
     Difficulty, DifficultySettings, GameState, RunStats,
     assets::GameAssets,
@@ -235,8 +238,8 @@ struct PendingWildernessEncounters {
 struct EnemyRuntimeVfx {
     flat_box: Handle<Mesh>,
     flat_disc: Handle<Mesh>,
-    impact_sphere: Handle<Mesh>,
-    projectile_sphere: Handle<Mesh>,
+    impact_spark: Handle<Mesh>,
+    projectile_bolt: Handle<Mesh>,
     warning_materials: [Handle<StandardMaterial>; 3],
     impact_materials: [Handle<StandardMaterial>; 3],
     projectile_materials: HashMap<&'static str, Handle<StandardMaterial>>,
@@ -278,34 +281,37 @@ impl EnemyAnimation {
 }
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
-enum EnemyMotionVisualKind {
+enum EnemyLimbKind {
     AttackHand,
     OffHand,
-    LeftStep,
-    RightStep,
+    LeftLeg,
+    RightLeg,
 }
 
-impl EnemyMotionVisualKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::AttackHand => "Enemy Attack Hand",
-            Self::OffHand => "Enemy Off Hand",
-            Self::LeftStep => "Enemy Left Step",
-            Self::RightStep => "Enemy Right Step",
+impl EnemyLimbKind {
+    fn from_node_name(name: &str) -> Option<Self> {
+        match name {
+            "enemy_right_arm" => Some(Self::AttackHand),
+            "enemy_left_arm" => Some(Self::OffHand),
+            "enemy_left_leg" => Some(Self::LeftLeg),
+            "enemy_right_leg" => Some(Self::RightLeg),
+            _ => None,
         }
     }
 
     fn side(self) -> f32 {
         match self {
-            Self::AttackHand | Self::RightStep => 1.0,
-            Self::OffHand | Self::LeftStep => -1.0,
+            Self::AttackHand | Self::RightLeg => 1.0,
+            Self::OffHand | Self::LeftLeg => -1.0,
         }
     }
 }
 
 #[derive(Component)]
-struct EnemyMotionVisual {
-    kind: EnemyMotionVisualKind,
+struct EnemyLimb {
+    kind: EnemyLimbKind,
+    owner: Entity,
+    rest: Transform,
 }
 
 #[derive(Component)]
@@ -347,13 +353,26 @@ fn enemy_hit_recoil_step(hit_react: &EnemyHitReact, delta_secs: f32) -> Vec3 {
     if hit_react.recoil_distance <= 0.0 || hit_react.duration_secs <= 0.0 {
         return Vec3::ZERO;
     }
-    let elapsed_ratio =
-        (hit_react.timer.elapsed_secs() / hit_react.duration_secs.max(0.001)).clamp(0.0, 1.0);
-    let remaining_weight = (1.0 - elapsed_ratio).powf(1.35);
-    hit_react.recoil_direction
-        * hit_react.recoil_distance
-        * remaining_weight
-        * (delta_secs / hit_react.duration_secs.max(0.001))
+    let start = (hit_react.timer.elapsed_secs() / hit_react.duration_secs).clamp(0.0, 1.0);
+    let end =
+        ((hit_react.timer.elapsed_secs() + delta_secs) / hit_react.duration_secs).clamp(0.0, 1.0);
+    // Integrate the decaying impulse over this frame. The configured distance is
+    // the total displacement, independent of frame rate or hit-stop slowdown.
+    let travel = (1.0 - start).powf(2.35) - (1.0 - end).powf(2.35);
+    hit_react.recoil_direction * hit_react.recoil_distance * travel
+}
+
+fn remove_expired_hit_react(world: &mut World, target: Entity) {
+    let Ok(mut entity) = world.get_entity_mut(target) else {
+        return;
+    };
+    // Another strike may have replaced the reaction since cleanup was queued.
+    if entity
+        .get::<EnemyHitReact>()
+        .is_some_and(|reaction| reaction.timer.is_finished())
+    {
+        entity.remove::<EnemyHitReact>();
+    }
 }
 
 #[derive(Component)]
@@ -701,18 +720,9 @@ type EnemyAiQuery<'w, 's> = Query<
         &'static mut EnemySkillCycle,
     ),
 >;
-type EnemyMotionVisualQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static ChildOf,
-        &'static EnemyMotionVisual,
-        &'static mut Transform,
-        &'static mut Visibility,
-    ),
-    (With<EnemyMotionVisual>, Without<Enemy>),
->;
-type EnemyMotionSourceQuery<'w, 's> =
+type EnemyLimbQuery<'w, 's> =
+    Query<'w, 's, (&'static EnemyLimb, &'static mut Transform), Without<Enemy>>;
+type EnemyLimbSourceQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Enemy, &'static EnemyAnimation)>;
 
 #[derive(SystemParam)]
@@ -752,7 +762,7 @@ impl Plugin for EnemyPlugin {
             .add_systems(
                 Update,
                 (
-                    (enemy_ai, animate_enemy_motion_visuals_system).chain(),
+                    (bind_enemy_limbs, enemy_ai, animate_enemy_limbs_system).chain(),
                     tick_chilled,
                     tick_staggered,
                     tick_elite_affix_auras,
@@ -850,10 +860,10 @@ fn setup_enemy_runtime_vfx(
     ]);
 
     commands.insert_resource(EnemyRuntimeVfx {
-        flat_box: meshes.add(Cuboid::new(1.0, 0.04, 1.0)),
-        flat_disc: meshes.add(Cylinder::new(1.0, 0.045)),
-        impact_sphere: meshes.add(Sphere::new(1.0)),
-        projectile_sphere: meshes.add(Sphere::new(0.16)),
+        flat_box: meshes.add(attack_lane_outline_mesh()),
+        flat_disc: meshes.add(ground_mark(1.0, GroundMark::Wave)),
+        impact_spark: meshes.add(impact_spark_mesh()),
+        projectile_bolt: meshes.add(projectile_bolt()),
         warning_materials,
         impact_materials,
         projectile_materials,
@@ -1785,6 +1795,7 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
                     pulse_amount: affix_aura_pulse_amount(affix_count),
                     elapsed: 0.0,
                 },
+                crate::enemy_death::DeathDecoration,
                 Name::new("Elite Affix Aura"),
             ));
             parent.spawn((
@@ -1802,41 +1813,11 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
                     pulse_amount: 0.22,
                     elapsed: 0.0,
                 },
+                crate::enemy_death::DeathDecoration,
                 Name::new("Elite Affix Aura Light"),
             ));
         });
     }
-    commands.entity(entity).with_children(|parent| {
-        for kind in [
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualKind::OffHand,
-            EnemyMotionVisualKind::LeftStep,
-            EnemyMotionVisualKind::RightStep,
-        ] {
-            let scene = enemy_motion_visual_scene(assets, kind, &tuning.attack_kind);
-            let pose = enemy_motion_visual_pose(
-                kind,
-                EnemyMotionVisualContext {
-                    attack_kind: &tuning.attack_kind,
-                    moving: false,
-                    walk_phase: 0.0,
-                    attack_progress: 1.0,
-                    warning_progress: 0.0,
-                    hit_react_power: 0.0,
-                    base_scale,
-                },
-            );
-            parent.spawn((
-                WorldAssetRoot(scene),
-                Transform::from_translation(pose.translation)
-                    .with_rotation(pose.rotation)
-                    .with_scale(pose.scale),
-                pose.visibility,
-                EnemyMotionVisual { kind },
-                Name::new(kind.label()),
-            ));
-        }
-    });
     entity
 }
 
@@ -1860,6 +1841,7 @@ fn attach_main_quest_enemy_markers(
                 ))),
                 Visibility::Hidden,
                 MainQuestEnemyMarker { owner: entity },
+                crate::enemy_death::DeathDecoration,
                 Name::new("Main Quest Enemy Marker"),
             ))
             .id();
@@ -1938,24 +1920,6 @@ fn affix_visual_scene(assets: &GameAssets, visual: EliteAffixVisual) -> Handle<W
         EliteAffixVisual::Ember => assets.affix_ember_aura.clone(),
         EliteAffixVisual::Blood => assets.affix_blood_aura.clone(),
         EliteAffixVisual::Ward => assets.affix_ward_aura.clone(),
-    }
-}
-
-fn enemy_motion_visual_scene(
-    assets: &GameAssets,
-    kind: EnemyMotionVisualKind,
-    attack_kind: &EnemyAttackKind,
-) -> Handle<WorldAsset> {
-    match kind {
-        EnemyMotionVisualKind::AttackHand => match attack_kind {
-            EnemyAttackKind::Melee => assets.sword.clone(),
-            EnemyAttackKind::Projectile => assets.ember_impact.clone(),
-            EnemyAttackKind::Shockwave => assets.void_impact.clone(),
-        },
-        EnemyMotionVisualKind::OffHand => assets.hit_bone_rune.clone(),
-        EnemyMotionVisualKind::LeftStep | EnemyMotionVisualKind::RightStep => {
-            assets.shadow_trail.clone()
-        }
     }
 }
 
@@ -2106,15 +2070,14 @@ fn enemy_ai(
     {
         let mut hit_react_power = 0.0;
         if let Some(mut hit_react) = hit_react {
+            let recoil = enemy_hit_recoil_step(&hit_react, time.delta_secs());
             hit_react.timer.tick(time.delta());
             hit_react_power =
                 (1.0 - hit_react.timer.elapsed_secs() / hit_react.duration_secs).clamp(0.0, 1.0);
-            transform.translation += enemy_hit_recoil_step(&hit_react, time.delta_secs());
+            transform.translation += recoil;
             transform.translation = clamp_world_translation(transform.translation);
-            if hit_react.timer.is_finished()
-                && let Ok(mut entity_commands) = commands.get_entity(entity)
-            {
-                entity_commands.remove::<EnemyHitReact>();
+            if hit_react.timer.is_finished() {
+                commands.queue(move |world: &mut World| remove_expired_hit_react(world, entity));
             }
         }
 
@@ -2636,50 +2599,50 @@ fn animate_enemy(
         );
 }
 
-fn animate_enemy_motion_visuals_system(
-    enemies: EnemyMotionSourceQuery,
-    mut visuals: EnemyMotionVisualQuery,
+// Bind the actual authored mesh pivots after a glTF scene arrives. No proxy
+// weapons, duplicate feet, or persistent VFX are spawned for locomotion.
+#[allow(clippy::type_complexity)]
+fn bind_enemy_limbs(
+    mut commands: Commands,
+    nodes: Query<(Entity, &Name, &Transform), (Added<Name>, Without<EnemyLimb>)>,
+    parents: Query<&ChildOf>,
+    enemies: Query<(), With<Enemy>>,
 ) {
-    for (child_of, visual, mut transform, mut visibility) in visuals.iter_mut() {
-        let Ok((_, enemy, animation)) = enemies.get(child_of.parent()) else {
+    for (entity, name, rest) in &nodes {
+        let Some(kind) = EnemyLimbKind::from_node_name(name.as_str()) else {
             continue;
         };
-        let pose = enemy_motion_visual_pose(
-            visual.kind,
-            EnemyMotionVisualContext {
-                attack_kind: &enemy.attack_kind,
-                moving: animation.moving,
-                walk_phase: animation.walk_phase,
-                attack_progress: enemy_attack_progress(animation),
-                warning_progress: animation.warning_progress,
-                hit_react_power: animation.hit_react_power,
-                base_scale: animation.base_scale,
-            },
-        );
-        transform.translation = pose.translation;
-        transform.rotation = pose.rotation;
-        transform.scale = pose.scale;
-        *visibility = pose.visibility;
+        let mut current = entity;
+        while let Ok(parent) = parents.get(current) {
+            current = parent.parent();
+            if enemies.contains(current) {
+                commands.entity(entity).insert(EnemyLimb {
+                    kind,
+                    owner: current,
+                    rest: *rest,
+                });
+                break;
+            }
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct EnemyMotionVisualPose {
-    translation: Vec3,
-    rotation: Quat,
-    scale: Vec3,
-    visibility: Visibility,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct EnemyMotionVisualContext<'a> {
-    attack_kind: &'a EnemyAttackKind,
-    moving: bool,
-    walk_phase: f32,
-    attack_progress: f32,
-    warning_progress: f32,
-    hit_react_power: f32,
-    base_scale: f32,
+fn animate_enemy_limbs_system(enemies: EnemyLimbSourceQuery, mut limbs: EnemyLimbQuery) {
+    for (limb, mut transform) in &mut limbs {
+        let Ok((_, enemy, animation)) = enemies.get(limb.owner) else {
+            continue;
+        };
+        *transform = limb.rest;
+        transform.rotation = limb.rest.rotation
+            * enemy_limb_rotation(
+                limb.kind,
+                &enemy.attack_kind,
+                animation.moving,
+                animation.walk_phase,
+                enemy_attack_progress(animation),
+                animation.warning_progress,
+            );
+    }
 }
 
 fn enemy_attack_progress(animation: &EnemyAnimation) -> f32 {
@@ -2691,95 +2654,35 @@ fn enemy_attack_progress(animation: &EnemyAnimation) -> f32 {
     }
 }
 
-fn enemy_motion_visual_pose(
-    kind: EnemyMotionVisualKind,
-    context: EnemyMotionVisualContext,
-) -> EnemyMotionVisualPose {
-    let side = kind.side();
-    let stride = if context.moving {
-        (context.walk_phase + side * std::f32::consts::FRAC_PI_2).sin()
+fn enemy_limb_rotation(
+    kind: EnemyLimbKind,
+    attack_kind: &EnemyAttackKind,
+    moving: bool,
+    walk_phase: f32,
+    attack_progress: f32,
+    warning_progress: f32,
+) -> Quat {
+    let stride = if moving {
+        walk_phase.sin() * kind.side()
     } else {
         0.0
     };
-    let attack_drive = if context.attack_progress >= 1.0 {
+    let drive = if attack_progress >= 1.0 {
         0.0
     } else {
-        (context.attack_progress.clamp(0.0, 1.0) * std::f32::consts::PI).sin()
+        (attack_progress.clamp(0.0, 1.0) * std::f32::consts::PI).sin()
     };
-    let impact = if context.attack_progress >= 1.0 {
-        0.0
-    } else {
-        (1.0 - (context.attack_progress - 0.56).abs() / 0.28).clamp(0.0, 1.0)
+    let warning = warning_progress.clamp(0.0, 1.0);
+    let pitch = match kind {
+        EnemyLimbKind::LeftLeg | EnemyLimbKind::RightLeg => stride * 0.46,
+        EnemyLimbKind::AttackHand => match attack_kind {
+            EnemyAttackKind::Melee => -stride * 0.24 - warning * 1.25 + drive * 1.45,
+            EnemyAttackKind::Projectile => -stride * 0.18 - warning * 0.85 - drive * 0.40,
+            EnemyAttackKind::Shockwave => -stride * 0.22 - warning * 1.5 + drive * 1.1,
+        },
+        EnemyLimbKind::OffHand => -stride * 0.24 - warning * 0.25 - drive * 0.30,
     };
-    let warning = context.warning_progress.clamp(0.0, 1.0);
-    let hit_snap = (context.hit_react_power * std::f32::consts::PI)
-        .sin()
-        .max(0.0);
-    let scale = context.base_scale.max(0.2);
-
-    match kind {
-        EnemyMotionVisualKind::AttackHand => {
-            let (translation, rotation, local_scale) = match context.attack_kind {
-                EnemyAttackKind::Melee => (
-                    Vec3::new(
-                        0.40 + 0.16 * attack_drive,
-                        0.78 + 0.14 * warning + 0.07 * hit_snap,
-                        0.26 + 0.64 * impact - 0.18 * warning,
-                    ),
-                    Quat::from_rotation_x(-0.72 - 1.26 * impact + 0.26 * warning)
-                        * Quat::from_rotation_y(0.26)
-                        * Quat::from_rotation_z(-0.96 - 0.48 * attack_drive),
-                    Vec3::splat(0.50 + 0.20 * impact),
-                ),
-                EnemyAttackKind::Projectile => (
-                    Vec3::new(0.26, 1.02 + 0.38 * warning + 0.26 * attack_drive, 0.40),
-                    Quat::from_rotation_x(-0.16 + 0.46 * warning)
-                        * Quat::from_rotation_y(-0.28 * attack_drive)
-                        * Quat::from_rotation_z(-0.34),
-                    Vec3::splat(0.34 + 0.28 * warning + 0.16 * impact),
-                ),
-                EnemyAttackKind::Shockwave => (
-                    Vec3::new(0.36 + 0.16 * attack_drive, 0.46 - 0.14 * impact, 0.54),
-                    Quat::from_rotation_x(-1.14 - 0.48 * impact) * Quat::from_rotation_z(-0.44),
-                    Vec3::splat(0.44 + 0.26 * attack_drive + 0.12 * warning),
-                ),
-            };
-            EnemyMotionVisualPose {
-                translation: translation * scale,
-                rotation,
-                scale: local_scale * scale,
-                visibility: Visibility::Visible,
-            }
-        }
-        EnemyMotionVisualKind::OffHand => {
-            let lift = match context.attack_kind {
-                EnemyAttackKind::Projectile => 0.28 * warning + 0.20 * attack_drive,
-                EnemyAttackKind::Shockwave => -0.07 * impact,
-                EnemyAttackKind::Melee => 0.07 * attack_drive,
-            };
-            EnemyMotionVisualPose {
-                translation: Vec3::new(-0.34, 0.70 + lift, 0.18 - 0.16 * impact) * scale,
-                rotation: Quat::from_rotation_x(-0.26 - 0.58 * impact)
-                    * Quat::from_rotation_z(0.48 + 0.24 * warning),
-                scale: Vec3::splat((0.24 + 0.09 * warning + 0.06 * attack_drive) * scale),
-                visibility: Visibility::Visible,
-            }
-        }
-        EnemyMotionVisualKind::LeftStep | EnemyMotionVisualKind::RightStep => {
-            let visible = context.moving || attack_drive > 0.05 || hit_snap > 0.05;
-            let press = if context.moving { stride.max(0.0) } else { 0.0 };
-            EnemyMotionVisualPose {
-                translation: Vec3::new(side * 0.32, 0.045, -0.22 - press * 0.20) * scale,
-                rotation: Quat::from_rotation_y(side * 0.30 * stride),
-                scale: Vec3::new(0.30 + press * 0.16, 0.12, 0.20 + press * 0.13) * scale,
-                visibility: if visible {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                },
-            }
-        }
-    }
+    Quat::from_rotation_x(pitch)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3187,39 +3090,6 @@ fn boss_phase_should_trigger(health: &Health) -> bool {
 fn boss_enrage_should_trigger(phase: &BossPhase) -> bool {
     phase.phase_two_started && !phase.enrage_started && phase.enrage_timer.is_finished()
 }
-
-#[cfg(test)]
-pub fn boss_pressure_summary(health: &Health, phase: &BossPhase) -> String {
-    boss_pressure_summary_for(ChapterId::AshenReliquary, health, phase)
-}
-
-pub fn boss_pressure_summary_for(chapter: ChapterId, health: &Health, phase: &BossPhase) -> String {
-    let boss = chapter.boss_short_name();
-    let health_percent = if health.max > 0.0 {
-        (health.current.max(0.0) / health.max * 100.0).round()
-    } else {
-        0.0
-    };
-    if phase.enrage_started {
-        return match chapter {
-            ChapterId::AshenReliquary => {
-                format!("{boss}: Ashen Enrage {health_percent:.0}% | kite burning floor")
-            }
-            ChapterId::HollowBastion => {
-                format!("{boss}: Hollow Crescendo {health_percent:.0}% | kite soul fissures")
-            }
-        };
-    }
-    if phase.phase_two_started {
-        return format!(
-            "{boss}: phase two {:.0}% | break before enrage {:.0}s",
-            health_percent,
-            phase.enrage_timer.remaining_secs()
-        );
-    }
-    format!("{boss}: phase one {:.0}%", health_percent)
-}
-
 #[cfg(test)]
 fn boss_phase_two_event_text(enrage_delay_secs: f32) -> String {
     boss_phase_two_event_text_for(ChapterId::AshenReliquary, enrage_delay_secs)
@@ -3383,6 +3253,28 @@ impl EnemyAttackTelegraph {
     }
 }
 
+// Normalized lane perimeter: retain the full danger footprint without painting
+// a solid luminous plank over the ground and the characters' feet.
+fn attack_lane_outline_mesh() -> Mesh {
+    let mut positions = Vec::with_capacity(24);
+    for (x0, x1, z0, z1) in [
+        (-0.5, -0.47, -0.5, 0.5),
+        (0.47, 0.5, -0.5, 0.5),
+        (-0.47, 0.47, -0.5, -0.485),
+        (-0.47, 0.47, 0.485, 0.5),
+    ] {
+        let a = [x0, 0.0, z0];
+        let b = [x0, 0.0, z1];
+        let c = [x1, 0.0, z1];
+        let d = [x1, 0.0, z0];
+        positions.extend([a, b, c, a, c, d]);
+    }
+    let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 24]);
+    mesh
+}
+
 fn spawn_enemy_attack_warning(
     commands: &mut Commands,
     vfx: &EnemyRuntimeVfx,
@@ -3505,7 +3397,7 @@ fn spawn_enemy_attack_impact(
     let material = vfx.impact_materials[enemy_attack_kind_index(kind)].clone();
     let mesh = match kind {
         EnemyAttackKind::Melee => vfx.flat_box.clone(),
-        EnemyAttackKind::Projectile => vfx.impact_sphere.clone(),
+        EnemyAttackKind::Projectile => vfx.impact_spark.clone(),
         EnemyAttackKind::Shockwave => vfx.flat_disc.clone(),
     };
     commands.spawn((
@@ -3713,9 +3605,11 @@ fn spawn_projectile(commands: &mut Commands, vfx: &EnemyRuntimeVfx, spec: EnemyP
         .expect("projectile VFX material must be cached")
         .clone();
     commands.spawn((
-        Mesh3d(vfx.projectile_sphere.clone()),
+        Mesh3d(vfx.projectile_bolt.clone()),
         MeshMaterial3d(material),
-        Transform::from_translation(spec.origin + spec.direction * 0.45),
+        Transform::from_translation(spec.origin + spec.direction * 0.45).with_rotation(
+            Quat::from_rotation_y(spec.direction.x.atan2(spec.direction.z)),
+        ),
         EnemyProjectile {
             damage: spec.damage,
             velocity: spec.direction * spec.speed,
@@ -3738,7 +3632,7 @@ fn spawn_juggernaut_quake_line(
     damage: f32,
 ) {
     let color = Color::srgb(0.86, 0.20, 0.035);
-    let mesh = meshes.add(Cylinder::new(0.84, 0.055));
+    let mesh = meshes.add(ground_mark(1.05, GroundMark::Fracture));
     let material = materials.add(StandardMaterial {
         base_color: color,
         emissive: color.with_luminance(0.42).into(),
@@ -3774,7 +3668,7 @@ fn spawn_shockwave_marker(
 ) {
     let color = Color::srgba(1.0, 0.28, 0.04, 0.55);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(2.6, 0.04))),
+        Mesh3d(meshes.add(ground_mark(2.6, GroundMark::Wave))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: color.into(),
@@ -3804,7 +3698,7 @@ pub fn spawn_molten_death_pool(
 ) {
     let color = Color::srgba(1.0, 0.18, 0.02, 0.72);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.45, 0.06))),
+        Mesh3d(meshes.add(ground_mark(1.35, GroundMark::Fracture))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: color.into(),
@@ -3834,7 +3728,7 @@ fn spawn_arcane_sentry(
 ) {
     let color = Color::srgba(0.62, 0.30, 1.0, 0.62);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.1, 0.08))),
+        Mesh3d(meshes.add(ground_mark(1.05, GroundMark::Arcane))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.20, 0.05, 0.42).into(),
@@ -3864,7 +3758,7 @@ fn spawn_jailer_prison(
 ) {
     let color = Color::srgba(0.78, 0.20, 0.08, 0.58);
     commands.spawn((
-        Mesh3d(meshes.add(Torus::new(0.72, 0.09))),
+        Mesh3d(meshes.add(ground_mark(0.95, GroundMark::Shackles))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.35, 0.04, 0.02).into(),
@@ -3894,7 +3788,7 @@ fn spawn_frozen_orb(
 ) {
     let color = Color::srgba(0.34, 0.74, 1.0, 0.62);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.25, 0.08))),
+        Mesh3d(meshes.add(ground_mark(1.2, GroundMark::Frost))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.04, 0.18, 0.42).into(),
@@ -3924,7 +3818,7 @@ fn spawn_desecrator_pool(
 ) {
     let color = Color::srgba(0.68, 0.03, 0.09, 0.66);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.55, 0.07))),
+        Mesh3d(meshes.add(ground_mark(1.45, GroundMark::Blight))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.42, 0.0, 0.03).into(),
@@ -3954,7 +3848,7 @@ fn spawn_seal_warden_rune(
 ) {
     let color = Color::srgba(0.92, 0.34, 1.0, 0.62);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.32, 0.075))),
+        Mesh3d(meshes.add(ground_mark(1.28, GroundMark::Seal))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             emissive: Color::srgb(0.44, 0.08, 0.58).into(),
@@ -4189,28 +4083,28 @@ fn player_damage_impact_kind(taken: DamageTaken) -> PlayerDamageImpactKind {
 fn player_damage_impact_style(taken: DamageTaken) -> PlayerDamageImpactStyle {
     match player_damage_impact_kind(taken) {
         PlayerDamageImpactKind::Health => {
-            let force = (taken.health_damage * 0.018).clamp(0.0, 0.55);
+            let force = (taken.health_damage * 0.0015).clamp(0.0, 0.06);
             PlayerDamageImpactStyle {
-                color: Color::srgba(1.0, 0.035, 0.02, 0.66),
+                color: Color::srgb(1.0, 0.22, 0.12),
                 y: 0.86,
-                scale: Vec3::splat(0.58 + force),
-                lifetime_secs: 0.30,
+                scale: Vec3::splat(0.12 + force),
+                lifetime_secs: 0.18,
             }
         }
         PlayerDamageImpactKind::Ward => {
-            let force = (taken.absorbed * 0.014).clamp(0.0, 0.34);
+            let force = (taken.absorbed * 0.0015).clamp(0.0, 0.05);
             PlayerDamageImpactStyle {
-                color: Color::srgba(0.98, 0.72, 0.20, 0.58),
+                color: Color::srgb(0.98, 0.72, 0.20),
                 y: 0.92,
-                scale: Vec3::new(0.86 + force, 0.18, 0.86 + force),
-                lifetime_secs: 0.25,
+                scale: Vec3::splat(0.12 + force),
+                lifetime_secs: 0.16,
             }
         }
         PlayerDamageImpactKind::Evade => PlayerDamageImpactStyle {
-            color: Color::srgba(0.28, 0.78, 1.0, 0.52),
+            color: Color::srgb(0.28, 0.78, 1.0),
             y: 0.58,
-            scale: Vec3::new(0.72, 0.10, 0.34),
-            lifetime_secs: 0.22,
+            scale: Vec3::splat(0.10),
+            lifetime_secs: 0.12,
         },
     }
 }
@@ -4222,12 +4116,31 @@ fn player_damage_impact_transform(source: Vec3, target: Vec3, taken: DamageTaken
     let kind = player_damage_impact_kind(taken);
     let lateral = match kind {
         PlayerDamageImpactKind::Evade => right * 0.34 - direction * 0.18,
-        PlayerDamageImpactKind::Ward => Vec3::ZERO,
-        PlayerDamageImpactKind::Health => direction * -0.05,
+        PlayerDamageImpactKind::Ward => direction * -0.32,
+        PlayerDamageImpactKind::Health => direction * -0.32,
     };
     Transform::from_translation(target + Vec3::Y * style.y + lateral)
         .with_rotation(Quat::from_rotation_y(direction.x.atan2(direction.z)))
         .with_scale(style.scale)
+}
+
+// Three narrow, tapered rays leave nearly all of the silhouette unobscured.
+// Opaque geometry also works on render profiles without alpha-blended PBR.
+fn impact_spark_mesh() -> Mesh {
+    let mut positions = Vec::with_capacity(36);
+    for (axis, side) in [(Vec3::X, Vec3::Y), (Vec3::Y, Vec3::Z), (Vec3::Z, Vec3::X)] {
+        let a = -axis * 0.5;
+        let b = side * 0.025;
+        let c = axis * 0.5;
+        let d = -side * 0.025;
+        for point in [a, b, c, a, c, d, c, b, a, d, c, a] {
+            positions.push(point.to_array());
+        }
+    }
+    let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 36]);
+    mesh
 }
 
 fn spawn_player_damage_impact(
@@ -4243,29 +4156,40 @@ fn spawn_player_damage_impact(
     let material = materials.add(StandardMaterial {
         base_color: style.color,
         emissive: style.color.into(),
+        unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
     });
-    let mesh = match kind {
-        PlayerDamageImpactKind::Health => meshes.add(Sphere::new(1.0)),
-        PlayerDamageImpactKind::Ward => meshes.add(Torus::new(1.0, 0.06)),
-        PlayerDamageImpactKind::Evade => meshes.add(Cuboid::new(1.0, 0.05, 1.0)),
+    let mesh = meshes.add(impact_spark_mesh());
+    let count = match kind {
+        PlayerDamageImpactKind::Health => 5,
+        PlayerDamageImpactKind::Ward => 7,
+        PlayerDamageImpactKind::Evade => 3,
     };
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        player_damage_impact_transform(source, target, taken),
-        EnemyProjectile {
-            damage: 0.0,
-            velocity: Vec3::ZERO,
-            radius: 0.0,
-            lifetime: Timer::from_seconds(style.lifetime_secs, TimerMode::Once),
-            arm_timer: None,
-            impact: ProjectileImpact::None,
-        },
-        EnemyEntity,
-        Name::new(player_damage_impact_name(kind)),
-    ));
+    let origin = player_damage_impact_transform(source, target, taken);
+    for index in 0..count {
+        let angle = -1.0 + 2.0 * index as f32 / (count - 1) as f32;
+        let local_direction = Vec3::new(angle.sin(), 0.35 + 0.08 * index as f32, -angle.cos());
+        let velocity = origin.rotation * local_direction.normalize() * 1.2;
+        let mut transform = origin;
+        transform.translation += velocity * 0.035;
+        transform.rotation *= Quat::from_rotation_z(angle);
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material.clone()),
+            transform,
+            EnemyProjectile {
+                damage: 0.0,
+                velocity,
+                radius: 0.0,
+                lifetime: Timer::from_seconds(style.lifetime_secs, TimerMode::Once),
+                arm_timer: None,
+                impact: ProjectileImpact::None,
+            },
+            EnemyEntity,
+            Name::new(player_damage_impact_name(kind)),
+        ));
+    }
 }
 
 fn player_damage_impact_name(kind: PlayerDamageImpactKind) -> &'static str {
@@ -4436,36 +4360,6 @@ mod tests {
             .tick(std::time::Duration::from_secs_f32(1.0));
 
         assert!(boss_enrage_should_trigger(&phase));
-    }
-
-    #[test]
-    fn boss_pressure_summary_reports_phase_enrage_timer_and_enrage() {
-        let health = Health {
-            current: 54.0,
-            max: 120.0,
-        };
-        let mut phase = BossPhase {
-            phase_two_started: false,
-            enrage_started: false,
-            enrage_timer: Timer::from_seconds(12.0, TimerMode::Once),
-        };
-
-        assert_eq!(
-            boss_pressure_summary(&health, &phase),
-            "Malrec: phase one 45%"
-        );
-
-        phase.phase_two_started = true;
-        assert_eq!(
-            boss_pressure_summary(&health, &phase),
-            "Malrec: phase two 45% | break before enrage 12s"
-        );
-
-        phase.enrage_started = true;
-        assert_eq!(
-            boss_pressure_summary(&health, &phase),
-            "Malrec: Ashen Enrage 45% | kite burning floor"
-        );
     }
 
     #[test]
@@ -5173,6 +5067,50 @@ mod tests {
     }
 
     #[test]
+    fn expired_reaction_cleanup_preserves_a_new_hit_in_the_same_frame() {
+        let mut world = World::new();
+        let mut old = EnemyHitReact::new(0.14);
+        old.timer.tick(std::time::Duration::from_secs_f32(0.20));
+        let target = world.spawn(old).id();
+        world
+            .commands()
+            .entity(target)
+            .insert(EnemyHitReact::new(0.18).with_recoil_from(Vec3::ZERO, Vec3::Z, 0.4352));
+        world
+            .commands()
+            .queue(move |world: &mut World| remove_expired_hit_react(world, target));
+        world.flush();
+        let reaction = world.get::<EnemyHitReact>(target).unwrap();
+        assert_eq!(reaction.recoil_distance, 0.4352);
+        assert!(!reaction.timer.is_finished());
+        world
+            .get_mut::<EnemyHitReact>(target)
+            .unwrap()
+            .timer
+            .tick(std::time::Duration::from_secs_f32(0.20));
+        remove_expired_hit_react(&mut world, target);
+        assert!(world.get::<EnemyHitReact>(target).is_none());
+    }
+
+    #[test]
+    fn recoil_covers_same_distance_at_low_and_high_frame_rates() {
+        for fps in [15, 30, 60, 144] {
+            let mut react = EnemyHitReact::new(0.14).with_recoil_from(Vec3::ZERO, Vec3::Z, 0.4386);
+            let delta = 1.0 / fps as f32;
+            let mut movement = Vec3::ZERO;
+            while !react.timer.is_finished() {
+                movement += enemy_hit_recoil_step(&react, delta);
+                react.timer.tick(std::time::Duration::from_secs_f32(delta));
+            }
+            assert!(
+                (movement.z - 0.4386).abs() < 0.00001,
+                "{fps}: {}",
+                movement.z
+            );
+        }
+    }
+
+    #[test]
     fn enemy_hit_react_recoils_away_from_damage_source() {
         let mut react = EnemyHitReact::new(0.20).with_recoil_from(
             Vec3::new(-1.0, 2.0, 0.0),
@@ -5192,144 +5130,88 @@ mod tests {
     }
 
     #[test]
-    fn enemy_motion_visual_pose_gives_walk_cycle_readable_steps() {
-        let idle_left = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::LeftStep,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 1.0,
-                warning_progress: 0.0,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
+    fn enemy_limb_binding_animates_nested_authored_mesh_without_spawning_copies() {
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            (bind_enemy_limbs, animate_enemy_limbs_system).chain(),
         );
-        let moving_left = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::LeftStep,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: true,
-                walk_phase: 0.0,
-                attack_progress: 1.0,
-                warning_progress: 0.0,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-        let moving_right = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::RightStep,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: true,
-                walk_phase: 0.0,
-                attack_progress: 1.0,
-                warning_progress: 0.0,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-
-        assert_eq!(idle_left.visibility, Visibility::Hidden);
-        assert_eq!(moving_left.visibility, Visibility::Visible);
-        assert_eq!(moving_right.visibility, Visibility::Visible);
-        assert!(moving_left.translation.x < 0.0);
-        assert!(moving_right.translation.x > 0.0);
-        assert!(moving_right.translation.z < moving_left.translation.z - 0.16);
-        assert!(moving_right.scale.x > moving_left.scale.x + 0.12);
-        assert!(moving_right.scale.z > moving_left.scale.z + 0.10);
-        assert_ne!(moving_left.scale, moving_right.scale);
+        let mut animation = EnemyAnimation::new(1.7);
+        animation.moving = true;
+        animation.walk_phase = std::f32::consts::FRAC_PI_2;
+        let owner = app
+            .world_mut()
+            .spawn((test_enemy("skeleton", vec![]), animation))
+            .id();
+        let scene_root = app.world_mut().spawn(ChildOf(owner)).id();
+        let rest = Transform::from_xyz(-0.15, 0.83, 0.0).with_scale(Vec3::splat(0.9));
+        let leg = app
+            .world_mut()
+            .spawn((Name::new("enemy_left_leg"), rest, ChildOf(scene_root)))
+            .id();
+        let count = app.world().entities().len();
+        app.update();
+        let bound = app.world().get::<EnemyLimb>(leg).unwrap();
+        assert_eq!(bound.owner, owner);
+        let first = *app.world().get::<Transform>(leg).unwrap();
+        assert_eq!(first.translation, rest.translation);
+        assert_eq!(first.scale, rest.scale);
+        assert!(first.rotation.angle_between(rest.rotation) > 0.4);
+        app.update();
+        assert_eq!(*app.world().get::<Transform>(leg).unwrap(), first);
+        assert_eq!(app.world().entities().len(), count);
     }
 
     #[test]
-    fn enemy_motion_visual_pose_makes_melee_attacks_read_as_weapon_swings() {
-        let idle = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 1.0,
-                warning_progress: 0.0,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-        let windup = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 0.28,
-                warning_progress: 0.6,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-        let impact = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Melee,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 0.56,
-                warning_progress: 0.0,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-
-        assert!(windup.translation.y > idle.translation.y + 0.08);
-        assert!(windup.translation.z < idle.translation.z);
-        assert!(impact.translation.z > idle.translation.z + 0.55);
-        assert!(impact.scale.x > idle.scale.x + 0.18);
-        assert_ne!(impact.rotation, idle.rotation);
+    fn authored_enemy_legs_swing_oppositely_and_rest_at_idle() {
+        let pose = |kind, moving| {
+            enemy_limb_rotation(
+                kind,
+                &EnemyAttackKind::Melee,
+                moving,
+                std::f32::consts::FRAC_PI_2,
+                1.0,
+                0.0,
+            )
+        };
+        assert_eq!(pose(EnemyLimbKind::LeftLeg, false), Quat::IDENTITY);
+        let left = pose(EnemyLimbKind::LeftLeg, true);
+        let right = pose(EnemyLimbKind::RightLeg, true);
+        assert!((left * right).angle_between(Quat::IDENTITY) < 0.001);
+        assert!(left.angle_between(Quat::IDENTITY) > 0.4);
     }
 
     #[test]
-    fn enemy_motion_visual_pose_separates_caster_and_shockwave_silhouettes() {
-        let projectile = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Projectile,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 0.42,
-                warning_progress: 0.85,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-        let shockwave = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::AttackHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Shockwave,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 0.42,
-                warning_progress: 0.85,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
-        let caster_offhand = enemy_motion_visual_pose(
-            EnemyMotionVisualKind::OffHand,
-            EnemyMotionVisualContext {
-                attack_kind: &EnemyAttackKind::Projectile,
-                moving: false,
-                walk_phase: 0.0,
-                attack_progress: 0.42,
-                warning_progress: 0.85,
-                hit_react_power: 0.0,
-                base_scale: 1.0,
-            },
-        );
+    fn authored_enemy_weapon_arm_has_distinct_windup_and_swing() {
+        let pose = |progress, warning| {
+            enemy_limb_rotation(
+                EnemyLimbKind::AttackHand,
+                &EnemyAttackKind::Melee,
+                false,
+                0.0,
+                progress,
+                warning,
+            )
+        };
+        let idle = pose(1.0, 0.0);
+        let windup = pose(1.0, 0.9);
+        let impact = pose(0.5, 0.0);
+        assert_eq!(idle, Quat::IDENTITY);
+        assert!(windup.angle_between(impact) > 2.0);
+    }
 
-        assert!(projectile.translation.y > shockwave.translation.y + 0.65);
-        assert!(projectile.scale.x > shockwave.scale.x * 0.70);
-        assert!(shockwave.translation.z >= projectile.translation.z);
-        assert!(caster_offhand.translation.y > 1.05);
+    #[test]
+    fn enemy_limb_contract_ignores_effects_and_body_meshes() {
+        assert_eq!(EnemyLimbKind::from_node_name("enemy_body"), None);
+        assert_eq!(EnemyLimbKind::from_node_name("shadow trail"), None);
+        assert_eq!(
+            EnemyLimbKind::from_node_name("enemy_left_leg"),
+            Some(EnemyLimbKind::LeftLeg)
+        );
+        assert_eq!(
+            EnemyLimbKind::from_node_name("enemy_right_arm"),
+            Some(EnemyLimbKind::AttackHand)
+        );
     }
 
     #[test]
@@ -5431,6 +5313,61 @@ mod tests {
         assert!(ward_style.scale.x > evade_style.scale.x);
         assert!(health_style.lifetime_secs > evade_style.lifetime_secs);
         assert!(ward_style.color.to_srgba().green > health_style.color.to_srgba().green);
+    }
+
+    #[test]
+    fn player_health_impact_spawns_only_small_short_lived_non_damaging_sparks() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(
+                Startup,
+                |mut commands: Commands,
+                 mut meshes: ResMut<Assets<Mesh>>,
+                 mut materials: ResMut<Assets<StandardMaterial>>| {
+                    spawn_player_damage_impact(
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                        -Vec3::Z,
+                        Vec3::ZERO,
+                        DamageTaken {
+                            absorbed: 0.0,
+                            health_damage: 10_000.0,
+                        },
+                    );
+                },
+            );
+        app.update();
+        let mut query = app
+            .world_mut()
+            .query::<(&Mesh3d, &Transform, &EnemyProjectile)>();
+        let sparks: Vec<_> = query.iter(app.world()).collect();
+        assert_eq!(sparks.len(), 5);
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        for (handle, transform, projectile) in sparks {
+            let mesh = meshes.get(&handle.0).unwrap();
+            let bevy::mesh::VertexAttributeValues::Float32x3(vertices) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+            else {
+                panic!("missing spark vertices")
+            };
+            assert_eq!(vertices.len(), 36);
+            for point in vertices {
+                let local = Vec3::from_array(*point) * transform.scale;
+                assert!(
+                    local.length() <= 0.091,
+                    "hit mesh must not obscure the body"
+                );
+            }
+            assert_eq!(projectile.damage, 0.0);
+            assert_eq!(projectile.radius, 0.0);
+            assert!(projectile.velocity.length() > 1.0);
+            assert!(projectile.lifetime.duration().as_secs_f32() <= 0.18);
+            let mut lifetime = projectile.lifetime.clone();
+            lifetime.tick(std::time::Duration::from_millis(200));
+            assert!(lifetime.is_finished());
+        }
     }
 
     #[test]

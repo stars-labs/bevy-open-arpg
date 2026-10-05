@@ -1,25 +1,45 @@
+use crate::class::{ClassCatalog, ClassDef, SelectedClass, SkillLoadout, SkillSlot};
+#[cfg(test)]
+use crate::player::EmberParagon;
+pub(crate) mod class_select;
+mod death;
+pub(crate) use death::DeathAction;
+mod hud_layout;
+mod icons;
+mod journal;
+pub(crate) mod localization;
+mod menu;
+mod minimap;
+mod navigation;
+mod panels;
+mod progression;
+mod skills;
+use minimap::*;
+pub(crate) mod settings;
+mod theme;
+pub(crate) use menu::MenuAction;
+use menu::*;
+use theme::{UI_FONT_BOLD, UI_FONT_REGULAR};
+
 use crate::assets::{AssetLoadingProgress, GameAssets, game_assets_load_summary};
 #[cfg(test)]
 use crate::player::CHAPTER_LEVEL_CAP;
 use crate::{
-    AFFIX_CODEX_TARGET, ASHEN_THREAT_MAX, ASHEN_THREAT_SURGE_TARGET, AudioSettings,
-    BOSS_BREAK_TARGET, BuildOpen, CARNAGE_MASTER_STREAK, CHAMPION_PACK_TARGET, CODEX_ADEPT_KILLS,
-    Difficulty, DifficultySettings, GEM_ADEPT_KINDS, GLORY_SEEKER_GLOBES, GameState, InventoryOpen,
-    JournalOpen, LAST_STAND_POTIONS, PauseState, RunStats, SET_ADEPT_KILLS,
-    bestiary::{Bestiary, bestiary_next_goal, bestiary_summary},
-    bounty::{BountyProgress, bounty_summary},
-    challenge::{ChapterChallenges, challenge_summary},
+    AFFIX_CODEX_TARGET, ASHEN_THREAT_SURGE_TARGET, AudioSettings, BOSS_BREAK_TARGET, BuildOpen,
+    CARNAGE_MASTER_STREAK, CHAMPION_PACK_TARGET, CODEX_ADEPT_KILLS, Difficulty, DifficultySettings,
+    GameState, InventoryOpen, JournalOpen, PauseState, RunStats, SET_ADEPT_KILLS,
+    bounty::BountyProgress,
+    challenge::ChapterChallenges,
     chapter::{
         ChapterId, ChapterPhase, ChapterProgress, InteractableKind, REQUIRED_SEAL_FRAGMENTS,
         main_quest_summary, phase_label, seal_fragment_reward_preview,
     },
     chapter_rating,
-    combat::CombatComboState,
-    companion::{CompanionBond, CompanionStance, companion_summary},
+    companion::{CompanionBond, CompanionStance},
     dungeon::{BREAKER_TARGET_BREAKABLES, ChapterZoneState, Interactable, chapter_world_layout},
     enemy::{
         AFFIX_HUNTER_KILLS, BossPhase, BossStagger, CURSED_AMBUSH_KILLS, Enemy, EnemyAffix,
-        Staggered, boss_pressure_summary_for, boss_stagger_summary,
+        Staggered, boss_stagger_summary,
     },
     escalated_difficulty_after_clear,
     feedback::{AudioBackendStatus, CombatEvent, CombatLog, TargetInfo},
@@ -30,35 +50,30 @@ use crate::{
     },
     loot::{
         FuryGlobe, HealthGlobe, LOOT_PICKUP_RADIUS, LootEntity, LootProximityInfo,
-        SOUL_SIGIL_CACHE_COST, loot_pursuit_summary, primal_infusion_pursuit_summary,
-        quartermaster_preview_summary, soul_sigil_cache_ready_count,
-        soul_sigil_cache_ready_summary,
+        SOUL_SIGIL_CACHE_COST, primal_infusion_pursuit_summary, quartermaster_preview_summary,
+        soul_sigil_cache_ready_count, soul_sigil_cache_ready_summary,
     },
     lore::LoreJournal,
-    massacre_summary,
-    mastery::{ChapterMastery, mastery_next_goal_summary, mastery_summary},
-    milestone::{ALL_MILESTONES, Milestones, milestone_summary},
-    obelisk::{BloodObelisk, ObeliskState, obelisk_summary},
+    mastery::{ChapterMastery, mastery_summary},
+    milestone::{ALL_MILESTONES, Milestones},
+    obelisk::{BloodObelisk, ObeliskState},
     ordeal::{ChapterModifier, OrdealAffix, modifier_for_difficulty, modifier_for_run},
     player::{
         Armory, Barrier, Burning, ChapterBoon, ChapterBoonChoice, Charm, ConduitBuff, DamageBonus,
-        DashRune, DeathWard, DeathWardReport, ElixirBelt, ElixirBuff, EmberParagon, Equipment,
-        Evade, FortuneBuff, Fury, GearSlot, GloryBuff, Health, Inventory, InventoryItem, Jailed,
-        LegendaryCodex, LegendaryPower, NovaRune, PYLON_REAPER_KILLS, Player, PlayerLevel,
-        PotionBelt, RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet, RuptureRune, SkillCooldowns,
-        SkillRunes, SocketedGem, SurgeBuff, Talents, TownPortal, buff_seconds_remaining,
-        chapter_boon_choice_prompt, conduit_seconds_remaining, elixir_seconds_remaining,
-        equip_gear_piece, equip_inventory_item, evade_cooldown_remaining, evade_seconds_remaining,
-        fortune_seconds_remaining, gem_label, glory_seconds_remaining, inventory_swap_index,
-        legendary_codex_pursuit_summary, potion_seconds_remaining, reliquary_boon_momentum_ready,
-        reliquary_momentum_summary, reliquary_resonance, surge_seconds_remaining,
-        themed_reliquary_set, total_armor, total_crit_chance, total_damage_bonus,
-        town_portal_seconds_remaining, unequip_gear_piece,
+        DeathWard, DeathWardReport, ElixirBelt, ElixirBuff, Equipment, Evade, FortuneBuff, Fury,
+        GearSlot, GloryBuff, Health, Inventory, InventoryItem, Jailed, LegendaryCodex,
+        LegendaryPower, PYLON_REAPER_KILLS, Player, PlayerLevel, PotionBelt,
+        RELIQUARY_MOMENTUM_MAX, RelicBuff, ReliquarySet, SkillCooldowns, SocketedGem, SurgeBuff,
+        TalentBranch, Talents, TownPortal, buff_seconds_remaining, chapter_boon_choice_prompt,
+        conduit_seconds_remaining, elixir_seconds_remaining, equip_gear_piece,
+        equip_inventory_item, evade_cooldown_remaining, evade_seconds_remaining,
+        fortune_seconds_remaining, glory_seconds_remaining, potion_seconds_remaining,
+        reliquary_boon_momentum_ready, surge_seconds_remaining, themed_reliquary_set,
+        total_crit_chance, total_damage_bonus, town_portal_seconds_remaining, unequip_gear_piece,
     },
-    rift::{EmberRift, RiftState, rift_summary},
-    story::{StoryDialogueEvent, StoryLog, StoryPresentationReset, story_recap, story_summary},
-    story_content::{chapter_ending_summary, story_scene},
-    valor_summary,
+    rift::{EmberRift, RiftState},
+    story::{StoryDialogueEvent, StoryLog, StoryPresentationReset, story_recap},
+    story_content::chapter_ending_summary,
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -103,7 +118,10 @@ struct MinimapUi;
 struct MinimapDot;
 
 #[derive(Component)]
-struct MinimapObjectiveText;
+struct MinimapTitleText;
+
+#[derive(Component)]
+struct MinimapLegend;
 
 #[derive(Component)]
 struct ObjectiveCompassPanel;
@@ -173,9 +191,9 @@ struct SkillSlotLamp(SkillSlotText);
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 enum SkillSlotText {
     Strike,
-    Rupture,
-    Dash,
-    Nova,
+    Finisher,
+    Mobility,
+    Area,
     Surge,
     Evade,
 }
@@ -184,12 +202,85 @@ impl SkillSlotText {
     fn key(self) -> &'static str {
         match self {
             Self::Strike => "LMB",
-            Self::Rupture => "RMB",
-            Self::Dash => "Q",
-            Self::Nova => "E",
+            Self::Finisher => "R",
+            Self::Mobility => "Q",
+            Self::Area => "E",
             Self::Surge => "Y",
             Self::Evade => "Shift",
         }
+    }
+
+    /// The class skill slot behind this HUD slot, if it is one.
+    fn class_slot(self) -> Option<SkillSlot> {
+        match self {
+            Self::Mobility => Some(SkillSlot::Mobility),
+            Self::Area => Some(SkillSlot::Area),
+            Self::Finisher => Some(SkillSlot::Finisher),
+            _ => None,
+        }
+    }
+}
+
+/// Columns of the class skill atlas: basic attack, then a/b for Q, E and R.
+const CLASS_SKILL_ATLAS_COLUMNS: usize = 7;
+
+fn class_skill_icon_index(
+    class: crate::class::HeroClass,
+    slot: Option<SkillSlot>,
+    alt: bool,
+) -> usize {
+    let column = match slot {
+        None => 0,
+        Some(slot) => 1 + slot.index() * 2 + usize::from(alt),
+    };
+    class.index() * CLASS_SKILL_ATLAS_COLUMNS + column
+}
+
+/// Per-slot facts the HUD needs about the equipped class skills this frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct HudSkills {
+    /// What each slot actually spends after discounts and talents.
+    cost: [f32; 3],
+    /// Hero level still required before a slot can be used.
+    locked_until: [Option<u32>; 3],
+    /// Atlas cells for the basic attack and the three equipped skills.
+    icons: [usize; 4],
+    /// English names for the basic attack and the three equipped skills.
+    names: [String; 4],
+}
+
+impl HudSkills {
+    fn new(
+        class: &ClassDef,
+        loadout: &SkillLoadout,
+        level: u32,
+        fury: &Fury,
+        talents: &Talents,
+    ) -> Self {
+        let mut skills = Self {
+            icons: [class_skill_icon_index(class.class, None, false); 4],
+            names: [
+                class.basic.name.clone(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ],
+            ..default()
+        };
+        for slot in SkillSlot::ALL {
+            let index = slot.index();
+            let alt = loadout.alt[index];
+            let (skill, _) = class.equipped(loadout, slot);
+            skills.cost[index] = fury.skill_cost(skill.cost) * talents.fury_cost_multiplier();
+            skills.locked_until[index] = (level < skill.unlock_level).then_some(skill.unlock_level);
+            skills.icons[index + 1] = class_skill_icon_index(class.class, Some(slot), alt);
+            skills.names[index + 1] = skill.name.to_uppercase();
+        }
+        skills
+    }
+
+    fn min_cost(&self) -> f32 {
+        self.cost.iter().copied().fold(f32::INFINITY, f32::min)
     }
 }
 
@@ -217,9 +308,6 @@ struct BuildText;
 struct MainMenuBackdropArt;
 
 #[derive(Component)]
-struct CorePanelArt;
-
-#[derive(Component)]
 struct ResourceOrbArt;
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
@@ -230,13 +318,6 @@ struct InventorySlotIcon(usize);
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 struct PaperDollSlotText(GearSlot);
-
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
-enum TalentBranch {
-    Wrath,
-    Vigor,
-    Focus,
-}
 
 impl TalentBranch {
     const ALL: [Self; 3] = [Self::Wrath, Self::Vigor, Self::Focus];
@@ -290,9 +371,6 @@ struct ExperienceFill;
 struct PotionPip(u32);
 
 #[derive(Component)]
-struct LevelUpBannerText;
-
-#[derive(Component)]
 struct LootPickupBannerText;
 
 #[derive(Component)]
@@ -303,9 +381,6 @@ struct RewardToastPanel;
 
 #[derive(Component)]
 struct SkillFeedbackText;
-
-#[derive(Component)]
-struct ActionBeltText;
 
 #[derive(Component)]
 struct LootProximityPanel;
@@ -368,14 +443,6 @@ struct PaperDollSlot(GearSlot);
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 struct InventorySlotText(usize);
-
-#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
-enum CompactCharacterText {
-    Weapon,
-    Charm,
-    Inventory,
-    Codex,
-}
 
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 enum CompactUtilityText {
@@ -1205,23 +1272,6 @@ impl Default for ChapterBannerState {
 }
 
 #[derive(Resource)]
-struct LevelUpBannerState {
-    observed_level: u32,
-    observed_talent_points: u32,
-    timer: Timer,
-}
-
-impl Default for LevelUpBannerState {
-    fn default() -> Self {
-        Self {
-            observed_level: 0,
-            observed_talent_points: 0,
-            timer: Timer::from_seconds(0.0, TimerMode::Once),
-        }
-    }
-}
-
-#[derive(Resource)]
 struct LootPickupBannerState {
     timer: Timer,
 }
@@ -1777,6 +1827,25 @@ type LogVisibilityQuery<'w, 's> =
 type JournalVisibilityQuery<'w, 's> =
     Query<'w, 's, &'static mut Visibility, (With<JournalText>, Without<LogText>)>;
 
+type ResourceLiquidQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut BackgroundColor,
+    (
+        With<ResourceLiquid>,
+        Without<ObjectiveText>,
+        Without<ResourceFill>,
+        Without<ResourceOrbFrame>,
+        Without<SkillSlotFrame>,
+        Without<SkillCooldownMask>,
+        Without<SkillSlotLamp>,
+        Without<ExperienceFill>,
+        Without<PotionPip>,
+        Without<GearSlotText>,
+        Without<InventorySlot>,
+    ),
+>;
+
 #[derive(SystemParam)]
 struct HudNodeQueries<'w, 's> {
     objective_frames: ObjectiveFrameQuery<'w, 's>,
@@ -1785,6 +1854,8 @@ struct HudNodeQueries<'w, 's> {
     skill_frames: SkillSlotFrameQuery<'w, 's>,
     skill_masks: SkillCooldownMaskQuery<'w, 's>,
     skill_lamps: SkillSlotLampQuery<'w, 's>,
+    skill_icons: SkillSlotIconQuery<'w, 's>,
+    resource_liquids: ResourceLiquidQuery<'w, 's>,
     inventory_panels: InventoryPanelQuery<'w, 's>,
     build_panels: BuildPanelQuery<'w, 's>,
     experience_fills: ExperienceFillQuery<'w, 's>,
@@ -1798,6 +1869,9 @@ struct HudNodeQueries<'w, 's> {
 
 #[derive(SystemParam)]
 struct HudResources<'w> {
+    catalog: Res<'w, ClassCatalog>,
+    selected: Res<'w, SelectedClass>,
+    game_assets: Res<'w, GameAssets>,
     stats: Res<'w, RunStats>,
     progress: Res<'w, ChapterProgress>,
     story: Res<'w, StoryLog>,
@@ -1806,19 +1880,14 @@ struct HudResources<'w> {
     inventory_open: Res<'w, InventoryOpen>,
     build_open: Res<'w, BuildOpen>,
     journal_open: Res<'w, JournalOpen>,
-    audio: Res<'w, AudioSettings>,
-    audio_backend: Res<'w, AudioBackendStatus>,
-    difficulty: Res<'w, DifficultySettings>,
     journal: Res<'w, LoreJournal>,
     milestones: Res<'w, Milestones>,
-    bestiary: Res<'w, Bestiary>,
     bounty: Res<'w, BountyProgress>,
     modifier: Res<'w, ChapterModifier>,
     challenges: Res<'w, ChapterChallenges>,
     mastery: Res<'w, ChapterMastery>,
     obelisk: Res<'w, BloodObelisk>,
     rift: Res<'w, EmberRift>,
-    records: Res<'w, ChapterRecords>,
     zone: Res<'w, ChapterZoneState>,
     skill_feedback: Res<'w, SkillFeedbackState>,
     target_info: Res<'w, TargetInfo>,
@@ -1835,6 +1904,7 @@ type PlayerHudVitalsQuery<'w, 's> = Query<
         &'static SurgeBuff,
         &'static TownPortal,
         &'static PlayerLevel,
+        &'static crate::player::EmberParagon,
         &'static PotionBelt,
         &'static ElixirBelt,
         &'static Transform,
@@ -1852,18 +1922,15 @@ type PlayerHudBuildQuery<'w, 's> = Query<
         &'static FortuneBuff,
         &'static Inventory,
         &'static Talents,
-        &'static SkillRunes,
+        &'static SkillLoadout,
         &'static CompanionBond,
     ),
     With<Player>,
 >;
 type ChapterBoonQuery<'w, 's> = Query<'w, 's, &'static ChapterBoon, With<Player>>;
-type ParagonHudQuery<'w, 's> = Query<'w, 's, &'static EmberParagon, With<Player>>;
 type CodexHudQuery<'w, 's> = Query<'w, 's, &'static LegendaryCodex, With<Player>>;
 type CharmHudQuery<'w, 's> = Query<'w, 's, &'static Charm, With<Player>>;
 type ArmoryHudQuery<'w, 's> = Query<'w, 's, &'static Armory, With<Player>>;
-type ConduitHudQuery<'w, 's> = Query<'w, 's, &'static ConduitBuff, With<Player>>;
-type GloryHudQuery<'w, 's> = Query<'w, 's, &'static GloryBuff, With<Player>>;
 type WardHudQuery<'w, 's> = Query<'w, 's, (&'static DeathWard, &'static Barrier), With<Player>>;
 type BossHudQuery<'w, 's> = Query<
     'w,
@@ -2011,19 +2078,17 @@ struct HudQueryParams<'w, 's> {
     vitals: PlayerHudVitalsQuery<'w, 's>,
     build: PlayerHudBuildQuery<'w, 's>,
     boon: ChapterBoonQuery<'w, 's>,
-    paragon: ParagonHudQuery<'w, 's>,
     codex: CodexHudQuery<'w, 's>,
     charm: CharmHudQuery<'w, 's>,
     armory: ArmoryHudQuery<'w, 's>,
-    conduit: ConduitHudQuery<'w, 's>,
-    glory: GloryHudQuery<'w, 's>,
     ward: WardHudQuery<'w, 's>,
     boss: BossHudQuery<'w, 's>,
     texts: HudTextQueries<'w, 's>,
     nodes: HudNodeQueries<'w, 's>,
 }
 
-type MinimapPlayerQuery<'w, 's> = Query<'w, 's, &'static Transform, With<Player>>;
+type MinimapPlayerQuery<'w, 's> =
+    Query<'w, 's, (&'static Transform, &'static crate::player::PlayerAnimation), With<Player>>;
 type MinimapEnemyQuery<'w, 's> = Query<'w, 's, (&'static Transform, &'static Enemy)>;
 type MinimapLootQuery<'w, 's> = Query<'w, 's, &'static Transform, With<LootEntity>>;
 type MinimapHealthGlobeQuery<'w, 's> = Query<'w, 's, &'static Transform, With<HealthGlobe>>;
@@ -2051,22 +2116,6 @@ type VictoryPlayerProfileQuery<'w, 's> = Query<
     With<Player>,
 >;
 
-type CompactCharacterPlayerQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static DamageBonus,
-        &'static Equipment,
-        &'static Charm,
-        &'static Inventory,
-        &'static LegendaryCodex,
-        &'static Talents,
-        &'static SkillRunes,
-    ),
-    With<Player>,
->;
-type CompactCharacterTextQuery<'w, 's> =
-    Query<'w, 's, (&'static CompactCharacterText, &'static mut Text)>;
 type CompactUtilityPlayerQuery<'w, 's> = Query<
     'w,
     's,
@@ -2080,27 +2129,6 @@ type CompactUtilityPlayerQuery<'w, 's> = Query<
 >;
 type CompactUtilityTextQuery<'w, 's> =
     Query<'w, 's, (&'static CompactUtilityText, &'static mut Text)>;
-type ActionBeltPlayerQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static Health,
-        &'static Barrier,
-        &'static Fury,
-        &'static SkillCooldowns,
-        &'static Evade,
-        &'static SurgeBuff,
-        &'static ChapterBoon,
-        &'static PotionBelt,
-        &'static Inventory,
-        &'static Equipment,
-        &'static DamageBonus,
-        &'static SkillRunes,
-        &'static Talents,
-    ),
-    With<Player>,
->;
-
 #[derive(SystemParam)]
 struct VictoryResources<'w, 's> {
     stats: ResMut<'w, RunStats>,
@@ -2120,23 +2148,19 @@ struct VictoryResources<'w, 's> {
 
 const MINIMAP_WIDTH: f32 = 164.0;
 const MINIMAP_HEIGHT: f32 = 132.0;
-const MINIMAP_MAP_LEFT: f32 = 8.0;
-const MINIMAP_MAP_RIGHT: f32 = 8.0;
-const MINIMAP_MAP_TOP: f32 = 34.0;
+const MINIMAP_MAP_LEFT: f32 = 22.0;
+const MINIMAP_MAP_RIGHT: f32 = 22.0;
+const MINIMAP_MAP_TOP: f32 = 44.0;
 const MINIMAP_MAP_BOTTOM: f32 = 20.0;
 const MINIMAP_VISIBLE_RADIUS_X: f32 = 64.0;
 const MINIMAP_VISIBLE_RADIUS_Z: f32 = 52.0;
 const MAIN_MENU_BACKGROUND_IMAGE: &str = "images/generated/ui/main-menu-reliquary-v2.png";
 const MAIN_MENU_BACKGROUND_SIZE: Vec2 = Vec2::new(1_672.0, 941.0);
-const UI_PANEL_FRAME_IMAGE: &str = "images/generated/ui/panel-frame-reliquary.png";
 const UI_SLOT_FRAME_IMAGE: &str = "images/generated/ui/slot-frame-reliquary.png";
 const UI_RESOURCE_ORB_FRAME_IMAGE: &str = "images/generated/ui/resource-orb-frame-reliquary.png";
 const UI_SKILL_ICONS_IMAGE: &str = "images/generated/ui/skill-icons-reliquary.png";
 const UI_GEAR_ICONS_IMAGE: &str = "images/generated/ui/gear-icons-reliquary.png";
 const UI_TALENT_SIGILS_IMAGE: &str = "images/generated/ui/talent-sigils-reliquary.png";
-const UI_FONT_REGULAR: &str = "fonts/FiraSans-Regular.ttf";
-const UI_FONT_BOLD: &str = "fonts/FiraSans-Bold.ttf";
-const UI_PANEL_SLICE_BORDER: f32 = 59.0;
 const UI_SLOT_SLICE_BORDER: f32 = 85.0;
 const UI_SKILL_ICON_CELL: f32 = 256.0;
 const UI_GEAR_ICON_CELL: f32 = 222.0;
@@ -2144,9 +2168,9 @@ const UI_TALENT_SIGIL_CELL: f32 = 362.0;
 
 fn panel_image_node(asset_server: &AssetServer) -> ImageNode {
     ImageNode {
-        image: asset_server.load(UI_PANEL_FRAME_IMAGE),
+        image: asset_server.load("images/generated/ui/panel-frame-reliquary.png"),
         image_mode: NodeImageMode::Sliced(TextureSlicer {
-            border: BorderRect::all(UI_PANEL_SLICE_BORDER),
+            border: BorderRect::all(59.0),
             center_scale_mode: SliceScaleMode::Stretch,
             sides_scale_mode: SliceScaleMode::Stretch,
             max_corner_scale: 1.0,
@@ -2180,9 +2204,9 @@ fn atlas_rect(cell_width: f32, cell_height: f32, columns: usize, index: usize) -
 fn skill_icon_index(slot: SkillSlotText) -> usize {
     match slot {
         SkillSlotText::Strike => 0,
-        SkillSlotText::Rupture => 1,
-        SkillSlotText::Dash => 2,
-        SkillSlotText::Nova => 3,
+        SkillSlotText::Finisher => 1,
+        SkillSlotText::Mobility => 2,
+        SkillSlotText::Area => 3,
         SkillSlotText::Surge => 4,
         SkillSlotText::Evade => 5,
     }
@@ -2221,95 +2245,133 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ChapterBannerState>()
-            .init_resource::<LevelUpBannerState>()
-            .init_resource::<LootPickupBannerState>()
-            .init_resource::<RewardToastState>()
-            .init_resource::<StoryCommsState>()
-            .init_resource::<SkillFeedbackState>()
-            .init_resource::<CombatStreakBannerState>()
-            .init_resource::<ChapterRecords>()
-            .init_resource::<HudDensity>()
-            .add_systems(
-                OnEnter(GameState::MainMenu),
-                (load_chapter_record_profile, spawn_menu).chain(),
+        app.add_plugins((
+            theme::ReliquaryThemePlugin,
+            progression::ProgressionFeedbackPlugin,
+            navigation::HudNavigationPlugin,
+            journal::JournalPanelPlugin,
+            localization::LocalizationPlugin,
+            settings::SettingsPanelPlugin,
+            skills::SkillPanelPlugin,
+            class_select::ClassSelectPlugin,
+        ))
+        .add_systems(
+            Update,
+            update_pause_card_visibility.run_if(in_state(GameState::InGame)),
+        )
+        .init_resource::<ChapterBannerState>()
+        .init_resource::<LootPickupBannerState>()
+        .init_resource::<RewardToastState>()
+        .init_resource::<StoryCommsState>()
+        .init_resource::<SkillFeedbackState>()
+        .init_resource::<CombatStreakBannerState>()
+        .init_resource::<ChapterRecords>()
+        .init_resource::<HudDensity>()
+        .add_systems(
+            Update,
+            update_minimap_legend.run_if(in_state(GameState::InGame)),
+        )
+        .add_systems(
+            OnEnter(GameState::MainMenu),
+            (load_chapter_record_profile, spawn_menu).chain(),
+        )
+        .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
+        .add_systems(
+            Update,
+            update_loading_screen.run_if(in_state(GameState::Loading)),
+        )
+        .add_systems(OnExit(GameState::Loading), despawn_loading_screen)
+        .add_systems(
+            Update,
+            ensure_main_menu_ui.run_if(in_state(GameState::MainMenu)),
+        )
+        .add_systems(
+            Update,
+            (
+                update_menu,
+                update_main_menu_backdrop_crop,
+                animate_menu,
+                menu_button_feedback,
             )
-            .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
-            .add_systems(
-                Update,
-                update_loading_screen.run_if(in_state(GameState::Loading)),
+                .run_if(in_state(GameState::MainMenu)),
+        )
+        .add_systems(OnExit(GameState::MainMenu), despawn_menu)
+        .add_systems(
+            OnEnter(GameState::InGame),
+            (
+                reset_chapter_banner,
+                reset_loot_pickup_banner,
+                reset_reward_toast,
+                reset_story_comms,
+                reset_skill_feedback,
+                reset_combat_streak_banner,
+                apply_profile_renown_bonus,
+                spawn_hud,
             )
-            .add_systems(OnExit(GameState::Loading), despawn_loading_screen)
-            .add_systems(
-                Update,
-                ensure_main_menu_ui.run_if(in_state(GameState::MainMenu)),
+                .chain(),
+        )
+        .add_systems(
+            Update,
+            (
+                toggle_hud_density,
+                update_hud,
+                update_low_health_vignette_hud,
+                update_compact_utility_hud,
+                update_buff_bar,
+                update_boss_hud,
+                update_target_info_hud,
+                update_loot_proximity_hud,
+                update_interact_proximity_hud,
+                update_minimap,
+                update_objective_compass_hud,
+                update_map_cardinals,
+                update_chapter_banner,
+                update_loot_pickup_banner,
+                update_reward_toast,
+                update_story_comms,
+                update_skill_feedback,
+                update_combat_streak_banner,
             )
-            .add_systems(
-                Update,
-                (update_menu, update_main_menu_backdrop_crop).run_if(in_state(GameState::MainMenu)),
+                .run_if(in_state(GameState::InGame)),
+        )
+        .add_systems(
+            Update,
+            (
+                update_talent_tree_hud,
+                panels::scroll_panels,
+                panels::close_panels,
+                hud_layout::fit_bottom_console,
+                hud_layout::update_utility_tooltips,
+                hud_layout::update_skill_tooltips,
             )
-            .add_systems(OnExit(GameState::MainMenu), despawn_menu)
-            .add_systems(
-                OnEnter(GameState::InGame),
-                (
-                    reset_chapter_banner,
-                    reset_level_up_banner,
-                    reset_loot_pickup_banner,
-                    reset_reward_toast,
-                    reset_story_comms,
-                    reset_skill_feedback,
-                    reset_combat_streak_banner,
-                    apply_profile_renown_bonus,
-                    spawn_hud,
-                )
-                    .chain(),
+                .run_if(in_state(GameState::InGame)),
+        )
+        .init_resource::<UiPointerCapture>()
+        .add_systems(
+            PreUpdate,
+            update_ui_pointer_capture
+                .after(bevy::ui::UiSystems::Focus)
+                .run_if(in_state(GameState::InGame)),
+        )
+        .add_systems(
+            Update,
+            (
+                update_paper_doll_slots,
+                handle_inventory_slot_clicks,
+                handle_paper_doll_clicks,
             )
-            .add_systems(
-                Update,
-                (
-                    toggle_hud_density,
-                    update_hud,
-                    update_low_health_vignette_hud,
-                    update_compact_character_hud,
-                    update_compact_utility_hud,
-                    update_buff_bar,
-                    update_boss_hud,
-                    update_target_info_hud,
-                    update_loot_proximity_hud,
-                    update_interact_proximity_hud,
-                    update_minimap,
-                    update_objective_compass_hud,
-                    update_chapter_banner,
-                    update_level_up_banner,
-                    update_loot_pickup_banner,
-                    update_reward_toast,
-                    update_story_comms,
-                    update_skill_feedback,
-                    update_action_belt_hud,
-                    update_combat_streak_banner,
-                )
-                    .run_if(in_state(GameState::InGame)),
-            )
-            .add_systems(
-                Update,
-                update_talent_tree_hud.run_if(in_state(GameState::InGame)),
-            )
-            .init_resource::<UiPointerCapture>()
-            .add_systems(
-                Update,
-                (
-                    update_paper_doll_slots,
-                    update_ui_pointer_capture,
-                    handle_inventory_slot_clicks,
-                    handle_paper_doll_clicks,
-                )
-                    .run_if(in_state(GameState::InGame)),
-            )
-            .add_systems(OnExit(GameState::InGame), despawn_hud)
-            .add_systems(OnEnter(GameState::GameOver), spawn_game_over)
-            .add_systems(OnExit(GameState::GameOver), despawn_menu)
-            .add_systems(OnEnter(GameState::Victory), spawn_victory)
-            .add_systems(OnExit(GameState::Victory), despawn_menu);
+                .run_if(in_state(GameState::InGame)),
+        )
+        .add_systems(OnExit(GameState::InGame), despawn_hud)
+        .add_systems(OnEnter(GameState::GameOver), death::spawn_game_over)
+        .add_systems(
+            Update,
+            (death::update_death_buttons, update_main_menu_backdrop_crop)
+                .run_if(in_state(GameState::GameOver)),
+        )
+        .add_systems(OnExit(GameState::GameOver), despawn_menu)
+        .add_systems(OnEnter(GameState::Victory), spawn_victory)
+        .add_systems(OnExit(GameState::Victory), despawn_menu);
     }
 }
 
@@ -2442,623 +2504,6 @@ fn despawn_loading_screen(mut commands: Commands, query: Query<Entity, With<Load
     for entity in &query {
         queue_safe_despawn(commands.reborrow(), entity);
     }
-}
-
-fn ensure_main_menu_ui(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    menu_query: Query<Entity, With<MenuUi>>,
-    difficulty: Res<DifficultySettings>,
-    records: Res<ChapterRecords>,
-    audio: Res<AudioSettings>,
-    audio_backend: Res<AudioBackendStatus>,
-) {
-    if !menu_query.is_empty() {
-        return;
-    }
-    spawn_main_menu(
-        &mut commands,
-        &asset_server,
-        &difficulty,
-        &records,
-        &audio,
-        &audio_backend,
-    );
-}
-
-fn update_main_menu_backdrop_crop(
-    window: Query<&Window, With<PrimaryWindow>>,
-    mut images: Query<&mut ImageNode, With<MainMenuBackdropArt>>,
-) {
-    let Ok(window) = window.single() else {
-        return;
-    };
-    let viewport = Vec2::new(window.resolution.width(), window.resolution.height());
-    let crop = main_menu_cover_rect(viewport);
-    for mut image in &mut images {
-        image.rect = Some(crop);
-    }
-}
-
-fn main_menu_cover_rect(viewport: Vec2) -> Rect {
-    if viewport.x <= f32::EPSILON || viewport.y <= f32::EPSILON {
-        return Rect::from_corners(Vec2::ZERO, MAIN_MENU_BACKGROUND_SIZE);
-    }
-
-    let source_aspect = MAIN_MENU_BACKGROUND_SIZE.x / MAIN_MENU_BACKGROUND_SIZE.y;
-    let viewport_aspect = viewport.x / viewport.y;
-    if viewport_aspect > source_aspect {
-        let visible_height = MAIN_MENU_BACKGROUND_SIZE.x / viewport_aspect;
-        let top = (MAIN_MENU_BACKGROUND_SIZE.y - visible_height) * 0.5;
-        Rect::from_corners(
-            Vec2::new(0.0, top),
-            Vec2::new(MAIN_MENU_BACKGROUND_SIZE.x, top + visible_height),
-        )
-    } else {
-        let visible_width = MAIN_MENU_BACKGROUND_SIZE.y * viewport_aspect;
-        let left = (MAIN_MENU_BACKGROUND_SIZE.x - visible_width) * 0.5;
-        Rect::from_corners(
-            Vec2::new(left, 0.0),
-            Vec2::new(left + visible_width, MAIN_MENU_BACKGROUND_SIZE.y),
-        )
-    }
-}
-
-fn spawn_main_menu(
-    commands: &mut Commands,
-    asset_server: &AssetServer,
-    difficulty: &DifficultySettings,
-    records: &ChapterRecords,
-    audio: &AudioSettings,
-    audio_backend: &AudioBackendStatus,
-) {
-    let regular_font: Handle<Font> = asset_server.load(UI_FONT_REGULAR);
-    let bold_font: Handle<Font> = asset_server.load(UI_FONT_BOLD);
-    commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.006, 0.007, 0.010)),
-            MenuUi,
-        ))
-        .with_children(|root| {
-            root.spawn((
-                ImageNode {
-                    image: asset_server.load(MAIN_MENU_BACKGROUND_IMAGE),
-                    image_mode: NodeImageMode::Stretch,
-                    ..default()
-                },
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                MainMenuBackdropArt,
-            ));
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    bottom: Val::Px(0.0),
-                    width: Val::Percent(58.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                BackgroundColor(main_menu_scrim_color()),
-            ));
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(4.0),
-                    top: Val::Percent(5.0),
-                    bottom: Val::Percent(5.0),
-                    width: Val::Px(530.0),
-                    max_width: Val::Percent(44.0),
-                    min_height: Val::Px(590.0),
-                    padding: UiRect::axes(Val::Px(52.0), Val::Px(46.0)),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::FlexStart,
-                    row_gap: Val::Px(14.0),
-                    overflow: Overflow::clip(),
-                    ..default()
-                },
-                panel_image_node(asset_server),
-                CorePanelArt,
-            ))
-            .with_children(|panel| {
-                panel
-                    .spawn((Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(62.0),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(12.0),
-                        ..default()
-                    },))
-                    .with_children(|brand| {
-                        brand.spawn((
-                            atlas_image_node(
-                                asset_server,
-                                UI_TALENT_SIGILS_IMAGE,
-                                atlas_rect(UI_TALENT_SIGIL_CELL, UI_TALENT_SIGIL_CELL, 3, 0),
-                            ),
-                            Node {
-                                width: Val::Px(58.0),
-                                height: Val::Px(58.0),
-                                ..default()
-                            },
-                        ));
-                        brand
-                            .spawn((Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(2.0),
-                                ..default()
-                            },))
-                            .with_children(|copy| {
-                                copy.spawn((
-                                    Text::new("THE RELIQUARY AWAITS"),
-                                    TextFont {
-                                        font: bold_font.clone().into(),
-                                        font_size: FontSize::Px(11.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.90, 0.54, 0.24)),
-                                ));
-                                copy.spawn((
-                                    Text::new("A DESCENT INTO ASH"),
-                                    TextFont {
-                                        font: regular_font.clone().into(),
-                                        font_size: FontSize::Px(9.5),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.48, 0.50, 0.54)),
-                                ));
-                            });
-                    });
-                panel.spawn((
-                    Text::new("SHADOW\nRELIQUARY"),
-                    TextFont {
-                        font: bold_font.clone().into(),
-                        font_size: FontSize::Px(46.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.94, 0.88, 0.78)),
-                    TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
-                    Node {
-                        width: Val::Percent(100.0),
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    },
-                ));
-                panel.spawn((
-                    Node {
-                        width: Val::Px(104.0),
-                        height: Val::Px(2.0),
-                        margin: UiRect::vertical(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.76, 0.33, 0.12)),
-                ));
-                panel
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            min_height: Val::Px(48.0),
-                            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
-                            border: UiRect::left(Val::Px(3.0)),
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.11, 0.065, 0.034, 0.72)),
-                        BorderColor::all(Color::srgba(0.92, 0.40, 0.12, 0.92)),
-                    ))
-                    .with_children(|difficulty_row| {
-                        difficulty_row.spawn((
-                            Text::new(menu_difficulty_line(difficulty.current, records)),
-                            TextFont {
-                                font: bold_font.clone().into(),
-                                font_size: FontSize::Px(15.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.96, 0.72, 0.32)),
-                            TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
-                            MenuDifficultyText,
-                        ));
-                    });
-                panel
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            min_height: Val::Px(88.0),
-                            padding: UiRect::all(Val::Px(13.0)),
-                            border: UiRect::all(Val::Px(1.0)),
-                            overflow: Overflow::clip(),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.015, 0.020, 0.027, 0.72)),
-                        BorderColor::all(Color::srgba(0.35, 0.40, 0.48, 0.54)),
-                    ))
-                    .with_children(|profile| {
-                        profile.spawn((
-                            Text::new(menu_profile_summary(
-                                records,
-                                difficulty.current,
-                                audio_backend.status_label(audio),
-                            )),
-                            TextFont {
-                                font: regular_font.clone().into(),
-                                font_size: FontSize::Px(12.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.70, 0.72, 0.72)),
-                            TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
-                            MenuProfileText,
-                        ));
-                    });
-                panel.spawn((Node {
-                    flex_grow: 1.0,
-                    min_height: Val::Px(8.0),
-                    ..default()
-                },));
-                panel
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(66.0),
-                            padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
-                            border: UiRect::all(Val::Px(1.0)),
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(12.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.32, 0.105, 0.028, 0.78)),
-                        BorderColor::all(Color::srgba(0.98, 0.48, 0.14, 0.88)),
-                    ))
-                    .with_children(|begin| {
-                        begin.spawn((
-                            Node {
-                                width: Val::Px(38.0),
-                                height: Val::Px(38.0),
-                                border: UiRect::all(Val::Px(1.0)),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.02, 0.018, 0.018, 0.92)),
-                            BorderColor::all(Color::srgba(0.98, 0.63, 0.24, 0.72)),
-                            Text::new("↵"),
-                            TextFont {
-                                font: bold_font.clone().into(),
-                                font_size: FontSize::Px(20.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.98, 0.86, 0.66)),
-                        ));
-                        begin
-                            .spawn((Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(2.0),
-                                ..default()
-                            },))
-                            .with_children(|copy| {
-                                copy.spawn((
-                                    Text::new("BEGIN DESCENT"),
-                                    TextFont {
-                                        font: bold_font.clone().into(),
-                                        font_size: FontSize::Px(18.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(1.0, 0.86, 0.66)),
-                                ));
-                                copy.spawn((
-                                    Text::new("SPACE OR ENTER"),
-                                    TextFont {
-                                        font: regular_font.clone().into(),
-                                        font_size: FontSize::Px(9.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.78, 0.56, 0.36)),
-                                ));
-                            });
-                    });
-                panel.spawn((
-                    Text::new("TAB  DIFFICULTY    F9  CONTINUE    M  AUDIO"),
-                    TextFont {
-                        font: regular_font.clone().into(),
-                        font_size: FontSize::Px(9.5),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.45, 0.47, 0.50)),
-                    TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
-                    Node {
-                        width: Val::Percent(100.0),
-                        ..default()
-                    },
-                ));
-            });
-        });
-}
-
-fn main_menu_scrim_color() -> Color {
-    Color::srgba(0.008, 0.009, 0.012, 0.72)
-}
-
-#[cfg(test)]
-fn main_menu_background_image_path() -> &'static str {
-    MAIN_MENU_BACKGROUND_IMAGE
-}
-
-#[cfg(test)]
-fn main_menu_scrim_alpha() -> f32 {
-    main_menu_scrim_color().to_srgba().alpha
-}
-
-fn update_menu(
-    difficulty: Res<DifficultySettings>,
-    records: Res<ChapterRecords>,
-    audio: Res<AudioSettings>,
-    audio_backend: Res<AudioBackendStatus>,
-    mut difficulty_text: Query<&mut Text, (With<MenuDifficultyText>, Without<MenuProfileText>)>,
-    mut profile_text: Query<&mut Text, (With<MenuProfileText>, Without<MenuDifficultyText>)>,
-) {
-    if !difficulty.is_changed()
-        && !records.is_changed()
-        && !audio.is_changed()
-        && !audio_backend.is_changed()
-    {
-        return;
-    }
-    if let Ok(mut text) = difficulty_text.single_mut() {
-        **text = menu_difficulty_line(difficulty.current, &records);
-    }
-    if let Ok(mut text) = profile_text.single_mut() {
-        **text = menu_profile_summary(
-            &records,
-            difficulty.current,
-            audio_backend.status_label(&audio),
-        );
-    }
-}
-
-fn spawn_game_over(
-    mut commands: Commands,
-    stats: Res<RunStats>,
-    progress: Res<ChapterProgress>,
-    difficulty: Res<DifficultySettings>,
-    mut records: ResMut<ChapterRecords>,
-    death_report: Res<DeathWardReport>,
-) {
-    let remnant_reward = claim_soul_remnant(&mut records, &stats, difficulty.current);
-    let deed_reward = claim_completed_season_deeds(&mut records);
-    if (!remnant_reward.is_empty() || !deed_reward.is_empty())
-        && let Err(err) = write_chapter_record_profile(PROFILE_PATH, &records)
-    {
-        warn!("failed to write chapter profile after soul remnant claim: {err}");
-    }
-    let soul_remnant_text = soul_remnant_summary(remnant_reward, deed_reward, &records);
-    let death_scorecard_text =
-        death_scorecard_summary(&progress, &stats, &death_report, remnant_reward);
-    let death_pursuit_text = death_pursuit_summary(
-        &progress,
-        &stats,
-        difficulty.current,
-        &death_report,
-        remnant_reward,
-    );
-    commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(18.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.0, 0.0, 0.86)),
-            MenuUi,
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("You fell in the reliquary"),
-                TextFont {
-                    font_size: FontSize::Px(44.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.95, 0.32, 0.24)),
-            ));
-            parent.spawn((
-                Text::new(game_over_stats_summary(&stats, &difficulty)),
-                TextFont {
-                    font_size: FontSize::Px(24.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.85, 0.80, 0.70)),
-            ));
-            parent.spawn((
-                Text::new(death_report.summary()),
-                TextFont {
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.78, 0.62, 0.54)),
-            ));
-            parent.spawn((
-                Text::new(soul_remnant_text),
-                TextFont {
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.72, 0.74, 0.92)),
-            ));
-            parent.spawn((
-                Text::new(death_scorecard_text),
-                TextFont {
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.74, 0.84, 0.78)),
-            ));
-            parent.spawn((
-                Text::new(death_pursuit_text),
-                TextFont {
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.86, 0.72, 0.42)),
-            ));
-            parent.spawn((
-                Text::new("Press R to restart"),
-                TextFont {
-                    font_size: FontSize::Px(22.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.70, 0.68, 0.64)),
-            ));
-        });
-}
-
-fn game_over_stats_summary(stats: &RunStats, difficulty: &DifficultySettings) -> String {
-    format!(
-        "Difficulty: {}    Time: {}    Kills: {}    Gold: {}",
-        difficulty.current.label(),
-        format_run_time(stats.elapsed_secs),
-        stats.kills,
-        stats.gold
-    )
-}
-
-fn death_scorecard_summary(
-    progress: &ChapterProgress,
-    stats: &RunStats,
-    death_report: &DeathWardReport,
-    remnant: ProfileStashBonus,
-) -> String {
-    let mainline = if progress.phase == ChapterPhase::Victory || progress.boss_slain {
-        "Main cleared".to_string()
-    } else {
-        format!("Main {:.0}%", chapter_mainline_percent(progress))
-    };
-    let ward = if death_report.gold_available < death_report.gold_penalty {
-        format!(
-            "Ward short {}g",
-            death_report
-                .gold_penalty
-                .saturating_sub(death_report.gold_available)
-        )
-    } else if death_report.revives_used >= death_report.max_revives {
-        format!(
-            "Ward spent {}/{}",
-            death_report.revives_used, death_report.max_revives
-        )
-    } else {
-        "Ward failed".to_string()
-    };
-    let combat = if stats.boss_staggers > 0 {
-        format!("Boss breaks {}/{}", stats.boss_staggers, BOSS_BREAK_TARGET)
-    } else if stats.best_valor_stacks > 0 {
-        format!("Valor best {}x", stats.best_valor_stacks)
-    } else if stats.best_massacre_streak > 0 {
-        format!("Massacre best {}", stats.best_massacre_streak)
-    } else {
-        format!("Kills {}", stats.kills)
-    };
-    let bank = if remnant.is_empty() {
-        "No remnant".to_string()
-    } else {
-        format!(
-            "Remnant +{}g +{}s +{}e",
-            remnant.gold, remnant.shards, remnant.essence
-        )
-    };
-    let next = death_scorecard_next_step(progress, stats, death_report, remnant);
-    format!("Failure Scorecard: {mainline} | {ward} | {combat} | {bank} | {next}")
-}
-
-fn death_scorecard_next_step(
-    progress: &ChapterProgress,
-    stats: &RunStats,
-    death_report: &DeathWardReport,
-    remnant: ProfileStashBonus,
-) -> &'static str {
-    if death_report.gold_available < death_report.gold_penalty {
-        "Next: bank gold for ward"
-    } else if progress.phase == ChapterPhase::Boss && stats.boss_staggers == 0 {
-        "Next: break Malrec first"
-    } else if progress.phase == ChapterPhase::Boss {
-        "Next: save Surge for execute"
-    } else if stats.elapsed_secs < 20.0 && stats.kills == 0 {
-        "Next: kite and potion early"
-    } else if stats.gold >= 120 || remnant.gold > 0 {
-        "Next: spend at quartermaster"
-    } else {
-        "Next: open cache then side rewards"
-    }
-}
-
-fn death_pursuit_summary(
-    progress: &ChapterProgress,
-    stats: &RunStats,
-    difficulty: Difficulty,
-    death_report: &DeathWardReport,
-    remnant: ProfileStashBonus,
-) -> String {
-    let ward_note = if death_report.gold_available < death_report.gold_penalty {
-        "ward short on gold"
-    } else if death_report.revives_used >= death_report.max_revives {
-        "ward charges spent"
-    } else {
-        "ward failed"
-    };
-    let route = match progress.phase {
-        ChapterPhase::Boss => {
-            if stats.boss_staggers > 0 {
-                "retry Malrec: repeat break window, Surge during stagger, then kite enrage"
-                    .to_string()
-            } else {
-                "retry Malrec: choose a boon, bank Surge, and break his stagger meter".to_string()
-            }
-        }
-        ChapterPhase::Ritual => {
-            "next run: use well/quartermaster before altar, then claim final seal".to_string()
-        }
-        ChapterPhase::Sanctum => {
-            "next run: clear Seal Warden first, then spend cache loot at quartermaster".to_string()
-        }
-        ChapterPhase::Cache => {
-            "next run: open cache early for upgraded gear before optional fights".to_string()
-        }
-        ChapterPhase::Breach => {
-            if stats.elapsed_secs < 20.0 && stats.kills == 0 {
-                "next run: survive first room, evade through swings, drink potion before 30%"
-                    .to_string()
-            } else {
-                "next run: finish outer guards, open cache, then hunt safer side rewards"
-                    .to_string()
-            }
-        }
-        ChapterPhase::Victory => {
-            "next run: push the unlocked difficulty or replay for a cleaner clear".to_string()
-        }
-    };
-    let remnant_note = if remnant.is_empty() {
-        "no remnant banked".to_string()
-    } else {
-        format!(
-            "banked +{}g +{}s +{}e",
-            remnant.gold, remnant.shards, remnant.essence
-        )
-    };
-    format!(
-        "Death Pursuit: {ward_note} | {route} | {remnant_note} | replay {}",
-        difficulty.label()
-    )
 }
 
 fn spawn_victory(mut commands: Commands, resources: VictoryResources) {
@@ -3942,47 +3387,6 @@ fn soul_remnant_reward(stats: &RunStats, difficulty: Difficulty) -> ProfileStash
     reward
 }
 
-fn soul_remnant_summary(
-    reward: ProfileStashBonus,
-    deed_reward: ProfileStashBonus,
-    records: &ChapterRecords,
-) -> String {
-    if reward.is_empty() {
-        if !deed_reward.is_empty() {
-            return format!(
-                "Soul Remnant: no recoverable echoes | deed +{} gold +{} shards +{} essence | stash {}g/{}s/{}e",
-                deed_reward.gold,
-                deed_reward.shards,
-                deed_reward.essence,
-                records.stash_gold,
-                records.stash_shards,
-                records.stash_essence
-            );
-        }
-        return "Soul Remnant: no recoverable echoes".to_string();
-    }
-
-    let deed_text = if deed_reward.is_empty() {
-        "no deed reward".to_string()
-    } else {
-        format!(
-            "deed +{} gold +{} shards +{} essence",
-            deed_reward.gold, deed_reward.shards, deed_reward.essence
-        )
-    };
-    format!(
-        "Soul Remnant: recovered +{} gold +{} shards +{} essence | {} | failures {} | stash {}g/{}s/{}e",
-        reward.gold,
-        reward.shards,
-        reward.essence,
-        deed_text,
-        records.failed_runs,
-        records.stash_gold,
-        records.stash_shards,
-        records.stash_essence
-    )
-}
-
 fn season_deed_complete(deed: SeasonDeedId, records: &ChapterRecords) -> bool {
     match deed {
         SeasonDeedId::FirstClear => records.total_clears() >= 1,
@@ -4791,38 +4195,6 @@ fn plural_s(value: u32) -> &'static str {
     if value == 1 { "" } else { "s" }
 }
 
-fn pylon_reaper_summary(stats: &RunStats) -> String {
-    format!(
-        "Pylon Reaper {}/{}",
-        stats.pylon_kills.min(PYLON_REAPER_KILLS),
-        PYLON_REAPER_KILLS
-    )
-}
-
-fn cursed_pact_summary(stats: &RunStats) -> String {
-    format!(
-        "Cursed Pact {}/{}",
-        stats.cursed_ambush_kills.min(CURSED_AMBUSH_KILLS),
-        CURSED_AMBUSH_KILLS
-    )
-}
-
-fn breaker_summary(stats: &RunStats) -> String {
-    format!(
-        "Breaker {}/{}",
-        stats.breakables_smashed.min(BREAKER_TARGET_BREAKABLES),
-        BREAKER_TARGET_BREAKABLES
-    )
-}
-
-fn affix_hunter_summary(stats: &RunStats) -> String {
-    format!(
-        "Affix Hunter {}/{}",
-        stats.elite_affix_kills.min(AFFIX_HUNTER_KILLS),
-        AFFIX_HUNTER_KILLS
-    )
-}
-
 const AFFIX_CODEX_DISPLAY_ORDER: [EnemyAffix; 9] = [
     EnemyAffix::Frenzied,
     EnemyAffix::Vampiric,
@@ -4834,15 +4206,6 @@ const AFFIX_CODEX_DISPLAY_ORDER: [EnemyAffix; 9] = [
     EnemyAffix::Desecrator,
     EnemyAffix::Reflective,
 ];
-
-fn affix_codex_summary(stats: &RunStats) -> String {
-    let known = affix_codex_known_count(stats);
-    if known >= AFFIX_CODEX_TARGET {
-        return format!("Affix Codex {known}/{AFFIX_CODEX_TARGET} complete");
-    }
-    let next = affix_codex_next_label(stats).unwrap_or("elite affix");
-    format!("Affix Codex {known}/{AFFIX_CODEX_TARGET} next {next}")
-}
 
 fn affix_codex_known_count(stats: &RunStats) -> u32 {
     stats.affix_codex_mask.count_ones().min(AFFIX_CODEX_TARGET)
@@ -4857,147 +4220,6 @@ fn affix_codex_next_label(stats: &RunStats) -> Option<&'static str> {
         .copied()
         .find(|affix| stats.affix_codex_mask & affix.mask() == 0)
         .map(EnemyAffix::label)
-}
-
-fn champion_pack_summary(stats: &RunStats) -> String {
-    if stats.champion_pack_reward_claimed {
-        return "Champion Pack claimed".to_string();
-    }
-    format!(
-        "Champion Pack {}/{}",
-        stats.champion_pack_kills.min(CHAMPION_PACK_TARGET),
-        CHAMPION_PACK_TARGET
-    )
-}
-
-fn nemesis_hunter_summary(stats: &RunStats) -> String {
-    format!("Nemesis Hunter {}/1", stats.nemesis_kills.min(1))
-}
-
-fn treasure_vault_summary(stats: &RunStats) -> &'static str {
-    if stats.treasure_vaults_opened > 0 {
-        "Treasure Vault opened"
-    } else {
-        "Treasure Vault pending"
-    }
-}
-
-fn ashen_threat_summary(stats: &RunStats) -> String {
-    format!(
-        "Ashen Threat {}/{} surge {}/{}",
-        stats.ashen_threat.min(ASHEN_THREAT_MAX),
-        ASHEN_THREAT_MAX,
-        stats.ashen_threat_surges.min(ASHEN_THREAT_SURGE_TARGET),
-        ASHEN_THREAT_SURGE_TARGET
-    )
-}
-
-fn rune_weaver_summary(stats: &RunStats) -> String {
-    let completed = u32::from(stats.reap_dash_hits > 0)
-        + u32::from(stats.hemorrhage_rupture_hits > 0)
-        + u32::from(stats.frost_nova_hits > 0);
-    if let Some(next) = rune_weaver_next_step(stats) {
-        return format!("Rune Weaver {completed}/3: {next}");
-    }
-    format!("Rune Weaver {completed}/3")
-}
-
-fn armory_adept_summary(stats: &RunStats) -> String {
-    format!("Armory Adept {}/3", stats.armory_loadouts_saved.min(3))
-}
-
-fn portal_wayfarer_summary(stats: &RunStats) -> &'static str {
-    if stats.town_portal_returns > 0 {
-        "Portal Wayfarer"
-    } else {
-        "Portal Wayfarer pending"
-    }
-}
-
-fn glory_seeker_summary(stats: &RunStats) -> String {
-    format!(
-        "Glory Seeker {}/{}",
-        stats.health_globes_collected.min(GLORY_SEEKER_GLOBES),
-        GLORY_SEEKER_GLOBES
-    )
-}
-
-fn last_stand_summary(stats: &RunStats) -> String {
-    format!(
-        "Last Stand {}/{}",
-        stats.last_stand_potions.min(LAST_STAND_POTIONS),
-        LAST_STAND_POTIONS
-    )
-}
-
-fn ashen_alchemy_summary(stats: &RunStats) -> String {
-    let completed = u32::from(stats.alchemy_gold_transmutes > 0)
-        + u32::from(stats.alchemy_essence_transmutes > 0)
-        + u32::from(stats.alchemy_keystone_transmutes > 0);
-    format!("Ashen Alchemy {completed}/3")
-}
-
-fn loot_curator_summary(stats: &RunStats) -> String {
-    format!("Loot Curator {}/3", stats.loot_filter_cycles.min(3))
-}
-
-fn codex_adept_summary(stats: &RunStats) -> String {
-    let kills = stats.codex_attuned_kills.min(CODEX_ADEPT_KILLS);
-    if kills >= CODEX_ADEPT_KILLS {
-        return format!("Codex Adept {kills}/{CODEX_ADEPT_KILLS}");
-    }
-    if kills == 0 {
-        return format!("Codex Adept 0/{CODEX_ADEPT_KILLS}: B attune power");
-    }
-    format!("Codex Adept {kills}/{CODEX_ADEPT_KILLS}: kill with B power")
-}
-
-fn set_adept_summary(stats: &RunStats) -> String {
-    let kills = stats.set_resonance_kills.min(SET_ADEPT_KILLS);
-    if kills >= SET_ADEPT_KILLS {
-        return format!("Set Adept {kills}/{SET_ADEPT_KILLS}");
-    }
-    if kills == 0 {
-        return format!("Set Adept 0/{SET_ADEPT_KILLS}: match weapon/charm");
-    }
-    format!("Set Adept {kills}/{SET_ADEPT_KILLS}: keep set kills")
-}
-
-fn gem_adept_summary(stats: &RunStats) -> String {
-    let socketed = u32::from(stats.ruby_socketed)
-        + u32::from(stats.emerald_socketed)
-        + u32::from(stats.amethyst_socketed)
-        + u32::from(stats.topaz_socketed);
-    format!(
-        "Gem Adept {}/{}",
-        socketed.min(GEM_ADEPT_KINDS),
-        GEM_ADEPT_KINDS
-    )
-}
-
-fn shrine_resonance_summary(stats: &RunStats) -> &'static str {
-    if stats.shrine_resonance_triggered {
-        "Shrine Resonance"
-    } else {
-        "Shrine Resonance pending"
-    }
-}
-
-fn chapter_route_summary(
-    progress: &ChapterProgress,
-    stats: &RunStats,
-    bounty: &BountyProgress,
-    obelisk: &BloodObelisk,
-    rift: &EmberRift,
-) -> String {
-    format!(
-        "Route [{}] {:.0}% | Optional {}/9 | Threat {} | {}",
-        chapter_route_nodes(progress.phase),
-        chapter_mainline_percent(progress),
-        optional_objective_score(stats, bounty, obelisk, rift),
-        threat_tier(stats),
-        chapter_next_reward_hint(progress, bounty, obelisk, rift)
-    )
 }
 
 fn chapter_quest_log_summary(
@@ -5026,129 +4248,79 @@ fn chapter_quest_log_summary(
     )
 }
 
+fn journal_objective_text(progress: &ChapterProgress) -> String {
+    let chapter = progress.chapter_id();
+    match (chapter, progress.phase) {
+        (_, ChapterPhase::Breach) => format!(
+            "Defeat the outer guards  {}/{}",
+            progress.enemies_slain.min(progress.opening_kill_target()),
+            progress.opening_kill_target()
+        ),
+        (ChapterId::AshenReliquary, ChapterPhase::Cache) => {
+            "Open the sealed reliquary cache".into()
+        }
+        (ChapterId::HollowBastion, ChapterPhase::Cache) => "Open the choir reliquary".into(),
+        (ChapterId::AshenReliquary, ChapterPhase::Sanctum) => "Defeat Vhal, the Seal Warden".into(),
+        (ChapterId::HollowBastion, ChapterPhase::Sanctum) => {
+            "Silence Vesper, the Bell Warden".into()
+        }
+        (ChapterId::AshenReliquary, ChapterPhase::Ritual) => "Extinguish the ember altar".into(),
+        (ChapterId::HollowBastion, ChapterPhase::Ritual) => {
+            "Break the chorus at the soul font".into()
+        }
+        (ChapterId::AshenReliquary, ChapterPhase::Boss) => {
+            "Defeat Malrec and cleanse the reliquary".into()
+        }
+        (ChapterId::HollowBastion, ChapterPhase::Boss) => {
+            "Defeat Nyxara and silence the bastion".into()
+        }
+        (ChapterId::AshenReliquary, ChapterPhase::Victory) => {
+            "Travel north to the Hollow Bastion".into()
+        }
+        (ChapterId::HollowBastion, ChapterPhase::Victory) => {
+            "The bastion is silent. Your oath is fulfilled.".into()
+        }
+    }
+}
+
 fn chapter_quest_board_text(
     progress: &ChapterProgress,
-    stats: &RunStats,
     bounty: &BountyProgress,
     obelisk: &BloodObelisk,
     rift: &EmberRift,
-    story: &StoryLog,
 ) -> String {
-    let optional = optional_objective_score(stats, bounty, obelisk, rift);
-    [
+    let objective = journal_objective_text(progress);
+    let bounty_text = if bounty.reward_claimed {
+        "Bounty reward collected".into()
+    } else if bounty.completed {
+        "Bounty complete — open the reward cache".into()
+    } else {
         format!(
-            "QUEST BOARD | Main {:.0}% | Optional {}/9 | Story {}/{} | Threat {} | Priority {}",
-            chapter_mainline_percent(progress),
-            optional,
-            story.beats.len(),
-            story.total_beats(),
-            threat_tier(stats),
-            compact_label(
-                &chapter_quest_priority(progress, stats, bounty, obelisk, rift, story),
-                30
-            )
-        ),
-        format!(
-            "Main: {} | Route {} | Now {}",
-            compact_label(&main_quest_status(progress, stats), 34),
-            chapter_route_nodes_compact(progress),
-            compact_label(&progress.objective, 34)
-        ),
-        format!(
-            "Next: {} | Reward: {} | Side: {}",
-            chapter_next_step(progress),
-            chapter_next_reward(progress, bounty, obelisk, rift),
-            compact_label(
-                &next_optional_objective_focus(stats, bounty, obelisk, rift),
-                28
-            )
-        ),
-        format!(
-            "Side: Bounty {} | Champion {} | Breaker {}",
-            compact_label(&bounty_quest_status(bounty), 32),
-            progress_fraction_or_done(
-                stats.champion_pack_kills,
-                CHAMPION_PACK_TARGET,
-                stats.champion_pack_reward_claimed
-            ),
-            progress_fraction_or_done(
-                stats.breakables_smashed,
-                BREAKER_TARGET_BREAKABLES,
-                stats.breakables_smashed >= BREAKER_TARGET_BREAKABLES
-            )
-        ),
-        format!(
-            "Events: Obelisk {} | Rift {} | {}",
-            obelisk_quest_status(obelisk),
-            rift_quest_status(rift),
-            compact_label(&ashen_threat_summary(stats), 34)
-        ),
-        format!("Lore: {}", compact_label(&story.recap(), 112)),
-    ]
-    .join("\n")
-}
-
-fn chapter_quest_priority(
-    progress: &ChapterProgress,
-    stats: &RunStats,
-    bounty: &BountyProgress,
-    obelisk: &BloodObelisk,
-    rift: &EmberRift,
-    story: &StoryLog,
-) -> String {
-    if rift.state == RiftState::Active {
-        let echo = if rift.remaining_secs >= crate::rift::RIFT_SWIFT_SEAL_SECS {
-            " for Echo"
-        } else {
-            ""
-        };
-        return format!(
-            "seal rift {}/{}{}",
-            rift.kills.min(rift.target_kills),
-            rift.target_kills,
-            echo
-        );
-    }
+            "{}  {}/{}",
+            bounty.kind.objective_label(),
+            bounty.current.min(bounty.target),
+            bounty.target
+        )
+    };
+    let mut text = format!(
+        "JOURNEY\n\nCURRENT OBJECTIVE\n{objective}\nSeals recovered  {}/{}\n\nBOUNTY\n{bounty_text}",
+        progress.seal_fragments.min(REQUIRED_SEAL_FRAGMENTS),
+        REQUIRED_SEAL_FRAGMENTS
+    );
     if obelisk.state == ObeliskState::Active {
-        return format!(
-            "feed obelisk {}/{}",
+        text.push_str(&format!(
+            "\n\nBLOOD RITE\nDefeat enemies near the obelisk  {}/{}",
             obelisk.kills.min(obelisk.target_kills),
             obelisk.target_kills
-        );
+        ));
+    } else if rift.state == RiftState::Active {
+        text.push_str(&format!(
+            "\n\nEMBER RIFT\nDefeat the rift hunters  {}/{}",
+            rift.kills.min(rift.target_kills),
+            rift.target_kills
+        ));
     }
-    if bounty.completed && !bounty.reward_claimed {
-        return "claim bounty cache".to_string();
-    }
-    if stats.ashen_threat >= 75 && stats.ashen_threat_surges < ASHEN_THREAT_SURGE_TARGET {
-        return "stabilize threat surge".to_string();
-    }
-    if progress.phase != ChapterPhase::Victory && !progress.boss_slain {
-        return chapter_next_step(progress);
-    }
-    let optional = optional_objective_score(stats, bounty, obelisk, rift);
-    if optional < 8 {
-        return format!(
-            "side: {}",
-            next_optional_objective_focus(stats, bounty, obelisk, rift)
-        );
-    }
-    if story.beats.len() < 10 {
-        return "recover lore beats".to_string();
-    }
-    "push next difficulty".to_string()
-}
-
-fn chapter_next_reward_hint(
-    progress: &ChapterProgress,
-    bounty: &BountyProgress,
-    obelisk: &BloodObelisk,
-    rift: &EmberRift,
-) -> String {
-    format!(
-        "Next {} => {}",
-        compact_label(&chapter_next_step(progress), 22),
-        compact_label(&chapter_next_reward(progress, bounty, obelisk, rift), 30)
-    )
+    text
 }
 
 fn chapter_next_step(progress: &ChapterProgress) -> String {
@@ -5185,32 +4357,6 @@ fn chapter_next_step(progress: &ChapterProgress) -> String {
             .map(|next| format!("continue {}", next.short_title()))
             .unwrap_or_else(|| "start next difficulty".to_string()),
     }
-}
-
-fn chapter_next_reward(
-    progress: &ChapterProgress,
-    bounty: &BountyProgress,
-    obelisk: &BloodObelisk,
-    rift: &EmberRift,
-) -> String {
-    if bounty.completed && !bounty.reward_claimed {
-        return format!(
-            "bounty {}g {} shards",
-            bounty.reward_gold, bounty.reward_shards
-        );
-    }
-    if matches!(obelisk.state, ObeliskState::Active) {
-        return "obelisk gold, shards, essence".to_string();
-    }
-    if matches!(rift.state, RiftState::Active) {
-        let echo = if rift.remaining_secs >= crate::rift::RIFT_SWIFT_SEAL_SECS {
-            " + Echo"
-        } else {
-            ""
-        };
-        return format!("rift gold, shards, essence{echo}");
-    }
-    chapter_phase_payoff(progress)
 }
 
 fn chapter_clear_summary(
@@ -5543,7 +4689,7 @@ fn action_guide_primary(inputs: &ActionGuideInputs) -> String {
     }
     if inputs.progress.phase == ChapterPhase::Boss && inputs.stats.reliquary_momentum > 0 {
         return format!(
-            "Momentum {}x: spend Q/RMB/E burst on {}",
+            "Momentum {}x: spend Q/R/E burst on {}",
             inputs.stats.reliquary_momentum.min(RELIQUARY_MOMENTUM_MAX),
             inputs.progress.chapter_id().boss_short_name()
         );
@@ -5726,20 +4872,6 @@ fn chapter_boon_build_recommendation(
         Some(ChapterBoonChoice::ArcaneMomentum) => "Build rec 6 Arcane: more skill uptime",
         Some(ChapterBoonChoice::CrimsonOath) => "Build rec 4 Crimson: scale crit power",
         _ => "Build rec choose 4 damage, 5 safety, 6 skills",
-    }
-}
-
-fn chapter_boon_recommended_key(
-    stats: &RunStats,
-    health: &Health,
-    potions: &PotionBelt,
-    equipment: &Equipment,
-) -> &'static str {
-    match chapter_boon_recommended_choice(stats, health, potions, equipment) {
-        Some(ChapterBoonChoice::CrimsonOath) => "4 Crimson",
-        Some(ChapterBoonChoice::TitanWard) => "5 Titan",
-        Some(ChapterBoonChoice::ArcaneMomentum) => "6 Arcane",
-        _ => "best fit",
     }
 }
 
@@ -5944,17 +5076,17 @@ fn action_guide_progression_pursuit(stats: &RunStats, equipment: &Equipment) -> 
 }
 
 fn rune_weaver_progress(stats: &RunStats) -> u32 {
-    u32::from(stats.reap_dash_hits > 0)
-        + u32::from(stats.hemorrhage_rupture_hits > 0)
-        + u32::from(stats.frost_nova_hits > 0)
+    u32::from(stats.reap_hits > 0)
+        + u32::from(stats.hemorrhage_hits > 0)
+        + u32::from(stats.frost_hits > 0)
 }
 
 fn rune_weaver_next_step(stats: &RunStats) -> Option<&'static str> {
-    if stats.reap_dash_hits == 0 {
+    if stats.reap_hits == 0 {
         Some("Z Reap then Q hit")
-    } else if stats.hemorrhage_rupture_hits == 0 {
-        Some("C Hemorrhage then RMB hit")
-    } else if stats.frost_nova_hits == 0 {
+    } else if stats.hemorrhage_hits == 0 {
+        Some("C Hemorrhage then R hit")
+    } else if stats.frost_hits == 0 {
         Some("X Frost then E hit")
     } else {
         None
@@ -6145,27 +5277,6 @@ fn rift_quest_status(rift: &EmberRift) -> String {
     }
 }
 
-fn chapter_route_nodes(phase: ChapterPhase) -> String {
-    [
-        (ChapterPhase::Breach, "Breach"),
-        (ChapterPhase::Cache, "Cache"),
-        (ChapterPhase::Sanctum, "Sanctum"),
-        (ChapterPhase::Ritual, "Ritual"),
-        (ChapterPhase::Boss, "Boss"),
-        (ChapterPhase::Victory, "Cleansed"),
-    ]
-    .iter()
-    .map(|(node_phase, label)| {
-        if *node_phase == phase {
-            format!(">{label}<")
-        } else {
-            (*label).to_string()
-        }
-    })
-    .collect::<Vec<_>>()
-    .join(" -> ")
-}
-
 fn chapter_route_nodes_compact(progress: &ChapterProgress) -> String {
     let boss_label = match progress.chapter_id() {
         ChapterId::AshenReliquary => "M",
@@ -6264,8 +5375,6 @@ fn threat_tier(stats: &RunStats) -> &'static str {
 }
 
 fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let regular_font: Handle<Font> = asset_server.load(UI_FONT_REGULAR);
-    let bold_font: Handle<Font> = asset_server.load(UI_FONT_BOLD);
     commands
         .spawn((
             Node {
@@ -6291,7 +5400,6 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Visibility::Hidden,
                 LowHealthVignette,
             ));
-            spawn_bottom_console_backdrop(parent);
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -6310,6 +5418,7 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 BorderColor::all(Color::srgba(0.78, 0.62, 0.38, 0.38)),
                 BackgroundColor(Color::srgba(0.018, 0.014, 0.018, 0.34)),
                 Text::new("Objective"),
+                TextLayout::justify(Justify::Center),
                 TextFont {
                     font_size: FontSize::Px(9.0),
                     ..default()
@@ -6393,455 +5502,7 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 TextColor(Color::srgb(0.98, 0.78, 0.36)),
                 BuffBarText,
             ));
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(50.0),
-                        bottom: Val::Px(140.0),
-                        width: Val::Px(640.0),
-                        height: Val::Px(12.0),
-                        margin: UiRect::left(Val::Px(-320.0)),
-                        padding: UiRect::all(Val::Px(2.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.80, 0.58, 0.30, 0.78)),
-                    BackgroundColor(Color::srgba(0.018, 0.014, 0.018, 0.92)),
-                ))
-                .with_children(|bar| {
-                    bar.spawn((
-                        Node {
-                            width: Val::Percent(0.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.86, 0.46, 0.10, 0.92)),
-                        ExperienceFill,
-                    ));
-                });
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    bottom: Val::Px(116.0),
-                    width: Val::Px(820.0),
-                    height: Val::Px(22.0),
-                    margin: UiRect::left(Val::Px(-410.0)),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    overflow: Overflow::clip(),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BorderColor::all(Color::srgba(0.82, 0.62, 0.34, 0.64)),
-                BackgroundColor(Color::srgba(0.018, 0.015, 0.018, 0.86)),
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(10.5),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.90, 0.82, 0.66)),
-                ActionBeltText,
-            ));
-            parent
-                .spawn((Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    bottom: Val::Px(154.0),
-                    width: Val::Px(632.0),
-                    height: Val::Px(50.0),
-                    margin: UiRect::left(Val::Px(-316.0)),
-                    display: Display::Flex,
-                    column_gap: Val::Px(6.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },))
-                .with_children(|strip| {
-                    for slot in [
-                        CompactCharacterText::Weapon,
-                        CompactCharacterText::Charm,
-                        CompactCharacterText::Inventory,
-                        CompactCharacterText::Codex,
-                    ] {
-                        strip.spawn((
-                            Node {
-                                width: Val::Px(72.0),
-                                height: Val::Px(44.0),
-                                padding: UiRect::axes(Val::Px(3.0), Val::Px(3.0)),
-                                border: UiRect::all(Val::Px(1.0)),
-                                border_radius: BorderRadius::all(Val::Px(5.0)),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BorderColor::all(compact_character_border(slot)),
-                            BackgroundColor(Color::srgba(0.018, 0.017, 0.020, 0.82)),
-                            Text::new(""),
-                            TextFont {
-                                font: regular_font.clone().into(),
-                                font_size: FontSize::Px(8.5),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.84, 0.78, 0.66)),
-                            slot,
-                        ));
-                    }
-                    for slot in [
-                        CompactUtilityText::Potion,
-                        CompactUtilityText::Elixir,
-                        CompactUtilityText::Portal,
-                        CompactUtilityText::Interact,
-                    ] {
-                        strip.spawn((
-                            Node {
-                                width: Val::Px(72.0),
-                                height: Val::Px(44.0),
-                                padding: UiRect::axes(Val::Px(3.0), Val::Px(3.0)),
-                                border: UiRect::all(Val::Px(1.0)),
-                                border_radius: BorderRadius::all(Val::Px(5.0)),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BorderColor::all(compact_utility_border(slot)),
-                            BackgroundColor(Color::srgba(0.018, 0.017, 0.020, 0.82)),
-                            Text::new(""),
-                            TextFont {
-                                font: regular_font.clone().into(),
-                                font_size: FontSize::Px(8.5),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.84, 0.78, 0.66)),
-                            slot,
-                        ));
-                    }
-                });
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(28.0),
-                        bottom: Val::Px(18.0),
-                        width: Val::Px(170.0),
-                        height: Val::Px(170.0),
-                        padding: UiRect::all(Val::Px(12.0)),
-                        border: UiRect::all(Val::Px(3.0)),
-                        overflow: Overflow::clip(),
-                        border_radius: BorderRadius::MAX,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.75, 0.10, 0.08, 0.82)),
-                    BackgroundColor(Color::srgba(0.040, 0.006, 0.008, 0.94)),
-                    ResourceOrbFrame::Health,
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            right: Val::Px(0.0),
-                            bottom: Val::Px(0.0),
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.70, 0.015, 0.020, 0.92)),
-                        ResourceFill::Health,
-                    ));
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(28.0),
-                            right: Val::Px(28.0),
-                            bottom: Val::Px(18.0),
-                            width: Val::Percent(70.0),
-                            height: Val::Px(8.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.96, 0.78, 0.24, 0.92)),
-                        ResourceFill::Barrier,
-                    ));
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(16.0),
-                            right: Val::Px(16.0),
-                            top: Val::Px(26.0),
-                            bottom: Val::Px(22.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        Text::new(""),
-                        TextFont {
-                            font: bold_font.clone().into(),
-                            font_size: FontSize::Px(15.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(1.0, 0.84, 0.72)),
-                        HealthText,
-                    ));
-                    panel
-                        .spawn((Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(22.0),
-                            right: Val::Px(22.0),
-                            bottom: Val::Px(12.0),
-                            height: Val::Px(16.0),
-                            column_gap: Val::Px(4.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },))
-                        .with_children(|pips| {
-                            for index in 0..8 {
-                                pips.spawn((
-                                    Node {
-                                        width: Val::Px(11.0),
-                                        height: Val::Px(15.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    BorderColor::all(Color::srgba(0.50, 0.12, 0.10, 0.72)),
-                                    BackgroundColor(Color::srgba(0.48, 0.02, 0.02, 0.82)),
-                                    PotionPip(index),
-                                ));
-                            }
-                        });
-                    panel.spawn((
-                        ImageNode::new(asset_server.load(UI_RESOURCE_ORB_FRAME_IMAGE)),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            top: Val::Px(0.0),
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                        ResourceOrbArt,
-                    ));
-                });
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(50.0),
-                        bottom: Val::Px(16.0),
-                        width: Val::Px(606.0),
-                        height: Val::Px(96.0),
-                        margin: UiRect::left(Val::Px(-303.0)),
-                        padding: UiRect::all(Val::Px(8.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        display: Display::Flex,
-                        column_gap: Val::Px(8.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.76, 0.60, 0.36, 0.78)),
-                    BackgroundColor(Color::srgba(0.025, 0.022, 0.030, 0.90)),
-                    panel_image_node(&asset_server),
-                    CorePanelArt,
-                ))
-                .with_children(|bar| {
-                    for slot in [
-                        SkillSlotText::Strike,
-                        SkillSlotText::Rupture,
-                        SkillSlotText::Dash,
-                        SkillSlotText::Nova,
-                        SkillSlotText::Surge,
-                        SkillSlotText::Evade,
-                    ] {
-                        let theme = skill_slot_theme(slot);
-                        bar.spawn((
-                            Node {
-                                width: Val::Px(90.0),
-                                height: Val::Px(78.0),
-                                padding: UiRect::all(Val::Px(4.0)),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(6.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BorderColor::all(Color::srgba(0.92, 0.74, 0.42, 0.62)),
-                            BackgroundColor(Color::srgba(0.055, 0.047, 0.058, 0.92)),
-                            slot_frame_image_node(&asset_server),
-                            SkillSlotFrame(slot),
-                        ))
-                        .with_children(|slot_node| {
-                            slot_node.spawn((
-                                atlas_image_node(
-                                    &asset_server,
-                                    UI_SKILL_ICONS_IMAGE,
-                                    atlas_rect(
-                                        UI_SKILL_ICON_CELL,
-                                        UI_SKILL_ICON_CELL,
-                                        3,
-                                        skill_icon_index(slot),
-                                    ),
-                                ),
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Px(15.0),
-                                    right: Val::Px(15.0),
-                                    top: Val::Px(7.0),
-                                    height: Val::Px(56.0),
-                                    ..default()
-                                },
-                                Pickable::IGNORE,
-                            ));
-                            slot_node.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Px(0.0),
-                                    right: Val::Px(0.0),
-                                    bottom: Val::Px(0.0),
-                                    height: Val::Percent(0.0),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
-                                SkillCooldownMask(slot),
-                            ));
-                            slot_node.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Px(5.0),
-                                    top: Val::Px(4.0),
-                                    width: Val::Px(25.0),
-                                    height: Val::Px(16.0),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BorderColor::all(theme.idle_border),
-                                BackgroundColor(Color::srgba(0.012, 0.010, 0.012, 0.78)),
-                                Text::new(skill_slot_keycap(slot)),
-                                TextFont {
-                                    font: bold_font.clone().into(),
-                                    font_size: FontSize::Px(skill_slot_keycap_font_size(slot)),
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.96, 0.90, 0.76)),
-                            ));
-                            slot_node.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    right: Val::Px(6.0),
-                                    top: Val::Px(7.0),
-                                    width: Val::Px(10.0),
-                                    height: Val::Px(5.0),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.22, 0.18, 0.12, 0.74)),
-                                SkillSlotLamp(slot),
-                            ));
-                            slot_node.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Px(3.0),
-                                    right: Val::Px(3.0),
-                                    bottom: Val::Px(4.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                Text::new(""),
-                                TextFont {
-                                    font: regular_font.clone().into(),
-                                    font_size: FontSize::Px(8.0),
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.92, 0.86, 0.72)),
-                                CooldownText,
-                                slot,
-                            ));
-                        });
-                    }
-                });
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: Val::Px(28.0),
-                        bottom: Val::Px(18.0),
-                        width: Val::Px(170.0),
-                        height: Val::Px(170.0),
-                        padding: UiRect::all(Val::Px(12.0)),
-                        border: UiRect::all(Val::Px(3.0)),
-                        overflow: Overflow::clip(),
-                        border_radius: BorderRadius::MAX,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.16, 0.34, 0.86, 0.82)),
-                    BackgroundColor(Color::srgba(0.004, 0.014, 0.050, 0.94)),
-                    ResourceOrbFrame::Fury,
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            right: Val::Px(0.0),
-                            bottom: Val::Px(0.0),
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.035, 0.20, 0.84, 0.90)),
-                        ResourceFill::Fury,
-                    ));
-                    panel.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(16.0),
-                            right: Val::Px(16.0),
-                            top: Val::Px(26.0),
-                            bottom: Val::Px(22.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        Text::new(""),
-                        TextFont {
-                            font: bold_font.clone().into(),
-                            font_size: FontSize::Px(14.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.76, 0.86, 1.0)),
-                        StatsText,
-                    ));
-                    panel.spawn((
-                        ImageNode {
-                            image: asset_server.load(UI_RESOURCE_ORB_FRAME_IMAGE),
-                            color: Color::srgb(0.64, 0.78, 1.0),
-                            ..default()
-                        },
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            top: Val::Px(0.0),
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                        ResourceOrbArt,
-                    ));
-                });
+            hud_layout::spawn_bottom_hud(parent, &asset_server);
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -6867,567 +5528,32 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(18.0),
-                    top: Val::Px(14.0),
-                    width: Val::Px(410.0),
-                    padding: UiRect::all(Val::Px(10.0)),
-                    ..default()
-                },
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.95, 0.78, 0.35)),
-                PauseText,
-            ));
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(24.0),
-                        top: Val::Px(54.0),
-                        width: Val::Px(760.0),
-                        max_width: Val::Percent(92.0),
-                        height: Val::Px(570.0),
-                        padding: UiRect::axes(Val::Px(48.0), Val::Px(42.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        display: Display::None,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(12.0),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.44, 0.60, 0.80, 0.72)),
-                    BackgroundColor(Color::srgba(0.010, 0.014, 0.020, 0.92)),
-                    panel_image_node(&asset_server),
-                    InventoryPanel,
-                    CorePanelArt,
-                ))
-                .with_children(|panel| {
-                    panel
-                        .spawn((Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(58.0),
-                            display: Display::Flex,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(12.0),
-                            ..default()
-                        },))
-                        .with_children(|header| {
-                            header.spawn((
-                                atlas_image_node(
-                                    &asset_server,
-                                    UI_GEAR_ICONS_IMAGE,
-                                    atlas_rect(UI_GEAR_ICON_CELL, UI_GEAR_ICON_CELL, 4, 7),
-                                ),
-                                Node {
-                                    width: Val::Px(52.0),
-                                    height: Val::Px(52.0),
-                                    ..default()
-                                },
-                            ));
-                            header
-                                .spawn((Node {
-                                    width: Val::Px(190.0),
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(2.0),
-                                    ..default()
-                                },))
-                                .with_children(|title| {
-                                    title.spawn((
-                                        Text::new("RELIQUARY PACK"),
-                                        TextFont {
-                                            font: bold_font.clone().into(),
-                                            font_size: FontSize::Px(18.0),
-                                            ..default()
-                                        },
-                                        TextColor(Color::srgb(0.92, 0.84, 0.70)),
-                                    ));
-                                    title.spawn((
-                                        Text::new("I  CLOSE  ·  CLICK TO EQUIP"),
-                                        TextFont {
-                                            font: regular_font.clone().into(),
-                                            font_size: FontSize::Px(8.5),
-                                            ..default()
-                                        },
-                                        TextColor(Color::srgb(0.50, 0.60, 0.70)),
-                                    ));
-                                });
-                            header.spawn((Node {
-                                flex_grow: 1.0,
-                                ..default()
-                            },));
-                            header.spawn((
-                                Text::new(""),
-                                TextFont {
-                                    font: regular_font.clone().into(),
-                                    font_size: FontSize::Px(10.5),
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.66, 0.76, 0.86)),
-                                TextLayout::new(Justify::Right, LineBreak::WordOrCharacter),
-                                Node {
-                                    width: Val::Px(340.0),
-                                    max_height: Val::Px(56.0),
-                                    overflow: Overflow::clip(),
-                                    ..default()
-                                },
-                                InventoryText,
-                            ));
-                        });
-                    panel
-                        .spawn((Node {
-                            width: Val::Percent(100.0),
-                            flex_grow: 1.0,
-                            display: Display::Flex,
-                            column_gap: Val::Px(14.0),
-                            min_height: Val::Px(0.0),
-                            ..default()
-                        },))
-                        .with_children(|body| {
-                            body.spawn((Node {
-                                width: Val::Px(276.0),
-                                display: Display::Flex,
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(6.0),
-                                ..default()
-                            },))
-                                .with_children(|gear| {
-                                    gear.spawn((
-                                        Text::new("EQUIPPED"),
-                                        TextFont {
-                                            font: bold_font.clone().into(),
-                                            font_size: FontSize::Px(10.0),
-                                            ..default()
-                                        },
-                                        TextColor(Color::srgb(0.62, 0.66, 0.68)),
-                                    ));
-                                    let doll_rows: [&[GearSlot]; 4] = [
-                                        &[GearSlot::Helm],
-                                        &[GearSlot::Amulet, GearSlot::Chest, GearSlot::Ring],
-                                        &[GearSlot::Weapon, GearSlot::Gloves],
-                                        &[GearSlot::Boots],
-                                    ];
-                                    for row in doll_rows {
-                                        gear.spawn((Node {
-                                            width: Val::Percent(100.0),
-                                            display: Display::Flex,
-                                            justify_content: JustifyContent::Center,
-                                            column_gap: Val::Px(6.0),
-                                            ..default()
-                                        },))
-                                            .with_children(|doll_row| {
-                                                for slot in row {
-                                                    doll_row
-                                                        .spawn((
-                                                            Node {
-                                                                width: Val::Px(82.0),
-                                                                height: Val::Px(76.0),
-                                                                border: UiRect::all(Val::Px(1.0)),
-                                                                overflow: Overflow::clip(),
-                                                                ..default()
-                                                            },
-                                                            BorderColor::all(Color::srgba(
-                                                                0.45, 0.40, 0.32, 0.55,
-                                                            )),
-                                                            BackgroundColor(Color::srgba(
-                                                                0.030, 0.026, 0.022, 0.90,
-                                                            )),
-                                                            slot_frame_image_node(&asset_server),
-                                                            PaperDollSlot(*slot),
-                                                        ))
-                                                        .with_children(|gear_slot| {
-                                                            gear_slot.spawn((
-                                                                atlas_image_node(
-                                                                    &asset_server,
-                                                                    UI_GEAR_ICONS_IMAGE,
-                                                                    atlas_rect(
-                                                                        UI_GEAR_ICON_CELL,
-                                                                        UI_GEAR_ICON_CELL,
-                                                                        4,
-                                                                        gear_icon_index(*slot),
-                                                                    ),
-                                                                ),
-                                                                Node {
-                                                                    position_type:
-                                                                        PositionType::Absolute,
-                                                                    left: Val::Px(20.0),
-                                                                    top: Val::Px(5.0),
-                                                                    width: Val::Px(42.0),
-                                                                    height: Val::Px(42.0),
-                                                                    ..default()
-                                                                },
-                                                                Pickable::IGNORE,
-                                                            ));
-                                                            gear_slot.spawn((
-                                                                Text::new(""),
-                                                                TextFont {
-                                                                    font: regular_font
-                                                                        .clone()
-                                                                        .into(),
-                                                                    font_size: FontSize::Px(8.0),
-                                                                    ..default()
-                                                                },
-                                                                TextColor(Color::srgb(
-                                                                    0.82, 0.75, 0.62,
-                                                                )),
-                                                                TextLayout::new(
-                                                                    Justify::Center,
-                                                                    LineBreak::WordOrCharacter,
-                                                                ),
-                                                                Node {
-                                                                    position_type:
-                                                                        PositionType::Absolute,
-                                                                    left: Val::Px(4.0),
-                                                                    right: Val::Px(4.0),
-                                                                    bottom: Val::Px(4.0),
-                                                                    height: Val::Px(24.0),
-                                                                    overflow: Overflow::clip(),
-                                                                    ..default()
-                                                                },
-                                                                PaperDollSlotText(*slot),
-                                                            ));
-                                                        });
-                                                }
-                                            });
-                                    }
-                                    gear.spawn((Node {
-                                        width: Val::Percent(100.0),
-                                        display: Display::Flex,
-                                        flex_wrap: FlexWrap::Wrap,
-                                        column_gap: Val::Px(6.0),
-                                        row_gap: Val::Px(6.0),
-                                        ..default()
-                                    },))
-                                        .with_children(|summary| {
-                                            for slot in [
-                                                GearSlotText::Weapon,
-                                                GearSlotText::Charm,
-                                                GearSlotText::Codex,
-                                                GearSlotText::Armory,
-                                            ] {
-                                                summary.spawn((
-                                                    Node {
-                                                        width: Val::Px(132.0),
-                                                        height: Val::Px(38.0),
-                                                        padding: UiRect::all(Val::Px(5.0)),
-                                                        border: UiRect::all(Val::Px(1.0)),
-                                                        align_items: AlignItems::Center,
-                                                        overflow: Overflow::clip(),
-                                                        ..default()
-                                                    },
-                                                    BorderColor::all(Color::srgba(
-                                                        0.65, 0.52, 0.34, 0.58,
-                                                    )),
-                                                    BackgroundColor(Color::srgba(
-                                                        0.035, 0.030, 0.026, 0.90,
-                                                    )),
-                                                    Text::new(""),
-                                                    TextFont {
-                                                        font: regular_font.clone().into(),
-                                                        font_size: FontSize::Px(8.0),
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.86, 0.78, 0.64)),
-                                                    slot,
-                                                ));
-                                            }
-                                        });
-                                });
-                            body.spawn((Node {
-                                flex_grow: 1.0,
-                                display: Display::Flex,
-                                align_content: AlignContent::FlexStart,
-                                flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(7.0),
-                                row_gap: Val::Px(7.0),
-                                ..default()
-                            },))
-                                .with_children(|grid| {
-                                    for index in 0..10 {
-                                        grid.spawn((
-                                            Node {
-                                                width: Val::Px(80.0),
-                                                height: Val::Px(112.0),
-                                                border: UiRect::all(Val::Px(1.0)),
-                                                overflow: Overflow::clip(),
-                                                ..default()
-                                            },
-                                            BorderColor::all(Color::srgba(0.36, 0.43, 0.50, 0.58)),
-                                            BackgroundColor(Color::srgba(
-                                                0.020, 0.024, 0.030, 0.92,
-                                            )),
-                                            slot_frame_image_node(&asset_server),
-                                            InventorySlot(index),
-                                        ))
-                                        .with_children(
-                                            |item_slot| {
-                                                item_slot.spawn((
-                                                    atlas_image_node(
-                                                        &asset_server,
-                                                        UI_GEAR_ICONS_IMAGE,
-                                                        atlas_rect(
-                                                            UI_GEAR_ICON_CELL,
-                                                            UI_GEAR_ICON_CELL,
-                                                            4,
-                                                            0,
-                                                        ),
-                                                    ),
-                                                    Node {
-                                                        position_type: PositionType::Absolute,
-                                                        left: Val::Px(15.0),
-                                                        top: Val::Px(7.0),
-                                                        width: Val::Px(50.0),
-                                                        height: Val::Px(50.0),
-                                                        ..default()
-                                                    },
-                                                    Pickable::IGNORE,
-                                                    Visibility::Hidden,
-                                                    InventorySlotIcon(index),
-                                                ));
-                                                item_slot.spawn((
-                                                    Text::new(""),
-                                                    TextFont {
-                                                        font: regular_font.clone().into(),
-                                                        font_size: FontSize::Px(8.0),
-                                                        ..default()
-                                                    },
-                                                    TextColor(Color::srgb(0.70, 0.82, 0.95)),
-                                                    TextLayout::new(
-                                                        Justify::Center,
-                                                        LineBreak::WordOrCharacter,
-                                                    ),
-                                                    Node {
-                                                        position_type: PositionType::Absolute,
-                                                        left: Val::Px(4.0),
-                                                        right: Val::Px(4.0),
-                                                        bottom: Val::Px(5.0),
-                                                        height: Val::Px(46.0),
-                                                        overflow: Overflow::clip(),
-                                                        ..default()
-                                                    },
-                                                    InventorySlotText(index),
-                                                ));
-                                            },
-                                        );
-                                    }
-                                });
-                        });
-                });
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(50.0),
-                        top: Val::Px(54.0),
-                        width: Val::Px(780.0),
-                        max_width: Val::Percent(92.0),
-                        height: Val::Px(570.0),
-                        margin: UiRect::left(Val::Px(-390.0)),
-                        padding: UiRect::axes(Val::Px(48.0), Val::Px(42.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        display: Display::None,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(12.0),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.72, 0.48, 0.90, 0.72)),
-                    BackgroundColor(Color::srgba(0.018, 0.012, 0.026, 0.92)),
-                    panel_image_node(&asset_server),
-                    BuildPanel,
-                    CorePanelArt,
-                ))
-                .with_children(|build| {
-                    build.spawn((
-                        Text::new(""),
-                        TextFont {
-                            font: bold_font.clone().into(),
-                            font_size: FontSize::Px(13.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.88, 0.82, 0.92)),
-                        TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(58.0),
-                            overflow: Overflow::clip(),
-                            ..default()
-                        },
-                        BuildText,
-                    ));
-                    build
-                        .spawn((Node {
-                            width: Val::Percent(100.0),
-                            flex_grow: 1.0,
-                            display: Display::Flex,
-                            column_gap: Val::Px(10.0),
-                            min_height: Val::Px(0.0),
-                            ..default()
-                        },))
-                        .with_children(|branches| {
-                            for branch in TalentBranch::ALL {
-                                branches
-                                    .spawn((
-                                        Node {
-                                            flex_grow: 1.0,
-                                            flex_basis: Val::Px(0.0),
-                                            height: Val::Percent(100.0),
-                                            padding: UiRect::axes(Val::Px(15.0), Val::Px(13.0)),
-                                            border: UiRect::all(Val::Px(1.0)),
-                                            flex_direction: FlexDirection::Column,
-                                            align_items: AlignItems::Center,
-                                            row_gap: Val::Px(5.0),
-                                            overflow: Overflow::clip(),
-                                            ..default()
-                                        },
-                                        BorderColor::all(branch.color().with_alpha(0.56)),
-                                        BackgroundColor(Color::srgba(0.014, 0.014, 0.020, 0.92)),
-                                        slot_frame_image_node(&asset_server),
-                                    ))
-                                    .with_children(|card| {
-                                        card.spawn((
-                                            atlas_image_node(
-                                                &asset_server,
-                                                UI_TALENT_SIGILS_IMAGE,
-                                                atlas_rect(
-                                                    UI_TALENT_SIGIL_CELL,
-                                                    UI_TALENT_SIGIL_CELL,
-                                                    3,
-                                                    talent_icon_index(branch),
-                                                ),
-                                            ),
-                                            Node {
-                                                width: Val::Px(92.0),
-                                                height: Val::Px(92.0),
-                                                ..default()
-                                            },
-                                        ));
-                                        card.spawn((
-                                            Text::new(branch.label()),
-                                            TextFont {
-                                                font: bold_font.clone().into(),
-                                                font_size: FontSize::Px(16.0),
-                                                ..default()
-                                            },
-                                            TextColor(branch.color()),
-                                        ));
-                                        card.spawn((
-                                            Text::new(branch.role()),
-                                            TextFont {
-                                                font: regular_font.clone().into(),
-                                                font_size: FontSize::Px(7.5),
-                                                ..default()
-                                            },
-                                            TextColor(Color::srgb(0.58, 0.58, 0.62)),
-                                        ));
-                                        card.spawn((
-                                            Text::new("0 / 8"),
-                                            TextFont {
-                                                font: bold_font.clone().into(),
-                                                font_size: FontSize::Px(12.0),
-                                                ..default()
-                                            },
-                                            TextColor(Color::srgb(0.86, 0.84, 0.80)),
-                                            TalentRankText(branch),
-                                        ));
-                                        card.spawn((Node {
-                                            width: Val::Percent(100.0),
-                                            flex_grow: 1.0,
-                                            flex_direction: FlexDirection::Column,
-                                            row_gap: Val::Px(3.0),
-                                            ..default()
-                                        },))
-                                            .with_children(|ladder| {
-                                                for rank in 1..=8 {
-                                                    let label = talent_rank_label(branch, rank);
-                                                    ladder
-                                                        .spawn((
-                                                            Node {
-                                                                width: Val::Percent(100.0),
-                                                                height: Val::Px(22.0),
-                                                                padding: UiRect::axes(
-                                                                    Val::Px(6.0),
-                                                                    Val::Px(3.0),
-                                                                ),
-                                                                border: UiRect::all(Val::Px(1.0)),
-                                                                align_items: AlignItems::Center,
-                                                                ..default()
-                                                            },
-                                                            BorderColor::all(Color::srgba(
-                                                                0.20, 0.20, 0.24, 0.72,
-                                                            )),
-                                                            BackgroundColor(Color::srgba(
-                                                                0.025, 0.025, 0.032, 0.92,
-                                                            )),
-                                                            TalentRankNode { branch, rank },
-                                                        ))
-                                                        .with_children(|node| {
-                                                            node.spawn((
-                                                                Text::new(label),
-                                                                TextFont {
-                                                                    font: if rank == 4 || rank == 8
-                                                                    {
-                                                                        bold_font.clone().into()
-                                                                    } else {
-                                                                        regular_font.clone().into()
-                                                                    },
-                                                                    font_size: FontSize::Px(
-                                                                        if rank == 4 || rank == 8 {
-                                                                            8.0
-                                                                        } else {
-                                                                            7.5
-                                                                        },
-                                                                    ),
-                                                                    ..default()
-                                                                },
-                                                                TextColor(Color::srgb(
-                                                                    0.72, 0.70, 0.68,
-                                                                )),
-                                                            ));
-                                                        });
-                                                }
-                                            });
-                                    });
-                            }
-                        });
-                    build.spawn((
-                        Text::new("1  WRATH     2  VIGOR     3  FOCUS        K  CLOSE"),
-                        TextFont {
-                            font: regular_font.clone().into(),
-                            font_size: FontSize::Px(9.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.52, 0.50, 0.56)),
-                        TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
-                        Node {
-                            width: Val::Percent(100.0),
-                            ..default()
-                        },
-                    ));
-                });
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: Val::Px(24.0),
-                    top: Val::Px(176.0),
-                    width: Val::Px(470.0),
-                    padding: UiRect::all(Val::Px(12.0)),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Percent(30.0),
+                    width: Val::Px(360.0),
+                    max_width: Val::Percent(90.0),
+                    margin: UiRect::horizontal(Val::Auto),
+                    padding: UiRect::all(Val::Px(32.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                BorderColor::all(Color::srgba(0.72, 0.58, 0.34, 0.65)),
-                BackgroundColor(Color::srgba(0.020, 0.016, 0.012, 0.84)),
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(13.0),
+                    font_size: FontSize::Px(20.0),
                     ..default()
                 },
-                TextColor(Color::srgb(0.86, 0.76, 0.58)),
+                TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                bevy::text::LineHeight::RelativeToFont(1.6),
+                TextColor(Color::srgb(0.94, 0.86, 0.71)),
+                BorderColor::all(Color::srgba(0.56, 0.43, 0.25, 0.85)),
+                BackgroundColor(Color::srgba(0.025, 0.021, 0.018, 0.92)),
+                GlobalZIndex(31),
                 Visibility::Hidden,
-                JournalText,
+                PauseText,
             ));
+            panels::spawn_panels(parent, &asset_server);
+            journal::spawn_journal(parent, &asset_server);
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -7467,24 +5593,6 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 TextColor(Color::srgb(0.92, 0.80, 0.62)),
                 Visibility::Hidden,
                 StoryCommsText,
-            ));
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    bottom: Val::Px(204.0),
-                    width: Val::Px(520.0),
-                    margin: UiRect::left(Val::Px(-260.0)),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(24.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.66, 0.20)),
-                LevelUpBannerText,
             ));
             parent.spawn((
                 Node {
@@ -7618,74 +5726,83 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                     BorderColor::all(Color::srgba(0.78, 0.68, 0.48, 0.8)),
                     BackgroundColor(Color::srgba(0.02, 0.018, 0.024, 0.72)),
                     MinimapUi,
+                    Interaction::default(),
                 ))
                 .with_children(|map| {
+                    spawn_map_directions(map);
                     map.spawn((
                         Node {
                             position_type: PositionType::Absolute,
                             left: Val::Px(8.0),
                             top: Val::Px(6.0),
-                            ..default()
-                        },
-                        Text::new("Reliquary"),
-                        TextFont {
-                            font_size: FontSize::Px(11.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgba(0.78, 0.74, 0.66, 0.92)),
-                    ));
-                    map.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(8.0),
-                            top: Val::Px(20.0),
                             width: Val::Px(MINIMAP_WIDTH - 16.0),
                             overflow: Overflow::clip(),
                             ..default()
                         },
                         Text::new(""),
                         TextFont {
-                            font_size: FontSize::Px(8.5),
+                            font_size: FontSize::Px(12.0),
                             ..default()
                         },
-                        TextColor(Color::srgba(0.72, 0.82, 0.94, 0.88)),
-                        MinimapObjectiveText,
+                        TextColor(Color::srgba(0.87, 0.78, 0.61, 0.96)),
+                        MinimapTitleText,
+                        Pickable::IGNORE,
                     ));
-                    for (index, (role, label)) in minimap_legend_entries().into_iter().enumerate() {
-                        let color = minimap_legend_color(role);
-                        map.spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: Val::Px(8.0 + index as f32 * 31.0),
-                                bottom: Val::Px(6.0),
-                                width: Val::Px(29.0),
-                                height: Val::Px(10.0),
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(3.0),
-                                ..default()
-                            },
-                            Pickable::IGNORE,
-                        ))
-                        .with_children(|legend| {
-                            legend.spawn((
-                                Node {
-                                    width: Val::Px(5.0),
-                                    height: Val::Px(5.0),
-                                    border_radius: BorderRadius::MAX,
-                                    ..default()
-                                },
-                                BackgroundColor(color),
-                            ));
-                            legend.spawn((
-                                Text::new(label),
-                                TextFont {
-                                    font_size: FontSize::Px(7.5),
-                                    ..default()
-                                },
-                                TextColor(Color::srgba(0.76, 0.72, 0.64, 0.86)),
-                            ));
-                        });
-                    }
+                    map.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(MINIMAP_WIDTH + 8.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(148.0),
+                            padding: UiRect::all(Val::Px(10.0)),
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(10.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.025, 0.021, 0.019, 0.97)),
+                        GlobalZIndex(30),
+                        MinimapLegend,
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|legend| {
+                        for (role, label) in minimap_legend_entries() {
+                            legend
+                                .spawn((
+                                    Node {
+                                        width: Val::Px(58.0),
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(5.0),
+                                        ..default()
+                                    },
+                                    Pickable::IGNORE,
+                                ))
+                                .with_children(|entry| {
+                                    entry.spawn((
+                                        Node {
+                                            width: Val::Px(6.0),
+                                            height: Val::Px(6.0),
+                                            flex_shrink: 0.0,
+                                            border_radius: BorderRadius::MAX,
+                                            ..default()
+                                        },
+                                        BackgroundColor(minimap_legend_color(role)),
+                                        Pickable::IGNORE,
+                                    ));
+                                    entry.spawn((
+                                        Text::new(label),
+                                        TextFont {
+                                            font_size: FontSize::Px(11.0),
+                                            ..default()
+                                        },
+                                        TextColor(Color::srgb(0.87, 0.78, 0.61)),
+                                        Pickable::IGNORE,
+                                    ));
+                                });
+                        }
+                    });
                 });
             parent
                 .spawn((
@@ -7693,10 +5810,10 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                         position_type: PositionType::Absolute,
                         right: Val::Px(18.0),
                         top: Val::Px(158.0),
-                        width: Val::Px(260.0),
-                        min_height: Val::Px(42.0),
+                        width: Val::Px(224.0),
+                        min_height: Val::Px(32.0),
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
+
                         display: Display::None,
                         overflow: Overflow::clip(),
                         flex_direction: FlexDirection::Row,
@@ -7704,30 +5821,28 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                         column_gap: Val::Px(8.0),
                         ..default()
                     },
-                    BorderColor::all(Color::srgba(0.22, 0.68, 1.0, 0.72)),
-                    BackgroundColor(Color::srgba(0.010, 0.018, 0.026, 0.82)),
+                    BackgroundColor(Color::srgba(0.025, 0.021, 0.019, 0.38)),
                     Pickable::IGNORE,
                     ObjectiveCompassPanel,
                 ))
                 .with_children(|compass| {
+                    spawn_objective_arrow(compass);
                     compass.spawn((
                         Node {
-                            width: Val::Px(54.0),
-                            height: Val::Px(30.0),
-                            border: UiRect::all(Val::Px(1.0)),
+                            width: Val::Px(42.0),
+                            height: Val::Px(24.0),
+
                             border_radius: BorderRadius::all(Val::Px(4.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        BorderColor::all(Color::srgba(0.36, 0.84, 1.0, 0.72)),
-                        BackgroundColor(Color::srgba(0.018, 0.044, 0.064, 0.86)),
                         Text::new(""),
                         TextFont {
-                            font_size: FontSize::Px(15.5),
+                            font_size: FontSize::Px(14.0),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.68, 0.92, 1.0)),
+                        TextColor(Color::srgb(0.91, 0.79, 0.55)),
                         ObjectiveCompassText::Direction,
                     ));
                     compass.spawn((
@@ -7741,10 +5856,10 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                         },
                         Text::new(""),
                         TextFont {
-                            font_size: FontSize::Px(10.5),
+                            font_size: FontSize::Px(12.0),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.74, 0.84, 0.92)),
+                        TextColor(Color::srgb(0.82, 0.76, 0.64)),
                         ObjectiveCompassText::Detail,
                     ));
                 });
@@ -7839,80 +5954,8 @@ fn toggle_hud_density(
     });
 }
 
-fn spawn_bottom_console_backdrop(parent: &mut ChildSpawnerCommands) {
-    parent
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                bottom: Val::Px(4.0),
-                width: Val::Px(1180.0),
-                height: Val::Px(210.0),
-                margin: UiRect::left(Val::Px(-590.0)),
-                border: UiRect::all(Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Px(8.0)),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BorderColor::all(Color::srgba(0.74, 0.58, 0.34, 0.54)),
-            BackgroundColor(Color::srgba(0.012, 0.011, 0.014, 0.78)),
-        ))
-        .with_children(|console| {
-            console.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(10.0),
-                    right: Val::Px(10.0),
-                    top: Val::Px(8.0),
-                    height: Val::Px(22.0),
-                    border: UiRect {
-                        bottom: Val::Px(1.0),
-                        ..default()
-                    },
-                    ..default()
-                },
-                BorderColor::all(Color::srgba(0.92, 0.72, 0.38, 0.32)),
-                BackgroundColor(Color::srgba(0.080, 0.060, 0.038, 0.44)),
-            ));
-            console.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(184.0),
-                    right: Val::Px(184.0),
-                    bottom: Val::Px(14.0),
-                    height: Val::Px(116.0),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(6.0)),
-                    ..default()
-                },
-                BorderColor::all(Color::srgba(0.64, 0.50, 0.32, 0.36)),
-                BackgroundColor(Color::srgba(0.026, 0.023, 0.030, 0.66)),
-            ));
-            for left in [18.0_f32, 982.0] {
-                console.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(left),
-                        bottom: Val::Px(10.0),
-                        width: Val::Px(180.0),
-                        height: Val::Px(180.0),
-                        border: UiRect::all(Val::Px(2.0)),
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.88, 0.68, 0.36, 0.34)),
-                    BackgroundColor(Color::srgba(0.018, 0.014, 0.016, 0.52)),
-                ));
-            }
-        });
-}
-
 fn reset_chapter_banner(mut state: ResMut<ChapterBannerState>) {
     *state = ChapterBannerState::default();
-}
-
-fn reset_level_up_banner(mut state: ResMut<LevelUpBannerState>) {
-    *state = LevelUpBannerState::default();
 }
 
 fn reset_loot_pickup_banner(mut state: ResMut<LootPickupBannerState>) {
@@ -7964,84 +6007,6 @@ fn update_chapter_banner(
     if state.timer.is_finished() {
         **text = String::new();
     }
-}
-
-fn update_level_up_banner(
-    time: Res<Time>,
-    mut state: ResMut<LevelUpBannerState>,
-    player: Query<(&PlayerLevel, &Talents), With<Player>>,
-    mut banner: Query<&mut Text, With<LevelUpBannerText>>,
-) {
-    let Ok((level, talents)) = player.single() else {
-        return;
-    };
-    let Ok(mut text) = banner.single_mut() else {
-        return;
-    };
-
-    if state.observed_level == 0 {
-        state.observed_level = level.level;
-        state.observed_talent_points = talents.points;
-        **text = String::new();
-        return;
-    }
-
-    if let Some(copy) = level_up_banner_copy(
-        level.level,
-        talents.points,
-        state.observed_level,
-        state.observed_talent_points,
-    ) {
-        state.timer = Timer::from_seconds(2.8, TimerMode::Once);
-        state.timer.reset();
-        state.observed_level = level.level;
-        state.observed_talent_points = talents.points;
-        **text = copy;
-        return;
-    }
-
-    state.observed_level = state.observed_level.max(level.level);
-    if talents.points < state.observed_talent_points {
-        state.observed_talent_points = talents.points;
-    }
-
-    if state.timer.is_finished() {
-        if !text.is_empty() {
-            **text = String::new();
-        }
-        return;
-    }
-
-    state.timer.tick(time.delta());
-    if state.timer.is_finished() {
-        **text = String::new();
-    }
-}
-
-fn level_up_banner_copy(
-    current_level: u32,
-    current_talent_points: u32,
-    observed_level: u32,
-    observed_talent_points: u32,
-) -> Option<String> {
-    if current_level > observed_level {
-        let point_line = if current_talent_points > 0 {
-            format!(
-                "\n{} talent point available - K then 1/2/3",
-                current_talent_points
-            )
-        } else {
-            String::new()
-        };
-        return Some(format!("LEVEL {current_level}{point_line}"));
-    }
-    if current_talent_points > observed_talent_points && current_talent_points > 0 {
-        return Some(format!(
-            "{} talent point available - K then 1/2/3",
-            current_talent_points
-        ));
-    }
-    None
 }
 
 fn update_loot_pickup_banner(
@@ -8915,11 +6880,11 @@ fn skill_cast_event_name(text: &str) -> Option<&'static str> {
 
 fn skill_slot_pulse_from_event(text: &str) -> Option<SkillSlotPulse> {
     let (slot, kind) = if skill_cast_event_name(text) == Some("Dash") {
-        (SkillSlotText::Dash, SkillSlotPulseKind::Cast)
+        (SkillSlotText::Mobility, SkillSlotPulseKind::Cast)
     } else if skill_cast_event_name(text) == Some("Rupture") {
-        (SkillSlotText::Rupture, SkillSlotPulseKind::Cast)
+        (SkillSlotText::Finisher, SkillSlotPulseKind::Cast)
     } else if skill_cast_event_name(text) == Some("Nova") {
-        (SkillSlotText::Nova, SkillSlotPulseKind::Cast)
+        (SkillSlotText::Area, SkillSlotPulseKind::Cast)
     } else if text == "Nephalem Surge unleashed" || text == "Nephalem Surge ready" {
         (SkillSlotText::Surge, SkillSlotPulseKind::Cast)
     } else if text == "Evade"
@@ -8932,11 +6897,14 @@ fn skill_slot_pulse_from_event(text: &str) -> Option<SkillSlotPulse> {
     } else if text.starts_with("Nephalem Surge charging ") {
         (SkillSlotText::Surge, SkillSlotPulseKind::Blocked)
     } else if text.contains(" fury for dash") || text.starts_with("Dash not ready ") {
-        (SkillSlotText::Dash, SkillSlotPulseKind::Blocked)
-    } else if text.contains(" fury for rupture") || text.starts_with("Rupture not ready ") {
-        (SkillSlotText::Rupture, SkillSlotPulseKind::Blocked)
+        (SkillSlotText::Mobility, SkillSlotPulseKind::Blocked)
+    } else if text.contains(" fury for rupture")
+        || text.starts_with("Rupture not ready ")
+        || text == "Rupture: move closer and face an enemy"
+    {
+        (SkillSlotText::Finisher, SkillSlotPulseKind::Blocked)
     } else if text.contains(" fury for nova") || text.starts_with("Nova not ready ") {
-        (SkillSlotText::Nova, SkillSlotPulseKind::Blocked)
+        (SkillSlotText::Area, SkillSlotPulseKind::Blocked)
     } else {
         return None;
     };
@@ -9123,23 +7091,41 @@ fn chapter_banner_duration(phase: ChapterPhase) -> f32 {
     }
 }
 
+fn update_pause_card_visibility(
+    pause: Res<PauseState>,
+    inventory: Res<InventoryOpen>,
+    build: Res<BuildOpen>,
+    journal: Res<JournalOpen>,
+    settings: Res<settings::SettingsPanelState>,
+    mut cards: Query<&mut Visibility, With<PauseText>>,
+) {
+    let visible = pause.paused && !inventory.open && !build.open && !journal.open && !settings.open;
+    for mut card in &mut cards {
+        *card = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 fn update_hud(resources: HudResources, queries: HudQueryParams) {
     let HudQueryParams {
         vitals,
         build,
         boon,
-        paragon,
         codex,
         charm,
         armory,
-        conduit,
-        glory,
         ward,
         boss,
         mut texts,
         mut nodes,
     } = queries;
     let HudResources {
+        catalog,
+        selected,
+        game_assets,
         stats,
         progress,
         story,
@@ -9148,26 +7134,32 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         inventory_open,
         build_open,
         journal_open,
-        audio,
-        audio_backend,
-        difficulty,
         journal,
         milestones,
-        bestiary,
         bounty,
         modifier,
         challenges,
         mastery,
         obelisk,
         rift,
-        records,
         zone,
         skill_feedback,
         target_info,
         hud_density,
     } = resources;
-    let Ok((health, fury, cooldowns, evade, surge, _portal, level, potions, elixirs, transform)) =
-        vitals.single()
+    let Ok((
+        health,
+        fury,
+        cooldowns,
+        evade,
+        surge,
+        _portal,
+        level,
+        paragon,
+        potions,
+        _elixirs,
+        transform,
+    )) = vitals.single()
     else {
         return;
     };
@@ -9175,20 +7167,20 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         damage_bonus,
         equipment,
         _buff,
-        elixir_buff,
+        _elixir_buff,
         _fortune_buff,
         inventory,
         talents,
-        runes,
+        loadout,
         companion,
     )) = build.single()
     else {
         return;
     };
+    let class = catalog.get(selected.0);
+    let hud_skills = HudSkills::new(class, loadout, level.level, fury, talents);
+    let skills = &hud_skills;
     let Ok(boon) = boon.single() else {
-        return;
-    };
-    let Ok(paragon) = paragon.single() else {
         return;
     };
     let Ok(codex) = codex.single() else {
@@ -9200,32 +7192,9 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     let Ok(armory) = armory.single() else {
         return;
     };
-    let Ok(_conduit_buff) = conduit.single() else {
-        return;
-    };
-    let Ok(_glory_buff) = glory.single() else {
-        return;
-    };
     let Ok((death_ward, barrier)) = ward.single() else {
         return;
     };
-    let boss_text = boss
-        .single()
-        .map(|(health, phase, stagger, staggered)| {
-            format!(
-                "{} | {}",
-                boss_pressure_summary_for(progress.chapter_id(), health, phase),
-                boss_stagger_summary(stagger, staggered)
-            )
-        })
-        .unwrap_or_else(|_| {
-            let boss = progress.chapter_id().boss_short_name();
-            if progress.phase == ChapterPhase::Boss {
-                format!("{boss}: entering")
-            } else {
-                format!("{boss}: dormant")
-            }
-        });
     let boss_action =
         boss.single()
             .ok()
@@ -9239,15 +7208,6 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
                     .map(|staggered| staggered.timer.remaining_secs())
                     .unwrap_or_default(),
             });
-    let journey_text = journey_summary(&challenges, &milestones, &mastery);
-    let quest_log_text = chapter_quest_log_summary(&progress, &stats, &bounty, &obelisk, &rift);
-    let clear_summary_text =
-        chapter_clear_summary(&progress, &stats, &bounty, &obelisk, &rift, &story);
-    let bestiary_goal_text = bestiary_next_goal(&bestiary);
-    let codex_goal_text = legendary_codex_pursuit_summary(codex, equipment);
-    let primal_goal_text = primal_infusion_pursuit_summary(&stats, equipment);
-    let mastery_goal_text =
-        mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, codex);
     let action_guide_base = action_guide_summary(ActionGuideInputs {
         progress: &progress,
         stats: &stats,
@@ -9288,36 +7248,6 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         &obelisk,
         &rift,
     );
-    let resonance_text = reliquary_resonance(equipment, charm)
-        .map(|resonance| resonance.summary())
-        .unwrap_or_else(|| "Resonance: inactive".to_string());
-    let set_tactic_text = reliquary_set_tactic(equipment, charm, &stats);
-    let gem_resonance_text = equipment
-        .socketed_gem
-        .map(|gem| gem.resonance_summary())
-        .unwrap_or_else(|| "Gem Resonance: socket gems to awaken power".to_string());
-    let detailed_status_text = character_status_summary(CharacterStatusInputs {
-        level,
-        paragon,
-        equipment,
-        elixir_buff,
-        death_ward,
-        resonance: &resonance_text,
-        set_tactic: &set_tactic_text,
-        gem_resonance: &gem_resonance_text,
-        companion,
-        boss: &boss_text,
-    });
-    let systems_status_text = systems_status_summary(SystemsStatusInputs {
-        progress: &progress,
-        stats: &stats,
-        bounty: &bounty,
-        challenges: &challenges,
-        obelisk: &obelisk,
-        rift: &rift,
-        modifier: &modifier,
-        zone: &zone,
-    });
     let live_priority_text = live_objective_priority(&stats, &bounty, &obelisk, &rift);
     let clean_hud = clean_hud_active(
         *hud_density,
@@ -9328,7 +7258,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     );
 
     if let Ok(mut text) = texts.0.single_mut() {
-        **text = if combat_focus {
+        **text = if combat_focus && !clean_hud {
             hud_combat_focus_text(&action_guide_text, &target_info, &progress)
         } else if clean_hud {
             hud_clean_objective_text(
@@ -9348,13 +7278,24 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     }
     update_objective_frame(&mut nodes.objective_frames, combat_focus, clean_hud);
     if let Ok(mut text) = texts.1.single_mut() {
-        **text = health_orb_compact_text(health, barrier, potions, death_ward);
+        **text = health_orb_compact_text(health);
     }
     for (slot, mut text) in &mut texts.2 {
-        **text = skill_slot_summary(*slot, fury, cooldowns, runes, surge, evade);
+        **text = skill_slot_summary(*slot, fury, cooldowns, surge, evade, skills);
     }
     update_resource_fills(&mut nodes.resource_fills, health, barrier, fury);
-    update_resource_orb_frames(&mut nodes.resource_orb_frames, health, barrier, fury, surge);
+    update_resource_orb_frames(
+        &mut nodes.resource_orb_frames,
+        skills,
+        health,
+        barrier,
+        fury,
+        surge,
+    );
+    for mut color in &mut nodes.resource_liquids {
+        color.0 = resource_liquid_color(class.resource.kind);
+    }
+    update_skill_icons(&mut nodes.skill_icons, &game_assets, skills);
     update_potion_pips(&mut nodes.potion_pips, potions);
     update_skill_frames(
         &mut nodes.skill_frames,
@@ -9362,24 +7303,30 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         cooldowns,
         surge,
         evade,
+        skills,
         &skill_feedback,
     );
-    update_skill_cooldown_masks(&mut nodes.skill_masks, fury, cooldowns, surge, evade);
-    update_skill_lamps(&mut nodes.skill_lamps, fury, cooldowns, surge, evade);
-    update_experience_fills(&mut nodes.experience_fills, level);
+    update_skill_cooldown_masks(
+        &mut nodes.skill_masks,
+        fury,
+        cooldowns,
+        surge,
+        evade,
+        skills,
+    );
+    update_skill_lamps(
+        &mut nodes.skill_lamps,
+        fury,
+        cooldowns,
+        surge,
+        evade,
+        skills,
+    );
+    update_experience_fills(&mut nodes.experience_fills, level, paragon);
     update_inventory_panels(&mut nodes.inventory_panels, inventory_open.open);
     update_build_panels(&mut nodes.build_panels, build_open.open);
     if let Ok(mut text) = texts.3.single_mut() {
-        let readiness = combat_readiness_summary(CombatReadinessInputs {
-            health,
-            potions,
-            fury,
-            cooldowns,
-            surge,
-            evade,
-            runes,
-        });
-        **text = fury_orb_compact_text(fury, level, paragon, &stats, &readiness);
+        **text = fury_orb_compact_text(fury, class.resource.kind);
     }
     if let Ok(mut text) = texts.4.single_mut() {
         let (log_text, display) =
@@ -9390,61 +7337,22 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         }
     }
     if let Ok(mut text) = texts.5.single_mut() {
-        **text = if pause.paused {
-            pause_help_text(PauseHelpInputs {
-                progress: &progress,
-                difficulty: &difficulty,
-                modifier: &modifier,
-                stats: &stats,
-                journey: &journey_text,
-                clear_summary: &clear_summary_text,
-                season_deeds: &season_deed_pursuit_summary(&records),
-                bestiary_goal: &bestiary_goal_text,
-                codex_goal: &codex_goal_text,
-                crafting_goal: &primal_goal_text,
-                mastery_goal: &mastery_goal_text,
-                story: &story,
-                quest_log: &quest_log_text,
-                action_guide: &action_guide_text,
-                detailed_status: &detailed_status_text,
-                systems_status: &systems_status_text,
-                inventory_open: inventory_open.open,
-                journal_open: journal_open.open,
-                audio_status: audio_backend.status_label(&audio),
-            })
-        } else {
-            String::new()
-        };
+        **text = "PAUSED\n\nEsc · Resume\nF5 · Save    F9 · Load".into();
     }
     if let Ok(mut text) = texts.6.single_mut() {
         **text = if inventory_open.open {
-            inventory_panel_compact_header(
-                &stats,
-                inventory,
-                equipment,
-                damage_bonus,
-                potions,
-                elixirs,
-                codex,
-            )
+            inventory_panel_compact_header(&stats, inventory)
         } else {
             String::new()
         };
     }
-    let resonance_text = reliquary_resonance(equipment, charm)
-        .map(|resonance| resonance.summary())
-        .unwrap_or_else(|| "Resonance: inactive".to_string());
     update_gear_slots(
         &mut texts.7,
         inventory_open.open,
         damage_bonus,
-        equipment,
         charm,
         codex,
         armory,
-        talents,
-        runes,
-        &resonance_text,
     );
     update_gear_slot_frames(&mut nodes.gear_frames, inventory_open.open);
     update_inventory_slots(
@@ -9462,22 +7370,11 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     );
     update_inventory_slot_icons(&mut nodes.inventory_icons, inventory_open.open, inventory);
     if let Ok(mut text) = texts.9.single_mut() {
-        let quest_board =
-            chapter_quest_board_text(&progress, &stats, &bounty, &obelisk, &rift, &story);
+        let quest_board = chapter_quest_board_text(&progress, &bounty, &obelisk, &rift);
         let campaign_journal = campaign_journal_text(&quest_board, &story, &journal);
-        let pause_summary = format!(
-            "{}\nLore: {}\nProgress: {}\nBestiary: {} | {}",
-            quest_board,
-            compact_label(&journal.summary(), 112),
-            compact_label(&milestone_summary(&milestones), 112),
-            compact_label(&bestiary_summary(&bestiary), 64),
-            compact_label(&bestiary_goal_text, 64)
-        );
         let (journal_text, display) = journal_panel_text(
-            journal_open.open,
-            pause.paused,
+            journal_open.open && !inventory_open.open && !build_open.open,
             &campaign_journal,
-            &pause_summary,
         );
         **text = journal_text;
         for mut visibility in &mut nodes.journal_visibility {
@@ -9487,664 +7384,14 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
     if let Ok(mut text) = texts.10.single_mut() {
         **text = if build_open.open {
             talent_panel_text(BuildPanelInputs {
-                health,
-                fury,
-                #[cfg(test)]
-                cooldowns,
-                #[cfg(test)]
-                evade,
-                #[cfg(test)]
-                surge,
-                level,
                 damage_bonus,
                 equipment,
                 charm,
                 talents,
-                runes,
-                codex,
             })
         } else {
             String::new()
         };
-    }
-}
-
-fn update_action_belt_hud(
-    mut texts: Query<(&mut Text, &mut Node), With<ActionBeltText>>,
-    player: ActionBeltPlayerQuery,
-    resources: ActionBeltResources,
-) {
-    let Ok((mut text, mut node)) = texts.single_mut() else {
-        return;
-    };
-    let Ok((
-        health,
-        barrier,
-        fury,
-        cooldowns,
-        evade,
-        surge,
-        boon,
-        potions,
-        inventory,
-        equipment,
-        damage_bonus,
-        runes,
-        talents,
-    )) = player.single()
-    else {
-        return;
-    };
-    let inputs = ActionBeltInputs {
-        health,
-        barrier,
-        fury,
-        cooldowns,
-        evade,
-        surge,
-        boon,
-        potions,
-        inventory,
-        equipment,
-        damage_bonus,
-        runes,
-        talents,
-        stats: &resources.stats,
-        progress: &resources.progress,
-        bounty: &resources.bounty,
-        obelisk: &resources.obelisk,
-        rift: &resources.rift,
-        combo: Some(&resources.combo),
-        target_info: Some(&resources.target_info),
-    };
-
-    node.display = Display::Flex;
-    **text = if clean_hud_active(
-        *resources.hud_density,
-        &resources.pause,
-        &resources.inventory_open,
-        &resources.build_open,
-        &resources.journal_open,
-    ) {
-        action_belt_clean_summary(inputs)
-    } else {
-        action_belt_summary(inputs)
-    };
-}
-
-#[derive(SystemParam)]
-struct ActionBeltResources<'w> {
-    stats: Res<'w, RunStats>,
-    progress: Res<'w, ChapterProgress>,
-    bounty: Res<'w, BountyProgress>,
-    obelisk: Res<'w, BloodObelisk>,
-    rift: Res<'w, EmberRift>,
-    combo: Res<'w, CombatComboState>,
-    target_info: Res<'w, TargetInfo>,
-    hud_density: Res<'w, HudDensity>,
-    pause: Res<'w, PauseState>,
-    inventory_open: Res<'w, InventoryOpen>,
-    build_open: Res<'w, BuildOpen>,
-    journal_open: Res<'w, JournalOpen>,
-}
-
-#[derive(Clone, Copy)]
-struct ActionBeltInputs<'a> {
-    health: &'a Health,
-    barrier: &'a Barrier,
-    fury: &'a Fury,
-    cooldowns: &'a SkillCooldowns,
-    evade: &'a Evade,
-    surge: &'a SurgeBuff,
-    boon: &'a ChapterBoon,
-    potions: &'a PotionBelt,
-    inventory: &'a Inventory,
-    equipment: &'a Equipment,
-    damage_bonus: &'a DamageBonus,
-    runes: &'a SkillRunes,
-    talents: &'a Talents,
-    stats: &'a RunStats,
-    progress: &'a ChapterProgress,
-    bounty: &'a BountyProgress,
-    obelisk: &'a BloodObelisk,
-    rift: &'a EmberRift,
-    combo: Option<&'a CombatComboState>,
-    target_info: Option<&'a TargetInfo>,
-}
-
-fn action_belt_summary(inputs: ActionBeltInputs) -> String {
-    let hp = action_belt_health(inputs.health, inputs.barrier);
-    let fury = action_belt_fury_state(&inputs);
-    let next = action_belt_next_action(&inputs);
-    let combo = action_belt_combo_hint(&inputs);
-    let bag = compact_label(
-        &bag_action_summary(
-            inputs.stats,
-            inputs.inventory,
-            inputs.equipment,
-            inputs.damage_bonus,
-        ),
-        12,
-    );
-    let priority =
-        live_objective_priority(inputs.stats, inputs.bounty, inputs.obelisk, inputs.rift)
-            .unwrap_or_else(|| chapter_next_step(inputs.progress));
-
-    format!(
-        "{hp} | {fury} | F {} | Next {} | Combo {} | Bag {}/{} {} | {}g | {}",
-        action_belt_potion_state(inputs.potions),
-        next,
-        combo,
-        inputs.inventory.items.len(),
-        inputs.inventory.capacity,
-        bag,
-        inputs.stats.gold,
-        compact_label(&priority, 22)
-    )
-}
-
-fn action_belt_clean_summary(inputs: ActionBeltInputs) -> String {
-    let hp = compact_label(&action_belt_health(inputs.health, inputs.barrier), 14);
-    let skills = compact_label(&action_belt_skill_snapshot(&inputs), 24);
-    let next = compact_label(&action_belt_next_action(&inputs), 28);
-    let combo = action_belt_clean_combo_hint(&inputs);
-    let priority =
-        live_objective_priority(inputs.stats, inputs.bounty, inputs.obelisk, inputs.rift)
-            .unwrap_or_else(|| chapter_next_step(inputs.progress));
-    compact_label(
-        &format!(
-            "{hp} | Fury {:.0}/{:.0} {skills} | F {} | Next {}{} | Bag {}/{} | {}",
-            inputs.fury.current,
-            inputs.fury.max,
-            action_belt_potion_state(inputs.potions),
-            next,
-            combo,
-            inputs.inventory.items.len(),
-            inputs.inventory.capacity,
-            compact_label(&priority, 20)
-        ),
-        118,
-    )
-}
-
-fn action_belt_clean_combo_hint(inputs: &ActionBeltInputs) -> String {
-    action_belt_clean_combo_hint_from(inputs.combo.and_then(CombatComboState::hud_hint))
-}
-
-fn action_belt_clean_combo_hint_from(hint: Option<String>) -> String {
-    hint.map(|hint| format!(" | Combo {}", compact_label(&hint, 18)))
-        .unwrap_or_default()
-}
-
-fn action_belt_health(health: &Health, barrier: &Barrier) -> String {
-    let hp_label = if health.current <= health.max * 0.35 {
-        "HP!"
-    } else {
-        "HP"
-    };
-    if barrier.current > 0.5 {
-        format!(
-            "{hp_label} {:.0}/{:.0} +{:.0}",
-            health.current, health.max, barrier.current
-        )
-    } else {
-        format!("{hp_label} {:.0}/{:.0}", health.current, health.max)
-    }
-}
-
-fn action_belt_fury_state(inputs: &ActionBeltInputs) -> String {
-    let min_spender = inputs
-        .fury
-        .rupture_cost
-        .min(inputs.fury.dash_cost)
-        .min(inputs.fury.nova_cost);
-    let stance = if surge_seconds_remaining(inputs.surge) > 0.0 {
-        "surge"
-    } else if inputs.fury.current + f32::EPSILON < min_spender {
-        "build"
-    } else if inputs.fury.current >= inputs.fury.nova_cost
-        && inputs.fury.current >= inputs.fury.rupture_cost
-    {
-        "spend"
-    } else {
-        "ready"
-    };
-    let skills = action_belt_skill_snapshot(inputs);
-    compact_label(
-        &format!(
-            "Fury {:.0}/{:.0} {stance} {skills}",
-            inputs.fury.current, inputs.fury.max
-        ),
-        42,
-    )
-}
-
-fn action_belt_skill_snapshot(inputs: &ActionBeltInputs) -> String {
-    let min_spender = inputs
-        .fury
-        .rupture_cost
-        .min(inputs.fury.dash_cost)
-        .min(inputs.fury.nova_cost);
-    if inputs.fury.current + f32::EPSILON < min_spender {
-        return format!(
-            "LMB +{:.0}F",
-            (min_spender - inputs.fury.current).ceil().max(1.0)
-        );
-    }
-
-    let mut tokens = vec![
-        action_belt_skill_token(SkillSlotText::Rupture, "RMB", inputs),
-        action_belt_skill_token(SkillSlotText::Dash, "Q", inputs),
-        action_belt_skill_token(SkillSlotText::Nova, "E", inputs),
-    ];
-    tokens.push(action_belt_surge_token(inputs.surge));
-    tokens.join("/")
-}
-
-fn action_belt_skill_token(
-    slot: SkillSlotText,
-    key: &'static str,
-    inputs: &ActionBeltInputs,
-) -> String {
-    if skill_slot_ready(
-        slot,
-        inputs.fury,
-        inputs.cooldowns,
-        inputs.surge,
-        inputs.evade,
-    ) {
-        return key.to_string();
-    }
-    if let Some(required) = skill_slot_required_fury(slot, inputs.fury)
-        && inputs.fury.current + f32::EPSILON < required
-    {
-        return format!(
-            "{key}+{:.0}F",
-            (required - inputs.fury.current).ceil().max(1.0)
-        );
-    }
-
-    let cooldown = match slot {
-        SkillSlotText::Rupture => inputs.cooldowns.rupture.remaining_secs(),
-        SkillSlotText::Dash => inputs.cooldowns.dash.remaining_secs(),
-        SkillSlotText::Nova => inputs.cooldowns.nova.remaining_secs(),
-        _ => 0.0,
-    };
-    if cooldown > 0.05 {
-        format!("{key}{:.0}s", cooldown.ceil())
-    } else {
-        key.to_string()
-    }
-}
-
-fn action_belt_surge_token(surge: &SurgeBuff) -> String {
-    let active = surge_seconds_remaining(surge);
-    if active > 0.0 {
-        format!("Y{:.0}s", active.ceil())
-    } else if surge.charge >= surge.max_charge {
-        "Y".to_string()
-    } else {
-        format!("Y{}/{}", surge.charge, surge.max_charge)
-    }
-}
-
-fn action_belt_potion_state(potions: &PotionBelt) -> String {
-    let cooldown = potion_seconds_remaining(potions);
-    if cooldown > 0.05 {
-        format!("{:.0}s", cooldown.ceil())
-    } else if potions.current == 0 {
-        "EMPTY".to_string()
-    } else {
-        format!("{}/{}", potions.current, potions.max)
-    }
-}
-
-fn action_belt_next_action(inputs: &ActionBeltInputs) -> String {
-    if inputs.health.current <= inputs.health.max * 0.35 {
-        return survival_readiness_summary(inputs.potions, inputs.evade)
-            .replace("Potion heal", "heal")
-            .replace("Evade", "evade");
-    }
-    if let Some(target_prompt) = inputs
-        .target_info
-        .and_then(|target| action_belt_target_prompt(target, inputs.evade))
-    {
-        return target_prompt;
-    }
-    if let Some(boon_prompt) = action_belt_boss_boon_prompt(inputs) {
-        return boon_prompt;
-    }
-    if inputs.progress.phase == ChapterPhase::Boss
-        && inputs.boon.choice != ChapterBoonChoice::None
-        && inputs.stats.reliquary_momentum > 0
-    {
-        return format!(
-            "Momentum {}x burst",
-            inputs.stats.reliquary_momentum.min(RELIQUARY_MOMENTUM_MAX)
-        );
-    }
-    if let Some(talent_prompt) = action_belt_talent_prompt(inputs.talents) {
-        return talent_prompt;
-    }
-    if let Some(inventory_prompt) = action_belt_inventory_prompt(inputs) {
-        return inventory_prompt;
-    }
-    if surge_seconds_remaining(inputs.surge) > 0.0 {
-        return action_belt_rotation(
-            [
-                (SkillSlotText::Rupture, rupture_action_label(inputs.runes)),
-                (SkillSlotText::Nova, nova_action_label(inputs.runes)),
-                (SkillSlotText::Dash, dash_action_label(inputs.runes)),
-            ],
-            inputs,
-            "LMB keep fury",
-        );
-    }
-    if skill_slot_ready(
-        SkillSlotText::Surge,
-        inputs.fury,
-        inputs.cooldowns,
-        inputs.surge,
-        inputs.evade,
-    ) {
-        return "Y burst -> RMB/E".to_string();
-    }
-    action_belt_rotation(
-        [
-            (SkillSlotText::Rupture, rupture_action_label(inputs.runes)),
-            (SkillSlotText::Nova, nova_action_label(inputs.runes)),
-            (SkillSlotText::Dash, dash_action_label(inputs.runes)),
-        ],
-        inputs,
-        "LMB build fury",
-    )
-}
-
-fn action_belt_boss_boon_prompt(inputs: &ActionBeltInputs) -> Option<String> {
-    if inputs.progress.phase != ChapterPhase::Boss || inputs.boon.choice != ChapterBoonChoice::None
-    {
-        return None;
-    }
-    Some(format!(
-        "4/5/6 boon rec {}",
-        chapter_boon_recommended_key(
-            inputs.stats,
-            inputs.health,
-            inputs.potions,
-            inputs.equipment
-        )
-    ))
-}
-
-fn action_belt_talent_prompt(talents: &Talents) -> Option<String> {
-    if talents.points == 0 {
-        return None;
-    }
-    Some(format!("K {}", next_talent_key(talents)))
-}
-
-fn action_belt_inventory_prompt(inputs: &ActionBeltInputs) -> Option<String> {
-    if inputs.inventory.items.len() >= inputs.inventory.capacity {
-        if let Some(item) =
-            best_inventory_upgrade(inputs.inventory, inputs.equipment, inputs.damage_bonus)
-        {
-            return Some(format!(
-                "FULL {}",
-                action_belt_inventory_item_prompt(item, inputs.equipment, inputs.damage_bonus)
-            ));
-        }
-        let salvageable =
-            salvageable_inventory_count(inputs.inventory, inputs.equipment, inputs.damage_bonus);
-        return Some(format!("FULL U salvage {}", salvageable.max(1)));
-    }
-    if let Some(item) =
-        best_inventory_upgrade(inputs.inventory, inputs.equipment, inputs.damage_bonus)
-    {
-        return Some(action_belt_inventory_item_prompt(
-            item,
-            inputs.equipment,
-            inputs.damage_bonus,
-        ));
-    }
-    if let Some(item) =
-        best_inventory_build_piece(inputs.inventory, inputs.equipment, inputs.damage_bonus)
-    {
-        return Some(action_belt_inventory_item_prompt(
-            item,
-            inputs.equipment,
-            inputs.damage_bonus,
-        ));
-    }
-    let salvageable =
-        salvageable_inventory_count(inputs.inventory, inputs.equipment, inputs.damage_bonus);
-    if salvageable > 0 {
-        Some(format!("U salvage {salvageable}"))
-    } else {
-        None
-    }
-}
-
-fn action_belt_inventory_item_prompt(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    let gain = compact_label(
-        &inventory_item_action_gain(item, equipment, damage_bonus),
-        10,
-    );
-    match inventory_item_action_hint(item, equipment, damage_bonus) {
-        "[ equip power" | "[ equip now" => format!("[ equip {gain}"),
-        "B codex" => format!("B codex {gain}"),
-        "keep craft" => format!("I craft {gain}"),
-        "stash swap" => format!("I swap {gain}"),
-        "U salvage" => format!("U salvage {gain}"),
-        _ => format!("I inspect {gain}"),
-    }
-}
-
-fn action_belt_combo_hint(inputs: &ActionBeltInputs) -> String {
-    if let Some(hint) = inputs.combo.and_then(CombatComboState::hud_hint) {
-        return hint;
-    }
-    if inputs.health.current <= inputs.health.max * 0.35 {
-        return survival_combo_hint(inputs.potions, inputs.evade);
-    }
-    if inputs.fury.current < inputs.fury.rupture_cost.min(inputs.fury.nova_cost) {
-        return format!(
-            "LMB to {:.0}F",
-            inputs.fury.rupture_cost.min(inputs.fury.nova_cost)
-        );
-    }
-    if surge_seconds_remaining(inputs.surge) > 0.0 {
-        return skill_combo_sequence(inputs.runes, true);
-    }
-    if inputs.surge.charge >= inputs.surge.max_charge {
-        return format!("Y -> {}", skill_combo_sequence(inputs.runes, true));
-    }
-    skill_combo_sequence(inputs.runes, false)
-}
-
-fn survival_combo_hint(potions: &PotionBelt, evade: &Evade) -> String {
-    if potions.current > 0 && potion_seconds_remaining(potions) <= 0.05 {
-        "F -> Shift".to_string()
-    } else if evade_cooldown_remaining(evade) <= 0.05 {
-        "Shift -> LMB".to_string()
-    } else {
-        "kite -> LMB".to_string()
-    }
-}
-
-fn skill_combo_sequence(runes: &SkillRunes, burst: bool) -> String {
-    let setup = match runes.rupture {
-        RuptureRune::Expose => "RMB vuln",
-        RuptureRune::Hemorrhage => "RMB bleed",
-    };
-    let finisher = match (runes.nova, runes.dash, burst) {
-        (NovaRune::Frost, _, _) => "E freeze",
-        (NovaRune::Ember, DashRune::Reap, true) => "Q reap",
-        (NovaRune::Ember, _, _) => "E burn",
-    };
-    format!("{setup} -> {finisher}")
-}
-
-fn action_belt_rotation(
-    priorities: [(SkillSlotText, &'static str); 3],
-    inputs: &ActionBeltInputs,
-    fallback: &'static str,
-) -> String {
-    for (slot, label) in priorities {
-        if skill_slot_ready(
-            slot,
-            inputs.fury,
-            inputs.cooldowns,
-            inputs.surge,
-            inputs.evade,
-        ) {
-            return label.to_string();
-        }
-    }
-    if let Some(required) = [
-        SkillSlotText::Rupture,
-        SkillSlotText::Nova,
-        SkillSlotText::Dash,
-    ]
-    .into_iter()
-    .filter_map(|slot| skill_slot_required_fury(slot, inputs.fury))
-    .filter(|required| inputs.fury.current < *required)
-    .min_by(|a, b| a.total_cmp(b))
-    {
-        return format!("LMB +{:.0}F", (required - inputs.fury.current).ceil());
-    }
-    fallback.to_string()
-}
-
-fn action_belt_target_prompt(target: &TargetInfo, evade: &Evade) -> Option<String> {
-    if !target.visible {
-        return None;
-    }
-    let details = target.details.as_str();
-    if details.contains("window: burst now") {
-        return Some("Y burst window".to_string());
-    }
-    if details.contains("break before")
-        && (details.contains("Enrage")
-            || details.contains("Crescendo")
-            || details.contains("enrage"))
-    {
-        return Some("RMB/Q break".to_string());
-    }
-    if details.contains("Soul Fissure Choir") || details.contains("Soul Lance") {
-        return Some(evade_or_move_prompt(evade, "leave fissures"));
-    }
-    if details.contains("Ashen Guillotine") || details.contains("Crucible Rings") {
-        return Some(evade_or_move_prompt(evade, "cross rings"));
-    }
-    if details.contains("kite fire") {
-        return Some(evade_or_move_prompt(evade, "kite fire"));
-    }
-    if let Some(incoming) = details
-        .split("incoming: ")
-        .nth(1)
-        .and_then(|tail| tail.split('|').next())
-        .map(str::trim)
-    {
-        return Some(evade_or_move_prompt(
-            evade,
-            compact_label(&strip_trailing_seconds(incoming), 15).as_str(),
-        ));
-    }
-    if details.contains("stop into reflect") || details.contains("reflect") {
-        return Some("stop reflect".to_string());
-    }
-    if details.contains("wait shield") || details.contains("shield window") {
-        return Some("wait shield".to_string());
-    }
-    if details.contains("save Shift") || details.contains("root trap") {
-        return Some("hold Shift root".to_string());
-    }
-    if details.contains("leave circle")
-        || details.contains("move out")
-        || details.contains("step off death pool")
-        || details.contains("ground fire")
-        || details.contains("death pool")
-        || details.contains("seal rune")
-    {
-        return Some(evade_or_move_prompt(evade, "move out"));
-    }
-    if details.contains("strafe beam") || details.contains("beam hazard") {
-        return Some("strafe beam".to_string());
-    }
-    if details.contains("flank shield guard") || details.contains("role: guard") {
-        return Some("flank guard".to_string());
-    }
-    if details.contains("dash through fire") || details.contains("role: caster") {
-        return Some(evade_or_move_prompt(evade, "dash fire"));
-    }
-    if details.contains("break stagger") || details.contains("role: boss") {
-        return Some("RMB/Q stagger".to_string());
-    }
-    if details.contains("ward broken") {
-        return Some("RMB/E punish".to_string());
-    }
-    if details.contains("break ward") || details.contains("role: warden") {
-        return Some(evade_or_move_prompt(evade, "break warden"));
-    }
-    if details.contains("role: heavy") {
-        return Some(evade_or_move_prompt(evade, "dodge heavy"));
-    }
-    if details.contains("role: marksman") {
-        return Some("close marksman".to_string());
-    }
-    if details.contains("role: chaser") {
-        return Some(evade_or_move_prompt(evade, "kite chaser"));
-    }
-    if details.contains("role: treasure") {
-        return Some("chase treasure".to_string());
-    }
-    if details.contains("role: nemesis") {
-        return Some(evade_or_move_prompt(evade, "kite nemesis"));
-    }
-    None
-}
-
-fn evade_or_move_prompt(evade: &Evade, action: &str) -> String {
-    if evade_cooldown_remaining(evade) <= 0.05 {
-        format!("Shift {action}")
-    } else {
-        action.to_string()
-    }
-}
-
-fn strip_trailing_seconds(text: &str) -> String {
-    let mut parts = text.split_whitespace().collect::<Vec<_>>();
-    if parts
-        .last()
-        .is_some_and(|last| last.ends_with('s') && last[..last.len() - 1].parse::<f32>().is_ok())
-    {
-        parts.pop();
-    }
-    parts.join(" ")
-}
-
-fn rupture_action_label(runes: &SkillRunes) -> &'static str {
-    match runes.rupture {
-        RuptureRune::Expose => "RMB vuln",
-        RuptureRune::Hemorrhage => "RMB bleed",
-    }
-}
-
-fn nova_action_label(runes: &SkillRunes) -> &'static str {
-    match runes.nova {
-        NovaRune::Ember => "E burn",
-        NovaRune::Frost => "E freeze",
-    }
-}
-
-fn dash_action_label(runes: &SkillRunes) -> &'static str {
-    match runes.dash {
-        DashRune::Cleanse => "Q cleanse",
-        DashRune::Reap => "Q reap",
     }
 }
 
@@ -10368,7 +7615,7 @@ fn objective_frame_style(combat_focus: bool, clean_hud: bool) -> ObjectiveFrameS
             min_height: 20.0,
             padding_x: 7.0,
             padding_y: 2.0,
-            font_size: 9.5,
+            font_size: 14.0,
             border_color: Color::srgba(0.95, 0.46, 0.24, 0.42),
             background_color: Color::srgba(0.018, 0.010, 0.012, 0.36),
         }
@@ -10379,9 +7626,9 @@ fn objective_frame_style(combat_focus: bool, clean_hud: bool) -> ObjectiveFrameS
             min_height: 20.0,
             padding_x: 7.0,
             padding_y: 2.0,
-            font_size: 9.5,
-            border_color: Color::srgba(0.78, 0.62, 0.38, 0.28),
-            background_color: Color::srgba(0.018, 0.014, 0.018, 0.24),
+            font_size: 14.0,
+            border_color: Color::NONE,
+            background_color: Color::NONE,
         }
     } else {
         ObjectiveFrameStyle {
@@ -10411,16 +7658,9 @@ fn update_objective_frame(frames: &mut ObjectiveFrameQuery, combat_focus: bool, 
     }
 }
 
-fn journal_panel_text(
-    journal_open: bool,
-    paused: bool,
-    open_text: &str,
-    pause_summary: &str,
-) -> (String, Display) {
+fn journal_panel_text(journal_open: bool, open_text: &str) -> (String, Display) {
     if journal_open {
         (open_text.to_string(), Display::Flex)
-    } else if paused {
-        (pause_summary.to_string(), Display::Flex)
     } else {
         (String::new(), Display::None)
     }
@@ -10431,26 +7671,15 @@ fn campaign_journal_text(quest_board: &str, story: &StoryLog, lore: &LoreJournal
         .beats
         .iter()
         .rev()
-        .take(3)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|beat| {
-            let scene = story_scene(*beat);
-            let exchange = scene
-                .lines
-                .iter()
-                .map(|line| format!("{}: {}", line.speaker, line.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("{} — {}\n{}", beat.title(), beat.line(), exchange)
-        })
+        .take(2)
+        .map(|beat| beat.line())
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!(
-        "{quest_board}\n\nSTORY RECORD — RECENT SCENES\n{recent_story}\n\nLORE CODEX\n{}",
-        lore.open_text()
-    )
+    let mut text = format!("{quest_board}\n\nRECENT EVENTS\n{recent_story}");
+    if let Some(entry) = lore.entries.last() {
+        text.push_str(&format!("\n\nRECOVERED WRITING\n{}", entry.body()));
+    }
+    text
 }
 
 fn visibility_from_display(display: Display) -> Visibility {
@@ -10786,7 +8015,7 @@ fn update_loot_proximity_hud(
     mut texts: LootProximityTextQuery,
 ) {
     for (mut panel, mut border) in &mut panels {
-        panel.display = if info.visible {
+        panel.display = if info.visible && info.distance <= LOOT_PICKUP_RADIUS + 2.0 {
             Display::Flex
         } else {
             Display::None
@@ -10812,76 +8041,15 @@ fn update_loot_proximity_hud(
 }
 
 fn loot_proximity_summary(info: &LootProximityInfo) -> String {
-    let auto_equips = loot_compare_auto_equips(&info.compare);
-    let state = if info.pickup_ready && auto_equips {
-        "AUTO EQUIP"
-    } else if !auto_equips && info.inventory_full {
-        "INVENTORY FULL"
+    let name = info.label.split('|').next().unwrap_or(&info.label).trim();
+    let hint = if info.inventory_full {
+        "Inventory full — open your pack [I]"
     } else if info.pickup_ready {
-        "AUTO PICKUP"
-    } else if auto_equips {
-        "MOVE TO EQUIP"
+        "Picking up"
     } else {
-        "MOVE CLOSER"
+        "Move closer to collect"
     };
-    let distance = (info.distance - LOOT_PICKUP_RADIUS).max(0.0);
-    let rewards = if info.rewards.is_empty() {
-        "no extra rewards".to_string()
-    } else {
-        info.rewards.clone()
-    };
-    let rewards = if info.inventory_full && info.spare_salvage_available {
-        format!("{rewards} | U salvage spares")
-    } else {
-        rewards
-    };
-    let hint = loot_proximity_decision_hint(info, auto_equips);
-    let priority = if info.priority.is_empty() {
-        "DROP"
-    } else {
-        info.priority.as_str()
-    };
-    format!(
-        "{state} {priority} {:.1}m | {hint}\n{}\n{}\n{}",
-        distance, info.label, info.compare, rewards
-    )
-}
-
-fn loot_compare_auto_equips(compare: &str) -> bool {
-    compare.starts_with("AUTO-EQUIP")
-}
-
-fn loot_proximity_decision_hint(info: &LootProximityInfo, auto_equips: bool) -> &'static str {
-    let compare = info.compare.as_str();
-    if compare.contains("[CODEX]") || compare.contains("BUILD POWER") {
-        "unlock codex power"
-    } else if compare.contains("[CRAFT]") {
-        "keep for craft"
-    } else if compare.contains("[DPS]") || compare.contains("DPS GAIN") {
-        "equip for DPS"
-    } else if compare.contains("[TANK]") || compare.contains("TOUGHNESS") {
-        "keep defensive swap"
-    } else if compare.contains("[SALVAGE]") {
-        "salvage spare"
-    } else if compare.contains("[STASH]") {
-        "stash or salvage"
-    } else if compare.contains("POWER SPIKE") {
-        "equip power spike"
-    } else if compare.contains("SOCKET") {
-        "socket upgrade"
-    } else if compare.contains("TEMPER") {
-        "temper upgrade"
-    } else if compare.contains("BUILD SWAP") || compare.starts_with("SIDEGRADE") {
-        "stash build swap"
-    } else if compare.contains("SALVAGE LATER") || compare.starts_with("STASH") {
-        "stash or salvage"
-    } else if compare.contains("MAKE ROOM") || compare.starts_with("FULL") || info.inventory_full {
-        "make room"
-    } else if auto_equips {
-        "equip upgrade"
-    } else {
-        "inspect drop"
-    }
+    format!("{name}\n{hint}")
 }
 
 fn loot_proximity_color(quality: &str) -> Color {
@@ -11091,18 +8259,6 @@ fn update_build_panels(build_panels: &mut BuildPanelQuery, open: bool) {
     }
 }
 
-fn talent_rank_label(branch: TalentBranch, rank: u32) -> String {
-    match (branch, rank) {
-        (TalentBranch::Wrath, 4) => "I  BLOODRUSH".to_string(),
-        (TalentBranch::Wrath, 8) => "II  CARNAGE".to_string(),
-        (TalentBranch::Vigor, 4) => "I  SECOND WIND".to_string(),
-        (TalentBranch::Vigor, 8) => "II  IRON CONSTITUTION".to_string(),
-        (TalentBranch::Focus, 4) => "I  FLOW".to_string(),
-        (TalentBranch::Focus, 8) => "II  TEMPEST".to_string(),
-        _ => format!("◆  RANK {rank}"),
-    }
-}
-
 fn update_talent_tree_hud(
     build_open: Res<BuildOpen>,
     player: Query<&Talents, With<Player>>,
@@ -11140,8 +8296,12 @@ fn update_talent_tree_hud(
     }
 }
 
-fn update_experience_fills(experience_fills: &mut ExperienceFillQuery, level: &PlayerLevel) {
-    let amount = percent(level.xp as f32, level.next_level_xp as f32);
+fn update_experience_fills(
+    experience_fills: &mut ExperienceFillQuery,
+    level: &PlayerLevel,
+    paragon: &crate::player::EmberParagon,
+) {
+    let amount = progression::experience_progress(level, paragon);
     for (mut node, mut color) in experience_fills {
         node.width = Val::Percent(amount);
         color.0 = if amount >= 75.0 {
@@ -11153,390 +8313,20 @@ fn update_experience_fills(experience_fills: &mut ExperienceFillQuery, level: &P
 }
 
 struct BuildPanelInputs<'a> {
-    health: &'a Health,
-    fury: &'a Fury,
-    #[cfg(test)]
-    cooldowns: &'a SkillCooldowns,
-    #[cfg(test)]
-    evade: &'a Evade,
-    #[cfg(test)]
-    surge: &'a SurgeBuff,
-    level: &'a PlayerLevel,
     damage_bonus: &'a DamageBonus,
     equipment: &'a Equipment,
     charm: &'a Charm,
     talents: &'a Talents,
-    runes: &'a SkillRunes,
-    codex: &'a LegendaryCodex,
 }
 
 fn talent_panel_text(inputs: BuildPanelInputs) -> String {
-    let damage = total_damage_bonus(inputs.damage_bonus, inputs.equipment, inputs.charm);
-    let crit = total_crit_chance(inputs.equipment, inputs.charm) * 100.0;
-    let archetype = build_archetype_name(inputs.equipment, inputs.runes).to_ascii_uppercase();
-    let score = build_score_summary(
-        inputs.damage_bonus,
-        inputs.equipment,
-        inputs.charm,
-        inputs.talents,
-        inputs.runes,
-    );
     format!(
-        "TALENT CONSTELLATION   ·   {} UNBOUND POINT{}\n\
-         {}  ·  {}  ·  L{}  ·  LIFE {:.0}/{:.0}  ·  FURY {:.0}/{:.0}\n\
-         +{:.0} DAMAGE  ·  {:.0}% CRIT  ·  x{:.2} COOLDOWN  ·  {} POWERS",
+        "Available talent points: {}\nDamage bonus +{:.0}  ·  Critical chance {:.0}%  ·  Cooldown reduction {:.0}%",
         inputs.talents.points,
-        if inputs.talents.points == 1 { "" } else { "S" },
-        archetype,
-        score,
-        inputs.level.level,
-        inputs.health.current.max(0.0),
-        inputs.health.max,
-        inputs.fury.current,
-        inputs.fury.max,
-        damage,
-        crit,
-        inputs.talents.cooldown_multiplier(),
-        legendary_codex_power_count(inputs.codex),
+        total_damage_bonus(inputs.damage_bonus, inputs.equipment, inputs.charm),
+        total_crit_chance(inputs.equipment, inputs.charm) * 100.0,
+        (1.0 - inputs.talents.cooldown_multiplier()) * 100.0,
     )
-}
-
-#[cfg(test)]
-fn build_panel_text(inputs: BuildPanelInputs) -> String {
-    let damage = total_damage_bonus(inputs.damage_bonus, inputs.equipment, inputs.charm);
-    let crit = total_crit_chance(inputs.equipment, inputs.charm) * 100.0;
-    let archetype = build_archetype_summary(
-        inputs.damage_bonus,
-        inputs.equipment,
-        inputs.charm,
-        inputs.talents,
-        inputs.runes,
-    );
-    let score = build_score_summary(
-        inputs.damage_bonus,
-        inputs.equipment,
-        inputs.charm,
-        inputs.talents,
-        inputs.runes,
-    );
-    format!(
-        "BUILD | K close | I bag | J journal | 1/2/3 talents | Z/X/C runes\n\
-         Archetype {} | {}\n\
-         Loadout {} | Skills LMB/RMB/Q/E/Y/Shift | Bag [/] U\n\
-         Next {}\n\
-         Core L{} XP {}/{} | HP {:.0}/{:.0} | Fury {:.0}/{:.0}\n\
-         Damage +{:.0} | Crit {:.0}% | Armor {:.0} | Worn +{:.0} tough +{:.0} hp | x{:.2} dmg x{:.2} cd\n\
-         Talents {} pts | Wrath {} Vigor {} Focus {} | {}\n\
-         Mastery {}\n\
-         Runes {} | {} | {}\n\
-         Rotation {}\n\
-         Cooldowns Strike {:.1}s | Rupture {:.1}s | Dash {:.1}s | Nova {:.1}s\n\
-         Surge Y {}/{} {} | Evade Shift {}\n\
-         Power {} | Codex {}/{} | {}\n\
-        Weapon {} {}{}",
-        archetype,
-        score,
-        build_loadout_label(inputs.equipment, inputs.charm, inputs.runes),
-        build_next_step_summary(
-            inputs.talents,
-            inputs.equipment,
-            inputs.charm,
-            inputs.runes,
-            inputs.codex,
-        ),
-        inputs.level.level,
-        inputs.level.xp,
-        inputs.level.next_level_xp,
-        inputs.health.current.max(0.0),
-        inputs.health.max,
-        inputs.fury.current,
-        inputs.fury.max,
-        damage,
-        crit,
-        inputs.equipment.armor_bonus + inputs.equipment.worn_armor_bonus(),
-        inputs.equipment.worn_armor_bonus(),
-        inputs.equipment.worn_health_bonus(),
-        inputs.talents.damage_multiplier(),
-        inputs.talents.cooldown_multiplier(),
-        inputs.talents.points,
-        inputs.talents.wrath,
-        inputs.talents.vigor,
-        inputs.talents.focus,
-        next_talent_pick_summary(inputs.talents),
-        inputs.talents.mastery_summary(),
-        rune_loadout_summary(inputs.runes),
-        rune_synergy_summary(inputs.runes),
-        set_combo_payoff_summary(inputs.equipment, inputs.charm),
-        build_rotation_summary(inputs.fury, inputs.cooldowns, inputs.surge, inputs.runes),
-        inputs.cooldowns.basic.remaining_secs(),
-        inputs.cooldowns.rupture.remaining_secs(),
-        inputs.cooldowns.dash.remaining_secs(),
-        inputs.cooldowns.nova.remaining_secs(),
-        inputs.surge.charge,
-        inputs.surge.max_charge,
-        surge_build_state(inputs.surge),
-        evade_build_state(inputs.evade),
-        inputs.equipment.legendary_power.label(),
-        legendary_codex_power_count(inputs.codex),
-        LegendaryPower::ALL.len(),
-        legendary_codex_pursuit_summary(inputs.codex, inputs.equipment),
-        inputs.equipment.quality,
-        compact_label(&inputs.equipment.weapon_name, 24),
-        inputs
-            .equipment
-            .socketed_gem
-            .map(|gem| format!(" | {}", gem.label()))
-            .unwrap_or_default()
-    )
-}
-
-#[cfg(test)]
-fn build_next_step_summary(
-    talents: &Talents,
-    equipment: &Equipment,
-    charm: &Charm,
-    runes: &SkillRunes,
-    codex: &LegendaryCodex,
-) -> String {
-    if talents.points > 0 {
-        return format!(
-            "K then {} ({})",
-            next_talent_key(talents),
-            next_talent_pick_summary(talents)
-        );
-    }
-    if equipment.legendary_power == LegendaryPower::None && !codex.unlocked.is_empty() {
-        return compact_label(&legendary_codex_pursuit_summary(codex, equipment), 92);
-    }
-    if themed_reliquary_set(equipment, charm).is_none() {
-        return "find matching weapon/charm theme for combo set".to_string();
-    }
-    if !codex.is_complete() {
-        return compact_label(&legendary_codex_pursuit_summary(codex, equipment), 92);
-    }
-    format!("Z/X/C tune runes: {}", rune_synergy_summary(runes))
-}
-
-#[cfg(test)]
-fn build_archetype_summary(
-    damage_bonus: &DamageBonus,
-    equipment: &Equipment,
-    charm: &Charm,
-    talents: &Talents,
-    runes: &SkillRunes,
-) -> String {
-    let primary = build_archetype_name(equipment, runes);
-    let posture = build_posture_label(damage_bonus, equipment, charm, talents);
-    let payoff = build_payoff_label(equipment, charm, runes);
-    format!("{primary} {posture} | {payoff}")
-}
-
-#[cfg(test)]
-fn build_loadout_label(equipment: &Equipment, charm: &Charm, runes: &SkillRunes) -> String {
-    format!(
-        "{} / {} / {}",
-        compact_label(&equipment.weapon_name, 10),
-        compact_label(&charm.name, 10),
-        compact_label(&rune_loadout_summary(runes), 24)
-    )
-}
-
-fn build_archetype_name(equipment: &Equipment, runes: &SkillRunes) -> &'static str {
-    match equipment.legendary_power {
-        LegendaryPower::Stormbrand => "Storm Reaper",
-        LegendaryPower::Soulreaver => "Blood Reaver",
-        LegendaryPower::Aegisbrand => "Aegis Ward",
-        LegendaryPower::Frostbrand => "Frost Control",
-        LegendaryPower::Emberbrand => "Ember Cleave",
-        LegendaryPower::None => match (runes.dash, runes.nova, runes.rupture) {
-            (DashRune::Reap, NovaRune::Frost, _) => "Reap Control",
-            (DashRune::Reap, NovaRune::Ember, _) => "Reap Burn",
-            (_, NovaRune::Frost, RuptureRune::Expose) => "Control Setup",
-            (_, NovaRune::Ember, RuptureRune::Hemorrhage) => "Bleed Burn",
-            _ => "Reliquary Striker",
-        },
-    }
-}
-
-#[cfg(test)]
-fn build_posture_label(
-    damage_bonus: &DamageBonus,
-    equipment: &Equipment,
-    charm: &Charm,
-    talents: &Talents,
-) -> &'static str {
-    let damage = total_damage_bonus(damage_bonus, equipment, charm);
-    let crit = total_crit_chance(equipment, charm);
-    let toughness = equipment.health_bonus + equipment.armor_bonus + talents.vigor as f32 * 18.0;
-    if toughness >= 70.0 {
-        "tank"
-    } else if crit >= 0.22 {
-        "crit"
-    } else if damage >= 26.0 || talents.wrath >= 3 {
-        "burst"
-    } else if talents.focus >= 3 {
-        "tempo"
-    } else {
-        "balanced"
-    }
-}
-
-fn build_payoff_label(equipment: &Equipment, charm: &Charm, runes: &SkillRunes) -> &'static str {
-    if let Some(label) = legendary_rune_synergy_payoff_label(equipment.legendary_power, runes) {
-        return label;
-    }
-    if let Some(set) = themed_reliquary_set(equipment, charm) {
-        return match set {
-            ReliquarySet::Storm => "chain packs",
-            ReliquarySet::Blood => "steal life",
-            ReliquarySet::Ashen => "barrier loop",
-            ReliquarySet::Reliquary => "fury engine",
-        };
-    }
-    match (equipment.legendary_power, runes.nova, runes.rupture) {
-        (LegendaryPower::Stormbrand, _, _) => "chain packs",
-        (LegendaryPower::Soulreaver, _, _) => "sustain hits",
-        (LegendaryPower::Aegisbrand, _, _) => "shield trades",
-        (_, NovaRune::Frost, RuptureRune::Expose) => "freeze vuln",
-        (_, NovaRune::Frost, RuptureRune::Hemorrhage) => "freeze bleed",
-        (_, NovaRune::Ember, RuptureRune::Expose) => "burn vuln",
-        (_, NovaRune::Ember, RuptureRune::Hemorrhage) => "burn bleed",
-    }
-}
-
-fn legendary_rune_synergy_payoff_label(
-    power: LegendaryPower,
-    runes: &SkillRunes,
-) -> Option<&'static str> {
-    match power {
-        LegendaryPower::Emberbrand
-            if runes.nova == NovaRune::Ember || runes.rupture == RuptureRune::Hemorrhage =>
-        {
-            Some("rune ignites")
-        }
-        LegendaryPower::Frostbrand
-            if runes.nova == NovaRune::Frost || runes.rupture == RuptureRune::Expose =>
-        {
-            Some("rune chills")
-        }
-        LegendaryPower::Stormbrand
-            if runes.dash == DashRune::Reap || runes.nova == NovaRune::Frost =>
-        {
-            Some("rune chains")
-        }
-        LegendaryPower::Soulreaver
-            if runes.dash == DashRune::Reap || runes.rupture == RuptureRune::Hemorrhage =>
-        {
-            Some("rune leech")
-        }
-        LegendaryPower::Aegisbrand
-            if runes.dash == DashRune::Cleanse || runes.rupture == RuptureRune::Expose =>
-        {
-            Some("rune wards")
-        }
-        _ => None,
-    }
-}
-
-fn reliquary_set_tactic(equipment: &Equipment, charm: &Charm, stats: &RunStats) -> String {
-    let Some(set) = themed_reliquary_set(equipment, charm) else {
-        return "Set: match weapon/charm theme".to_string();
-    };
-    let kills = stats.set_resonance_kills.min(SET_ADEPT_KILLS);
-    let progress = if kills >= SET_ADEPT_KILLS {
-        "mastered".to_string()
-    } else {
-        format!("{kills}/{SET_ADEPT_KILLS}")
-    };
-    format!(
-        "Set {} {} {}",
-        reliquary_set_short_label(set),
-        reliquary_set_playstyle(set),
-        progress
-    )
-}
-
-fn reliquary_set_short_label(set: ReliquarySet) -> &'static str {
-    match set {
-        ReliquarySet::Storm => "Storm",
-        ReliquarySet::Blood => "Blood",
-        ReliquarySet::Ashen => "Ashen",
-        ReliquarySet::Reliquary => "Reliquary",
-    }
-}
-
-fn reliquary_set_playstyle(set: ReliquarySet) -> &'static str {
-    match set {
-        ReliquarySet::Storm => "chain",
-        ReliquarySet::Blood => "sustain",
-        ReliquarySet::Ashen => "burn",
-        ReliquarySet::Reliquary => "balanced clear",
-    }
-}
-
-fn build_score_summary(
-    damage_bonus: &DamageBonus,
-    equipment: &Equipment,
-    charm: &Charm,
-    talents: &Talents,
-    runes: &SkillRunes,
-) -> String {
-    format!(
-        "DPS {} | Tough {} | Ctrl {}",
-        build_dps_score(damage_bonus, equipment, charm, talents),
-        build_toughness_score(equipment, charm, talents),
-        build_control_score(equipment, runes, talents)
-    )
-}
-
-fn build_dps_score(
-    damage_bonus: &DamageBonus,
-    equipment: &Equipment,
-    charm: &Charm,
-    talents: &Talents,
-) -> u32 {
-    let damage = total_damage_bonus(damage_bonus, equipment, charm);
-    let crit = total_crit_chance(equipment, charm) * 100.0;
-    let power = if equipment.legendary_power == LegendaryPower::None {
-        0.0
-    } else {
-        16.0
-    };
-    (damage * 2.0 + crit * 1.4 + talents.wrath as f32 * 8.0 + power)
-        .round()
-        .clamp(0.0, 999.0) as u32
-}
-
-fn build_toughness_score(equipment: &Equipment, charm: &Charm, talents: &Talents) -> u32 {
-    let resonance = reliquary_resonance(equipment, charm)
-        .map(|resonance| resonance.damage_bonus + resonance.crit_bonus * 120.0)
-        .unwrap_or_default();
-    (equipment.health_bonus * 0.8 + equipment.armor_bonus + talents.vigor as f32 * 18.0 + resonance)
-        .round()
-        .clamp(0.0, 999.0) as u32
-}
-
-fn build_control_score(equipment: &Equipment, runes: &SkillRunes, talents: &Talents) -> u32 {
-    let mut score = talents.focus * 10;
-    score += match runes.nova {
-        NovaRune::Frost => 30,
-        NovaRune::Ember => 12,
-    };
-    score += match runes.rupture {
-        RuptureRune::Expose => 18,
-        RuptureRune::Hemorrhage => 12,
-    };
-    score += match runes.dash {
-        DashRune::Cleanse => 16,
-        DashRune::Reap => 10,
-    };
-    if matches!(
-        equipment.legendary_power,
-        LegendaryPower::Frostbrand | LegendaryPower::Aegisbrand
-    ) {
-        score += 14;
-    }
-    score
 }
 
 fn next_talent_pick_summary(talents: &Talents) -> String {
@@ -11549,46 +8339,6 @@ fn next_talent_pick_summary(talents: &Talents) -> String {
         "spend 3 Focus for cooldowns".to_string()
     } else {
         "spend 2 Vigor for survival".to_string()
-    }
-}
-
-#[cfg(test)]
-fn rune_loadout_summary(runes: &SkillRunes) -> String {
-    format!(
-        "Dash {} / Nova {} / Rupture {}",
-        runes.dash.label(),
-        runes.nova.label(),
-        runes.rupture.label()
-    )
-}
-
-#[cfg(test)]
-fn rune_synergy_summary(runes: &SkillRunes) -> &'static str {
-    match (runes.dash, runes.nova, runes.rupture) {
-        (DashRune::Reap, NovaRune::Frost, RuptureRune::Hemorrhage) => {
-            "freeze packs, bleed them, reap executes"
-        }
-        (DashRune::Reap, NovaRune::Ember, RuptureRune::Expose) => {
-            "mark vulnerable, burn pack, reap low targets"
-        }
-        (DashRune::Cleanse, NovaRune::Frost, RuptureRune::Expose) => {
-            "control setup with safe cleanse dash"
-        }
-        (DashRune::Cleanse, NovaRune::Ember, RuptureRune::Hemorrhage) => {
-            "bleed and burn while keeping cleanse ready"
-        }
-        (DashRune::Cleanse, NovaRune::Ember, RuptureRune::Expose) => {
-            "balanced starter burst and safe escape"
-        }
-        (DashRune::Cleanse, NovaRune::Frost, RuptureRune::Hemorrhage) => {
-            "defensive control with bleed cleanup"
-        }
-        (DashRune::Reap, NovaRune::Frost, RuptureRune::Expose) => {
-            "freeze then expose for controlled burst"
-        }
-        (DashRune::Reap, NovaRune::Ember, RuptureRune::Hemorrhage) => {
-            "damage over time build with reap finish"
-        }
     }
 }
 
@@ -11621,8 +8371,8 @@ fn build_rotation_summary(
     }
     if cooldowns.rupture.is_finished() && fury.current >= fury.rupture_cost {
         return match runes.rupture {
-            RuptureRune::Expose => "RMB Expose starts combo; Q/E finish".to_string(),
-            RuptureRune::Hemorrhage => "RMB Bleed starts combo; Q/E finish".to_string(),
+            RuptureRune::Expose => "R Expose starts combo; Q/E finish".to_string(),
+            RuptureRune::Hemorrhage => "R Bleed starts combo; Q/E finish".to_string(),
         };
     }
     if cooldowns.nova.is_finished() && fury.current >= fury.nova_cost {
@@ -11640,354 +8390,14 @@ fn build_rotation_summary(
     "Hold position, Strike, wait for cooldowns".to_string()
 }
 
-#[cfg(test)]
-fn surge_build_state(surge: &SurgeBuff) -> String {
-    let active = surge_seconds_remaining(surge);
-    if active > 0.0 {
-        format!("ACTIVE {:.0}s", active.ceil())
-    } else if surge.charge >= surge.max_charge {
-        "READY".to_string()
-    } else {
-        "charging".to_string()
-    }
-}
-
-#[cfg(test)]
-fn evade_build_state(evade: &Evade) -> String {
-    let active = evade_seconds_remaining(evade);
-    if active > 0.0 {
-        return format!("I-FRAME {:.1}s", active);
-    }
-    let cooldown = evade_cooldown_remaining(evade);
-    if cooldown > 0.05 {
-        format!("CD {:.1}s", cooldown)
-    } else {
-        "READY".to_string()
-    }
-}
-
-fn update_compact_character_hud(
-    player: CompactCharacterPlayerQuery,
-    stats: Res<RunStats>,
-    mut texts: CompactCharacterTextQuery,
-) {
-    let Ok((damage_bonus, equipment, charm, inventory, codex, talents, runes)) = player.single()
-    else {
-        return;
-    };
-    let resonance = reliquary_resonance(equipment, charm)
-        .map(|resonance| resonance.label.to_string())
-        .unwrap_or_else(|| "No resonance".to_string());
-    let set_tactic = reliquary_set_tactic(equipment, charm, &stats);
-    for (slot, mut text) in &mut texts {
-        **text = compact_character_summary(
-            *slot,
-            damage_bonus,
-            equipment,
-            charm,
-            inventory,
-            codex,
-            talents,
-            runes,
-            &resonance,
-            &set_tactic,
-            &stats,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compact_character_summary(
-    slot: CompactCharacterText,
-    damage_bonus: &DamageBonus,
-    equipment: &Equipment,
-    charm: &Charm,
-    inventory: &Inventory,
-    codex: &LegendaryCodex,
-    talents: &Talents,
-    runes: &SkillRunes,
-    resonance: &str,
-    set_tactic: &str,
-    stats: &RunStats,
-) -> String {
-    match slot {
-        CompactCharacterText::Weapon => format!(
-            "GEAR WEAPON\n+{:.0} dmg {:.0}%\n{}",
-            damage_bonus.0,
-            equipment.crit_chance * 100.0,
-            compact_label(
-                &format!(
-                    "{} {}",
-                    compact_label(&equipment.weapon_name, 8),
-                    weapon_build_tag(equipment, damage_bonus, equipment.socketed_gem)
-                ),
-                18
-            )
-        ),
-        CompactCharacterText::Charm => format!(
-            "GEAR CHARM\n+{:.0} dmg {:.0}%\n{}",
-            charm.damage_bonus,
-            charm.crit_chance * 100.0,
-            compact_label(
-                &format!(
-                    "{} {}",
-                    compact_label(&charm.name, 8),
-                    charm_build_tag(charm)
-                ),
-                18
-            )
-        ),
-        CompactCharacterText::Inventory => {
-            let compare = next_weapon_compare_summary(inventory, equipment, damage_bonus);
-            let action = bag_action_summary(stats, inventory, equipment, damage_bonus);
-            format!(
-                "I BAG {}/{}\n{}\n{}",
-                inventory.items.len(),
-                inventory.capacity,
-                compact_label(&compare, 18),
-                compact_label(&action, 20)
-            )
-        }
-        CompactCharacterText::Codex => format!(
-            "K BUILD {}\n{}\n{}",
-            compact_label(
-                &build_archetype_name(equipment, runes).to_ascii_uppercase(),
-                10
-            ),
-            compact_label(
-                &format!(
-                    "{} | {}",
-                    build_score_summary(damage_bonus, equipment, charm, talents, runes),
-                    next_talent_pick_summary(talents)
-                ),
-                20
-            ),
-            compact_label(
-                &format!(
-                    "{} {}/{} {}",
-                    if themed_reliquary_set(equipment, charm).is_some() {
-                        set_tactic
-                    } else {
-                        build_payoff_label(equipment, charm, runes)
-                    },
-                    legendary_codex_power_count(codex),
-                    LegendaryPower::ALL.len(),
-                    if themed_reliquary_set(equipment, charm).is_some() {
-                        ""
-                    } else {
-                        resonance
-                    }
-                ),
-                24
-            )
-        ),
-    }
-}
-
-fn bag_action_summary(
-    stats: &RunStats,
-    inventory: &Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    if inventory.items.len() >= inventory.capacity {
-        let salvageable = salvageable_inventory_count(inventory, equipment, damage_bonus);
-        if let Some(item) = best_inventory_upgrade(inventory, equipment, damage_bonus) {
-            return format!(
-                "FULL U salvage {} / {}",
-                salvageable.max(1),
-                bag_item_action_summary(item, equipment, damage_bonus)
-            );
-        }
-        return format!("FULL U salvage {}", salvageable.max(1));
-    }
-    if let Some(item) = best_inventory_upgrade(inventory, equipment, damage_bonus) {
-        return bag_item_action_summary(item, equipment, damage_bonus);
-    }
-    if let Some(item) = best_inventory_build_piece(inventory, equipment, damage_bonus) {
-        return bag_item_action_summary(item, equipment, damage_bonus);
-    }
-    let salvageable = salvageable_inventory_count(inventory, equipment, damage_bonus);
-    if salvageable > 0 {
-        return format!("U salvage {salvageable}");
-    }
-    loot_pursuit_summary(stats, inventory, equipment)
-}
-
-#[cfg(test)]
-fn inventory_panel_header(
-    stats: &RunStats,
-    inventory: &Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-    potions: &PotionBelt,
-    elixirs: &ElixirBelt,
-    codex: &LegendaryCodex,
-) -> String {
-    let salvageable = salvageable_inventory_count(inventory, equipment, damage_bonus);
-    let full_marker = if inventory.items.len() >= inventory.capacity {
-        " FULL"
-    } else {
-        ""
-    };
+fn inventory_panel_compact_header(stats: &RunStats, inventory: &Inventory) -> String {
     format!(
-        "INVENTORY | I close | [/] equip weapon | ; don best gear | U salvage {} | B codex | O/P armory\n\
-         Bag {}/{}{} | Action {} | {}\n\
-         Gold {} Shards {} Essence {} Echo {} | {} | Elixir V {} G {}/{}",
-        salvageable,
-        inventory.items.len(),
-        inventory.capacity,
-        full_marker,
-        compact_label(
-            &bag_action_summary(stats, inventory, equipment, damage_bonus),
-            34
-        ),
-        compact_label(
-            &next_weapon_compare_summary(inventory, equipment, damage_bonus),
-            48
-        ),
-        stats.gold,
-        stats.ember_shards,
-        stats.affix_essence,
-        stats.echo_keystones,
-        compact_label(
-            &quartermaster_preview_summary(stats, inventory, equipment, potions, elixirs, codex),
-            52
-        ),
-        elixirs.selected.label(),
-        elixirs.current,
-        elixirs.max
-    )
-}
-
-fn inventory_panel_compact_header(
-    stats: &RunStats,
-    inventory: &Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-    potions: &PotionBelt,
-    elixirs: &ElixirBelt,
-    codex: &LegendaryCodex,
-) -> String {
-    format!(
-        "{}/{} SLOTS  ·  {} GOLD  ·  {} SHARDS  ·  POTION {}/{}\n{}  ·  CODEX {}/{}  ·  ELIXIR {} {}/{}",
+        "Inventory slots {}/{}\nGold {}  ·  Ember shards {}",
         inventory.items.len(),
         inventory.capacity,
         stats.gold,
         stats.ember_shards,
-        potions.current,
-        potions.max,
-        compact_label(
-            &bag_action_summary(stats, inventory, equipment, damage_bonus).to_uppercase(),
-            30,
-        ),
-        legendary_codex_power_count(codex),
-        LegendaryPower::ALL.len(),
-        elixirs.selected.label().to_uppercase(),
-        elixirs.current,
-        elixirs.max,
     )
-}
-
-fn bag_item_action_summary(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    format!(
-        "{} {}",
-        inventory_item_action_hint(item, equipment, damage_bonus),
-        compact_label(
-            &inventory_item_action_gain(item, equipment, damage_bonus),
-            11
-        )
-    )
-}
-
-fn inventory_item_action_gain(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    if item.legendary_power != LegendaryPower::None
-        && item.legendary_power != equipment.legendary_power
-    {
-        return item.legendary_power.label().to_string();
-    }
-    if let Some(callout) = inventory_item_callouts(item, equipment, damage_bonus)
-        .into_iter()
-        .find(|callout| {
-            callout.starts_with("socket")
-                || callout.starts_with("temper")
-                || callout.starts_with("weapon")
-                || callout.starts_with("crit")
-                || callout.starts_with("toughness")
-        })
-    {
-        return callout;
-    }
-    let delta = inventory_item_power_delta(item, equipment, damage_bonus);
-    format!("PWR {delta:+.0}")
-}
-
-fn best_inventory_upgrade<'a>(
-    inventory: &'a Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> Option<&'a InventoryItem> {
-    inventory
-        .items
-        .iter()
-        .filter(|item| item.name != equipment.weapon_name)
-        .filter(|item| inventory_item_power_delta(item, equipment, damage_bonus) >= 5.0)
-        .max_by(|left, right| {
-            inventory_item_power_delta(left, equipment, damage_bonus)
-                .total_cmp(&inventory_item_power_delta(right, equipment, damage_bonus))
-        })
-}
-
-fn best_inventory_build_piece<'a>(
-    inventory: &'a Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> Option<&'a InventoryItem> {
-    inventory
-        .items
-        .iter()
-        .filter(|item| item.name != equipment.weapon_name)
-        .filter(|item| {
-            item.legendary_power != LegendaryPower::None
-                && item.legendary_power != equipment.legendary_power
-                || item.socketed_gem.is_some()
-                || item.temper_level > equipment.temper_level
-                || inventory_item_power_delta(item, equipment, damage_bonus) >= -5.0
-        })
-        .max_by(|left, right| {
-            inventory_item_power_delta(left, equipment, damage_bonus)
-                .total_cmp(&inventory_item_power_delta(right, equipment, damage_bonus))
-        })
-}
-
-fn salvageable_inventory_count(
-    inventory: &Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> usize {
-    inventory
-        .items
-        .iter()
-        .filter(|item| item.name != equipment.weapon_name)
-        .filter(|item| inventory_item_decision_reason(item, equipment, damage_bonus) == "SALVAGE")
-        .count()
-}
-
-fn compact_character_border(slot: CompactCharacterText) -> Color {
-    match slot {
-        CompactCharacterText::Weapon => Color::srgba(0.92, 0.62, 0.24, 0.76),
-        CompactCharacterText::Charm => Color::srgba(0.46, 0.72, 0.94, 0.68),
-        CompactCharacterText::Inventory => Color::srgba(0.68, 0.62, 0.48, 0.64),
-        CompactCharacterText::Codex => Color::srgba(0.62, 0.44, 0.90, 0.70),
-    }
 }
 
 fn update_compact_utility_hud(
@@ -12014,10 +8424,12 @@ fn compact_utility_summary(
     match slot {
         CompactUtilityText::Potion => format!("F POT\n{}", potion_utility_state(potions)),
         CompactUtilityText::Elixir => format!(
-            "G ELIX\n{} {}/{}",
-            elixir_utility_state(elixirs, elixir_buff),
-            elixirs.current,
-            elixirs.max
+            "G ELIXIR\n{}",
+            if elixir_seconds_remaining(elixir_buff) > 0.05 {
+                elixir_utility_state(elixirs, elixir_buff)
+            } else {
+                format!("{}/{}", elixirs.current, elixirs.max)
+            }
         ),
         CompactUtilityText::Portal => format!("T PORT\n{}", portal_utility_state(portal)),
         CompactUtilityText::Interact => {
@@ -12079,15 +8491,6 @@ fn main_interact_hint(progress: &ChapterProgress) -> String {
     }
 }
 
-fn compact_utility_border(slot: CompactUtilityText) -> Color {
-    match slot {
-        CompactUtilityText::Potion => Color::srgba(0.90, 0.16, 0.12, 0.72),
-        CompactUtilityText::Elixir => Color::srgba(0.50, 0.82, 0.50, 0.68),
-        CompactUtilityText::Portal => Color::srgba(0.42, 0.58, 0.95, 0.70),
-        CompactUtilityText::Interact => Color::srgba(0.90, 0.72, 0.32, 0.76),
-    }
-}
-
 fn update_gear_slot_frames(gear_frames: &mut GearSlotFrameQuery, open: bool) {
     for (slot, mut border, mut background) in gear_frames {
         if !open {
@@ -12106,45 +8509,25 @@ fn update_gear_slot_frames(gear_frames: &mut GearSlotFrameQuery, open: bool) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_gear_slots(
     gear_slots: &mut GearSlotTextQuery,
     open: bool,
     damage_bonus: &DamageBonus,
-    equipment: &Equipment,
     charm: &Charm,
     codex: &LegendaryCodex,
     armory: &Armory,
-    talents: &Talents,
-    runes: &SkillRunes,
-    resonance: &str,
 ) {
     for (slot, mut text) in gear_slots {
         **text = if open {
             match slot {
-                GearSlotText::Weapon => format!(
-                    "WEAPON · {}\n{}  +{:.0}",
-                    compact_label(&equipment.quality.to_uppercase(), 9),
-                    compact_label(&equipment.weapon_name, 12),
-                    damage_bonus.0,
-                ),
-                GearSlotText::Charm => format!(
-                    "CHARM · {}\n{}  +{:.0}",
-                    compact_label(&charm.quality.to_uppercase(), 9),
-                    compact_label(&charm.name, 12),
-                    charm.damage_bonus,
-                ),
+                GearSlotText::Weapon => format!("Weapon\nDamage bonus +{:.0}", damage_bonus.0),
+                GearSlotText::Charm => format!("Charm\nDamage bonus +{:.0}", charm.damage_bonus),
                 GearSlotText::Codex => format!(
-                    "BUILD · {} PT\n{} · {}",
-                    talents.points,
-                    compact_label(build_archetype_name(equipment, runes), 10),
-                    compact_label(&codex.summary(), 12),
+                    "Legendary powers\n{} / {}",
+                    legendary_codex_power_count(codex),
+                    LegendaryPower::ALL.len()
                 ),
-                GearSlotText::Armory => format!(
-                    "ARMORY · SLOT {}\n{}",
-                    armory.active_slot + 1,
-                    compact_label(resonance, 18),
-                ),
+                GearSlotText::Armory => format!("Equipment set\n{}", armory.active_slot + 1),
             }
         } else {
             String::new()
@@ -12166,28 +8549,39 @@ fn node_under_cursor(
     node.contains_point(*transform, cursor_physical)
 }
 
+#[allow(clippy::type_complexity)]
 fn update_ui_pointer_capture(
     mut capture: ResMut<UiPointerCapture>,
+    buttons: Query<&Interaction, With<Button>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     inventory_open: Res<InventoryOpen>,
     build_open: Res<BuildOpen>,
-    panels: Query<(&ComputedNode, &UiGlobalTransform, &ViewVisibility), With<InventoryPanel>>,
-    build_panels: Query<(&ComputedNode, &UiGlobalTransform, &ViewVisibility), With<BuildPanel>>,
+    journal_open: Res<JournalOpen>,
+    panels: Query<
+        (
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&InventoryPanel>,
+            Option<&BuildPanel>,
+            Option<&JournalText>,
+        ),
+        Or<(With<InventoryPanel>, With<BuildPanel>, With<JournalText>)>,
+    >,
 ) {
-    let mut over_ui = false;
+    let mut over_ui = buttons
+        .iter()
+        .any(|interaction| *interaction != Interaction::None);
     if let Ok(window) = windows.single()
         && let Some(cursor) = cursor_physical_position(window)
     {
-        if inventory_open.open {
-            over_ui |= panels
-                .iter()
-                .any(|(node, transform, _)| node_under_cursor(node, transform, cursor));
-        }
-        if build_open.open {
-            over_ui |= build_panels
-                .iter()
-                .any(|(node, transform, _)| node_under_cursor(node, transform, cursor));
-        }
+        over_ui |= panels
+            .iter()
+            .any(|(node, transform, inventory, build, journal)| {
+                let open = (inventory.is_some() && inventory_open.open)
+                    || (build.is_some() && build_open.open)
+                    || (journal.is_some() && journal_open.open);
+                open && node_under_cursor(node, transform, cursor)
+            });
     }
     if capture.0 != over_ui {
         capture.0 = over_ui;
@@ -12198,6 +8592,7 @@ fn handle_inventory_slot_clicks(
     inventory_open: Res<InventoryOpen>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<InventoryPanel>>,
     slots: Query<(&ComputedNode, &UiGlobalTransform, &InventorySlot)>,
     mut combat_events: MessageWriter<CombatEvent>,
     mut player: Query<
@@ -12216,6 +8611,12 @@ fn handle_inventory_slot_clicks(
     let Some(cursor) = windows.single().ok().and_then(cursor_physical_position) else {
         return;
     };
+    if !panels
+        .iter()
+        .any(|(node, transform)| node_under_cursor(node, transform, cursor))
+    {
+        return;
+    }
     let Ok((mut inventory, mut equipment, mut damage_bonus, mut health)) = player.single_mut()
     else {
         return;
@@ -12262,6 +8663,7 @@ fn handle_paper_doll_clicks(
     inventory_open: Res<InventoryOpen>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<InventoryPanel>>,
     slots: Query<(&ComputedNode, &UiGlobalTransform, &PaperDollSlot)>,
     mut combat_events: MessageWriter<CombatEvent>,
     mut player: Query<(&mut Inventory, &mut Equipment, &mut Health), With<Player>>,
@@ -12272,6 +8674,12 @@ fn handle_paper_doll_clicks(
     let Some(cursor) = windows.single().ok().and_then(cursor_physical_position) else {
         return;
     };
+    if !panels
+        .iter()
+        .any(|(node, transform)| node_under_cursor(node, transform, cursor))
+    {
+        return;
+    }
     let Ok((mut inventory, mut equipment, mut health)) = player.single_mut() else {
         return;
     };
@@ -12312,21 +8720,13 @@ fn update_paper_doll_slots(
             continue;
         }
         if slot.0.is_weapon() {
-            **text = format!(
-                "{}\n+{:.0} DMG",
-                compact_label(&equipment.weapon_name, 11),
-                damage_bonus.0,
-            );
+            **text = format!("{}\nDamage +{:.0}", equipment.weapon_name, damage_bonus.0,);
             text_color.0 = Color::srgb(0.88, 0.82, 0.70);
             continue;
         }
         match equipment.worn_piece(slot.0) {
             Some(item) => {
-                **text = format!(
-                    "{}\n+{:.0} ARM",
-                    compact_label(&item.name, 11),
-                    item.armor_bonus,
-                );
+                **text = format!("{}\nArmor +{:.0}", item.name, item.armor_bonus,);
                 text_color.0 = Color::srgb(0.88, 0.82, 0.70);
             }
             None => {
@@ -12436,64 +8836,11 @@ fn inventory_slot_card_label(
     equipment: &Equipment,
     damage_bonus: &DamageBonus,
 ) -> String {
-    let decision = inventory_item_decision(item, equipment, damage_bonus);
-    let delta = inventory_item_power_delta(item, equipment, damage_bonus);
     format!(
-        "{}\n{}\n{:+.0} PWR",
-        compact_label(decision, 10),
-        compact_label(&item.name, 11),
-        delta,
-    )
-}
-
-#[cfg(test)]
-fn inventory_slot_label(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    let power = if item.legendary_power == LegendaryPower::None {
-        String::new()
-    } else {
-        format!("\n{}", compact_label(item.legendary_power.summary(), 12))
-    };
-    format!(
-        "{} {} | {} | {}\n{}\n+{:.0} dmg {:.0}% crit\n{}{}{}{}{}",
+        "{}\n{}",
         inventory_item_decision(item, equipment, damage_bonus),
-        item.quality,
-        inventory_item_decision_reason(item, equipment, damage_bonus),
-        inventory_item_action_hint(item, equipment, damage_bonus),
-        compact_label(&item.name, 12),
-        item.damage_bonus,
-        item.crit_chance * 100.0,
-        inventory_item_power_delta_label(item, equipment, damage_bonus),
-        inventory_item_callout_line(item, equipment, damage_bonus),
-        compact_bonus_line("+hp", item.health_bonus),
-        compact_bonus_line("+arm", item.armor_bonus),
-        power
+        item.name
     )
-}
-
-fn inventory_item_action_hint(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> &'static str {
-    if item.name == equipment.weapon_name {
-        return "equipped";
-    }
-    match inventory_item_decision_reason(item, equipment, damage_bonus) {
-        "BUILD POWER" if inventory_item_power_delta(item, equipment, damage_bonus) >= 5.0 => {
-            "[ equip power"
-        }
-        "BUILD POWER" => "B codex",
-        "POWER SPIKE" | "DPS GAIN" | "TOUGHNESS" => "[ equip now",
-        "SOCKET" | "TEMPER" => "keep craft",
-        "SWAP BUILD" => "stash swap",
-        "SALVAGE" => "U salvage",
-        _ if inventory_item_power_delta(item, equipment, damage_bonus) >= 5.0 => "[ equip now",
-        _ => "stash inspect",
-    }
 }
 
 fn inventory_item_decision(
@@ -12512,63 +8859,6 @@ fn inventory_item_decision(
     } else {
         "STASH"
     }
-}
-
-fn inventory_item_decision_reason(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> &'static str {
-    if item.name == equipment.weapon_name {
-        return "CURRENT";
-    }
-    if item.legendary_power != LegendaryPower::None
-        && item.legendary_power != equipment.legendary_power
-    {
-        return "BUILD POWER";
-    }
-    let delta = inventory_item_power_delta(item, equipment, damage_bonus);
-    if delta >= 25.0 {
-        return "POWER SPIKE";
-    }
-    if item.damage_bonus - damage_bonus.0 >= 5.0
-        || (item.crit_chance - equipment.crit_chance) * 100.0 >= 5.0
-    {
-        return "DPS GAIN";
-    }
-    if item.health_bonus - equipment.health_bonus + item.armor_bonus - equipment.armor_bonus >= 20.0
-    {
-        return "TOUGHNESS";
-    }
-    if matches!((item.socketed_gem, equipment.socketed_gem), (Some(_), None))
-        || matches!(
-            (item.socketed_gem, equipment.socketed_gem),
-            (Some(item_gem), Some(equipped_gem)) if item_gem.rank > equipped_gem.rank
-        )
-    {
-        return "SOCKET";
-    }
-    if item.temper_level > equipment.temper_level {
-        return "TEMPER";
-    }
-    if delta >= -5.0 {
-        "SWAP BUILD"
-    } else {
-        "SALVAGE"
-    }
-}
-
-#[cfg(test)]
-fn inventory_item_power_delta_label(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    format!(
-        "PWR {:+.0} {}",
-        inventory_item_power_delta(item, equipment, damage_bonus),
-        compare_delta_summary(item, equipment, damage_bonus)
-    )
 }
 
 fn inventory_item_power_delta(
@@ -12617,108 +8907,12 @@ fn inventory_item_power_score(item: &InventoryItem) -> f32 {
         * quality_multiplier
 }
 
-#[cfg(test)]
-fn inventory_item_callout_line(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    let callouts = inventory_item_callouts(item, equipment, damage_bonus);
-    if callouts.is_empty() {
-        String::new()
-    } else {
-        format!("\n{}", callouts.join(" | "))
-    }
-}
-
-fn inventory_item_callouts(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> Vec<String> {
-    let mut callouts = Vec::new();
-    if item.name == equipment.weapon_name {
-        return callouts;
-    }
-    if item.legendary_power != LegendaryPower::None
-        && item.legendary_power != equipment.legendary_power
-    {
-        let prefix = if equipment.legendary_power == LegendaryPower::None {
-            "new power"
-        } else {
-            "power swap"
-        };
-        callouts.push(format!("{prefix} {}", item.legendary_power.label()));
-        callouts.push(item.legendary_power.build_role().to_string());
-    }
-    match (item.socketed_gem, equipment.socketed_gem) {
-        (Some(item_gem), Some(equipped_gem)) if item_gem.rank > equipped_gem.rank => {
-            callouts.push(format!("socket {}", item_gem.label()));
-        }
-        (Some(item_gem), None) => callouts.push(format!("socket {}", item_gem.label())),
-        _ => {}
-    }
-    if item.temper_level > equipment.temper_level {
-        callouts.push(format!(
-            "temper +{}",
-            item.temper_level - equipment.temper_level
-        ));
-    }
-    let damage_delta = item.damage_bonus - damage_bonus.0;
-    if damage_delta >= 5.0 {
-        callouts.push(format!("weapon dmg +{damage_delta:.0}"));
-    }
-    let crit_delta = (item.crit_chance - equipment.crit_chance) * 100.0;
-    if crit_delta >= 5.0 {
-        callouts.push(format!("crit build +{crit_delta:.0}%"));
-    }
-    let toughness_delta =
-        item.health_bonus - equipment.health_bonus + item.armor_bonus - equipment.armor_bonus;
-    if toughness_delta >= 20.0 {
-        callouts.push(format!("toughness +{toughness_delta:.0}"));
-    }
-    callouts
-}
-
 fn inventory_legendary_power_score(power: LegendaryPower) -> f32 {
     if power == LegendaryPower::None {
         0.0
     } else {
         30.0
     }
-}
-
-fn next_weapon_compare_summary(
-    inventory: &Inventory,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    let Some(index) = inventory_swap_index(inventory, &equipment.weapon_name, 1) else {
-        return "No spare weapon".to_string();
-    };
-    let Some(item) = inventory.items.get(index) else {
-        return "No spare weapon".to_string();
-    };
-    format!(
-        "Next {} {} ({})",
-        item.quality,
-        compact_label(&item.name, 18),
-        compare_delta_summary(item, equipment, damage_bonus)
-    )
-}
-
-fn compare_delta_summary(
-    item: &InventoryItem,
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-) -> String {
-    format!(
-        "{:+.0} dmg {:+.0}% crit {:+.0} hp {:+.0} arm",
-        item.damage_bonus - damage_bonus.0,
-        (item.crit_chance - equipment.crit_chance) * 100.0,
-        item.health_bonus - equipment.health_bonus,
-        item.armor_bonus - equipment.armor_bonus
-    )
 }
 
 fn quality_color(quality: &str) -> Color {
@@ -12743,69 +8937,6 @@ fn quality_background(quality: &str) -> Color {
         "set" => Color::srgba(0.026, 0.096, 0.040, 0.90),
         _ => Color::srgba(0.020, 0.024, 0.030, 0.90),
     }
-}
-
-#[cfg(test)]
-fn compact_bonus_line(label: &str, value: f32) -> String {
-    if value <= 0.0 {
-        String::new()
-    } else {
-        format!("\n{} {:.0}", label, value)
-    }
-}
-
-fn weapon_build_tag(
-    equipment: &Equipment,
-    damage_bonus: &DamageBonus,
-    socketed_gem: Option<SocketedGem>,
-) -> String {
-    let mut tags = Vec::new();
-    if damage_bonus.0 >= 24.0 {
-        tags.push("DPS carry".to_string());
-    } else if damage_bonus.0 >= 14.0 {
-        tags.push("DPS ready".to_string());
-    } else {
-        tags.push("builder weapon".to_string());
-    }
-    if equipment.crit_chance >= 0.16 {
-        tags.push("crit build".to_string());
-    }
-    if equipment.health_bonus + equipment.armor_bonus >= 38.0 {
-        tags.push("toughness".to_string());
-    }
-    if equipment.legendary_power != LegendaryPower::None {
-        tags.push(equipment.legendary_power.build_role().to_string());
-    }
-    if let Some(gem) = socketed_gem {
-        tags.push(format!("{} socket", gem.label()));
-    } else if matches!(
-        equipment.quality.as_str(),
-        "legendary" | "ancient" | "primal"
-    ) {
-        tags.push("socket target".to_string());
-    }
-    if equipment.temper_level > 0 {
-        tags.push(format!("temper +{}", equipment.temper_level));
-    }
-    tags.truncate(3);
-    tags.join(" | ")
-}
-
-fn charm_build_tag(charm: &Charm) -> String {
-    let mut tags = Vec::new();
-    if charm.damage_bonus >= 6.0 {
-        tags.push("DPS charm");
-    }
-    if charm.crit_chance >= 0.04 {
-        tags.push("crit charm");
-    }
-    if matches!(charm.quality.as_str(), "legendary" | "ancient" | "primal") {
-        tags.push("resonance piece");
-    }
-    if tags.is_empty() {
-        tags.push("stat filler");
-    }
-    tags.join(" | ")
 }
 
 fn compact_label(text: &str, max_chars: usize) -> String {
@@ -12838,41 +8969,24 @@ fn update_resource_fills(
             node.width = Val::Percent(amount);
             node.height = Val::Px(8.0);
         }
-        match fill {
-            ResourceFill::Health => {
-                color.0 = if health.current <= health.max * 0.30 {
-                    Color::srgba(0.95, 0.02, 0.02, 0.92)
-                } else {
-                    Color::srgba(0.74, 0.03, 0.02, 0.86)
-                };
-            }
-            ResourceFill::Barrier => {
-                color.0 = if barrier.current > 0.0 {
-                    Color::srgba(0.88, 0.72, 0.30, 0.90)
-                } else {
-                    Color::srgba(0.18, 0.12, 0.06, 0.42)
-                };
-            }
-            ResourceFill::Fury => {
-                color.0 = if fury.current >= fury.nova_cost {
-                    Color::srgba(0.08, 0.32, 0.98, 0.88)
-                } else {
-                    Color::srgba(0.04, 0.16, 0.48, 0.74)
-                };
-            }
-        }
+        color.0 = match fill {
+            ResourceFill::Health | ResourceFill::Fury => Color::NONE,
+            ResourceFill::Barrier if barrier.current > 0.0 => Color::srgba(0.88, 0.72, 0.30, 0.90),
+            ResourceFill::Barrier => Color::NONE,
+        };
     }
 }
 
 fn update_resource_orb_frames(
     frames: &mut ResourceOrbFrameQuery,
+    skills: &HudSkills,
     health: &Health,
     barrier: &Barrier,
     fury: &Fury,
     surge: &SurgeBuff,
 ) {
     for (frame, mut border, mut background) in frames {
-        let style = resource_orb_frame_style(*frame, health, barrier, fury, surge);
+        let style = resource_orb_frame_style(*frame, health, barrier, fury, surge, skills);
         *border = BorderColor::all(style.border);
         background.0 = style.background;
     }
@@ -12890,10 +9004,11 @@ fn resource_orb_frame_style(
     barrier: &Barrier,
     fury: &Fury,
     surge: &SurgeBuff,
+    hud_skills: &HudSkills,
 ) -> ResourceOrbFrameStyle {
     match frame {
         ResourceOrbFrame::Health => health_orb_frame_style(health, barrier),
-        ResourceOrbFrame::Fury => fury_orb_frame_style(fury, surge),
+        ResourceOrbFrame::Fury => fury_orb_frame_style(fury, surge, hud_skills),
     }
 }
 
@@ -12927,7 +9042,11 @@ fn health_orb_frame_style(health: &Health, barrier: &Barrier) -> ResourceOrbFram
     }
 }
 
-fn fury_orb_frame_style(fury: &Fury, surge: &SurgeBuff) -> ResourceOrbFrameStyle {
+fn fury_orb_frame_style(
+    fury: &Fury,
+    surge: &SurgeBuff,
+    skills: &HudSkills,
+) -> ResourceOrbFrameStyle {
     if surge_seconds_remaining(surge) > 0.0 {
         return ResourceOrbFrameStyle {
             border: Color::srgba(0.42, 1.0, 0.86, 0.98),
@@ -12940,14 +9059,14 @@ fn fury_orb_frame_style(fury: &Fury, surge: &SurgeBuff) -> ResourceOrbFrameStyle
             background: Color::srgba(0.070, 0.038, 0.010, 0.96),
         };
     }
-    let min_spender = fury.dash_cost.min(fury.rupture_cost).min(fury.nova_cost);
+    let min_spender = skills.min_cost();
     if fury.current + f32::EPSILON < min_spender {
         return ResourceOrbFrameStyle {
             border: Color::srgba(0.72, 0.12, 0.12, 0.88),
             background: Color::srgba(0.036, 0.010, 0.018, 0.95),
         };
     }
-    if fury.current >= fury.nova_cost {
+    if fury.current >= skills.cost[SkillSlot::Area.index()] {
         return ResourceOrbFrameStyle {
             border: Color::srgba(0.24, 0.58, 1.0, 0.96),
             background: Color::srgba(0.006, 0.026, 0.078, 0.96),
@@ -13043,39 +9162,21 @@ fn hud_objective_text(
 
 fn hud_clean_objective_text(
     progress: &ChapterProgress,
-    zone: &ChapterZoneState,
-    player_position: Vec3,
-    live_priority: Option<&str>,
+    _zone: &ChapterZoneState,
+    _player_position: Vec3,
+    _live_priority: Option<&str>,
 ) -> String {
-    let primary = live_priority
-        .map(|priority| compact_label(priority, 22))
-        .unwrap_or_else(|| compact_label(&chapter_next_step(progress), 24));
-    let nav = compact_label(
-        &chapter_navigation_hint(progress, zone, player_position),
-        15,
-    );
-    format!(
-        "{} {}/{} | {} | {}",
-        phase_label(progress.phase),
-        progress.seal_fragments,
-        REQUIRED_SEAL_FRAGMENTS,
-        primary,
-        nav
-    )
+    journal_objective_text(progress)
 }
 
 fn clean_hud_active(
     hud_density: HudDensity,
-    pause: &PauseState,
-    inventory_open: &InventoryOpen,
-    build_open: &BuildOpen,
-    journal_open: &JournalOpen,
+    _pause: &PauseState,
+    _inventory_open: &InventoryOpen,
+    _build_open: &BuildOpen,
+    _journal_open: &JournalOpen,
 ) -> bool {
     hud_density.is_clean()
-        && !pause.paused
-        && !inventory_open.open
-        && !build_open.open
-        && !journal_open.open
 }
 
 fn hud_payoff_label(progress: &ChapterProgress) -> String {
@@ -13195,8 +9296,9 @@ fn chapter_navigation_hint(
     compact_label(zone.current.tactical_hint(), 28)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct ObjectiveCompassDisplay {
+    bearing: Vec2,
     direction: &'static str,
     detail: String,
 }
@@ -13296,6 +9398,10 @@ fn objective_compass_display_for_target(
         direction => direction,
     };
     ObjectiveCompassDisplay {
+        bearing: Vec2::new(
+            target.position.x - player_position.x,
+            target.position.z - player_position.z,
+        ),
         direction,
         detail: format!(
             "{} {:.0}m {}",
@@ -13536,14 +9642,6 @@ fn chapter_phase_payoff(progress: &ChapterProgress) -> String {
     }
 }
 
-fn chapter_zone_summary(zone: &ChapterZoneState) -> String {
-    format!(
-        "Zone {} - {}",
-        zone.current.label(),
-        zone.current.tactical_hint()
-    )
-}
-
 #[cfg(test)]
 fn health_orb_text(
     health: &Health,
@@ -13564,26 +9662,8 @@ fn health_orb_text(
     )
 }
 
-fn health_orb_compact_text(
-    health: &Health,
-    barrier: &Barrier,
-    potions: &PotionBelt,
-    death_ward: &DeathWard,
-) -> String {
-    let ward = if barrier.current > 0.5 {
-        format!("  ·  WARD {:.0}", barrier.current)
-    } else {
-        String::new()
-    };
-    format!(
-        "LIFE\n{:.0} / {:.0}\nPOTION {}/{}{}\nSOUL {}",
-        health.current.max(0.0),
-        health.max,
-        potions.current,
-        potions.max,
-        ward,
-        death_ward.remaining_revives(),
-    )
+fn health_orb_compact_text(health: &Health) -> String {
+    format!("LIFE\n{:.0} / {:.0}", health.current.max(0.0), health.max)
 }
 
 #[cfg(test)]
@@ -13623,118 +9703,60 @@ fn fury_orb_text(
     )
 }
 
-fn fury_orb_compact_text(
-    fury: &Fury,
-    level: &PlayerLevel,
-    paragon: &EmberParagon,
-    stats: &RunStats,
-    readiness: &str,
-) -> String {
+fn fury_orb_compact_text(fury: &Fury, kind: crate::class::ResourceKind) -> String {
     format!(
-        "FURY\n{:.0} / {:.0}\nLEVEL {}  ·  P{}\n{}\n{}g  {}s  {}e",
+        "{}\n{:.0} / {:.0}",
+        kind.label().to_uppercase(),
         fury.current,
-        fury.max,
-        level.level,
-        paragon.rank,
-        compact_label(readiness, 15).to_uppercase(),
-        stats.gold,
-        stats.ember_shards,
-        stats.affix_essence,
+        fury.max
     )
 }
 
-#[cfg(test)]
-fn fury_spend_line(fury: &Fury) -> String {
-    format!(
-        "SPEND RMB{:.0} Q{:.0} E{:.0}",
-        fury.rupture_cost, fury.dash_cost, fury.nova_cost
-    )
+/// The liquid inside the resource orb takes the class resource's colour.
+fn resource_liquid_color(kind: crate::class::ResourceKind) -> Color {
+    match kind {
+        crate::class::ResourceKind::Fury => Color::srgb(0.025, 0.21, 0.65),
+        crate::class::ResourceKind::Malice => Color::srgb(0.02, 0.36, 0.26),
+        crate::class::ResourceKind::Arcana => Color::srgb(0.30, 0.07, 0.60),
+    }
+}
+
+/// Marks the basic-attack and class-skill icon images so they follow the loadout.
+#[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
+struct SkillSlotIcon(SkillSlotText);
+
+/// Marks the coloured liquid inside the class resource orb.
+#[derive(Component)]
+struct ResourceLiquid;
+
+type SkillSlotIconQuery<'w, 's> =
+    Query<'w, 's, (&'static SkillSlotIcon, &'static mut ImageNode), Without<InventorySlotIcon>>;
+
+fn update_skill_icons(icons: &mut SkillSlotIconQuery, assets: &GameAssets, skills: &HudSkills) {
+    for (icon, mut image) in icons {
+        let index = match icon.0 {
+            SkillSlotText::Strike => 0,
+            SkillSlotText::Mobility => 1,
+            SkillSlotText::Area => 2,
+            SkillSlotText::Finisher => 3,
+            SkillSlotText::Surge | SkillSlotText::Evade => continue,
+        };
+        let rect = atlas_rect(
+            UI_SKILL_ICON_CELL,
+            UI_SKILL_ICON_CELL,
+            CLASS_SKILL_ATLAS_COLUMNS,
+            skills.icons[index],
+        );
+        if image.rect != Some(rect) || image.image != assets.ui_class_skill_icons {
+            image.image = assets.ui_class_skill_icons.clone();
+            image.rect = Some(rect);
+        }
+    }
 }
 
 #[cfg(test)]
 fn fury_builder_line(fury: &Fury) -> String {
     format!("BUILD LMB +{:.0}F", fury.basic_gain)
-}
-
-struct CombatReadinessInputs<'a> {
-    health: &'a Health,
-    potions: &'a PotionBelt,
-    fury: &'a Fury,
-    cooldowns: &'a SkillCooldowns,
-    surge: &'a SurgeBuff,
-    evade: &'a Evade,
-    runes: &'a SkillRunes,
-}
-
-fn combat_readiness_summary(inputs: CombatReadinessInputs) -> String {
-    if inputs.health.current <= inputs.health.max * 0.35 {
-        return survival_readiness_summary(inputs.potions, inputs.evade);
-    }
-    let surge_active = surge_seconds_remaining(inputs.surge);
-    if surge_active > 0.0 {
-        return format!("SURGE {:.0}s chain", surge_active.ceil());
-    }
-    if skill_slot_ready(
-        SkillSlotText::Surge,
-        inputs.fury,
-        inputs.cooldowns,
-        inputs.surge,
-        inputs.evade,
-    ) {
-        return "Y Surge burst".to_string();
-    }
-    for (slot, label) in [
-        (
-            SkillSlotText::Rupture,
-            match inputs.runes.rupture {
-                RuptureRune::Expose => "RMB start vuln",
-                RuptureRune::Hemorrhage => "RMB start bleed",
-            },
-        ),
-        (
-            SkillSlotText::Nova,
-            match inputs.runes.nova {
-                NovaRune::Ember => "E Nova burn",
-                NovaRune::Frost => "E Nova freeze",
-            },
-        ),
-        (
-            SkillSlotText::Dash,
-            match inputs.runes.dash {
-                DashRune::Cleanse => "Q Dash cleanse",
-                DashRune::Reap => "Q Dash finish",
-            },
-        ),
-    ] {
-        if skill_slot_ready(
-            slot,
-            inputs.fury,
-            inputs.cooldowns,
-            inputs.surge,
-            inputs.evade,
-        ) {
-            return label.to_string();
-        }
-    }
-    let missing_nova = (inputs.fury.nova_cost - inputs.fury.current).ceil();
-    if missing_nova > 0.0 {
-        return format!("LMB +{missing_nova:.0}F");
-    }
-    "LMB Strike".to_string()
-}
-
-fn survival_readiness_summary(potions: &PotionBelt, evade: &Evade) -> String {
-    let potion_cd = potion_seconds_remaining(potions);
-    if potions.current > 0 && potion_cd <= 0.1 {
-        return "F Potion heal".to_string();
-    }
-    if evade_cooldown_remaining(evade) <= 0.0 {
-        return "Shift Evade".to_string();
-    }
-    if potions.current > 0 {
-        return format!("SURVIVE pot {:.0}s", potion_cd.ceil());
-    }
-    "SURVIVE kite".to_string()
 }
 
 #[cfg(test)]
@@ -13813,10 +9835,12 @@ fn update_skill_frames(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
     feedback: &SkillFeedbackState,
 ) {
     for (frame, mut border, mut background) in skill_frames {
-        let style = skill_slot_frame_style(frame.0, fury, cooldowns, surge, evade, feedback);
+        let style =
+            skill_slot_frame_style(frame.0, fury, cooldowns, surge, evade, skills, feedback);
         *border = BorderColor::all(style.border);
         background.0 = style.background;
     }
@@ -13834,6 +9858,7 @@ fn skill_slot_frame_style(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
     feedback: &SkillFeedbackState,
 ) -> SkillSlotFrameStyle {
     if let Some(pulse) = active_skill_slot_pulse(feedback)
@@ -13842,8 +9867,8 @@ fn skill_slot_frame_style(
         return skill_slot_pulse_style(pulse.kind, slot);
     }
 
-    let ready = skill_slot_ready(slot, fury, cooldowns, surge, evade);
-    let blocked = skill_slot_blocked(slot, fury);
+    let ready = skill_slot_ready(slot, fury, cooldowns, surge, evade, skills);
+    let blocked = skill_slot_blocked(slot, fury, skills);
     let theme = skill_slot_theme(slot);
     if ready {
         SkillSlotFrameStyle {
@@ -13903,15 +9928,15 @@ fn skill_slot_theme(slot: SkillSlotText) -> SkillSlotTheme {
             Color::srgba(0.70, 0.56, 0.36, 0.68),
             Color::srgba(0.052, 0.044, 0.034, 0.92),
         ),
-        SkillSlotText::Rupture => (
+        SkillSlotText::Finisher => (
             Color::srgba(0.78, 0.18, 0.16, 0.70),
             Color::srgba(0.072, 0.022, 0.024, 0.92),
         ),
-        SkillSlotText::Dash => (
+        SkillSlotText::Mobility => (
             Color::srgba(0.52, 0.64, 0.86, 0.70),
             Color::srgba(0.024, 0.038, 0.068, 0.92),
         ),
-        SkillSlotText::Nova => (
+        SkillSlotText::Area => (
             Color::srgba(0.36, 0.62, 0.92, 0.72),
             Color::srgba(0.018, 0.040, 0.078, 0.92),
         ),
@@ -13957,10 +9982,11 @@ fn update_skill_cooldown_masks(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) {
     for (mask, mut node, mut color) in skill_masks {
-        let blocked = skill_slot_blocked(mask.0, fury);
-        let fill = skill_slot_overlay_percent(mask.0, fury, cooldowns, surge, evade);
+        let blocked = skill_slot_blocked(mask.0, fury, skills);
+        let fill = skill_slot_overlay_percent(mask.0, fury, cooldowns, surge, evade, skills);
         node.height = Val::Percent(fill);
         color.0 = if blocked {
             Color::srgba(0.48, 0.02, 0.02, 0.58)
@@ -13976,9 +10002,10 @@ fn update_skill_lamps(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) {
     for (lamp, mut node, mut color) in skill_lamps {
-        let style = skill_slot_lamp_style(lamp.0, fury, cooldowns, surge, evade);
+        let style = skill_slot_lamp_style(lamp.0, fury, cooldowns, surge, evade, skills);
         node.width = Val::Px(style.width);
         color.0 = style.color;
     }
@@ -14006,9 +10033,10 @@ fn skill_slot_lamp_style(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> SkillSlotLampStyle {
-    let state = skill_slot_lamp_state(slot, fury, cooldowns, surge, evade);
-    let progress = skill_slot_lamp_progress(slot, fury, cooldowns, surge, evade);
+    let state = skill_slot_lamp_state(slot, fury, cooldowns, surge, evade, skills);
+    let progress = skill_slot_lamp_progress(slot, fury, cooldowns, surge, evade, skills);
     let width = match state {
         SkillSlotLampState::Ready => 30.0,
         SkillSlotLampState::Active => 36.0,
@@ -14037,6 +10065,7 @@ fn skill_slot_lamp_state(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> SkillSlotLampState {
     if matches!(slot, SkillSlotText::Surge) && surge_seconds_remaining(surge) > 0.0 {
         return SkillSlotLampState::Active;
@@ -14044,10 +10073,10 @@ fn skill_slot_lamp_state(
     if matches!(slot, SkillSlotText::Evade) && evade_seconds_remaining(evade) > 0.0 {
         return SkillSlotLampState::Active;
     }
-    if skill_slot_blocked(slot, fury) {
+    if skill_slot_blocked(slot, fury, skills) {
         return SkillSlotLampState::Starved;
     }
-    if skill_slot_ready(slot, fury, cooldowns, surge, evade) {
+    if skill_slot_ready(slot, fury, cooldowns, surge, evade, skills) {
         return SkillSlotLampState::Ready;
     }
     if matches!(slot, SkillSlotText::Surge) {
@@ -14063,8 +10092,9 @@ fn skill_slot_lamp_progress(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> f32 {
-    match skill_slot_lamp_state(slot, fury, cooldowns, surge, evade) {
+    match skill_slot_lamp_state(slot, fury, cooldowns, surge, evade, skills) {
         SkillSlotLampState::Ready | SkillSlotLampState::Active | SkillSlotLampState::Starved => 1.0,
         SkillSlotLampState::Charging => {
             if surge.max_charge == 0 {
@@ -14074,7 +10104,7 @@ fn skill_slot_lamp_progress(
             }
         }
         SkillSlotLampState::Cooling => {
-            let fill = skill_slot_overlay_percent(slot, fury, cooldowns, surge, evade);
+            let fill = skill_slot_overlay_percent(slot, fury, cooldowns, surge, evade, skills);
             (1.0 - fill / 100.0).clamp(0.0, 1.0)
         }
     }
@@ -14086,15 +10116,16 @@ fn skill_slot_overlay_percent(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> f32 {
-    if skill_slot_blocked(slot, fury) {
+    if skill_slot_blocked(slot, fury, skills) {
         return 100.0;
     }
     match slot {
         SkillSlotText::Strike => timer_percent_remaining(&cooldowns.basic),
-        SkillSlotText::Rupture => timer_percent_remaining(&cooldowns.rupture),
-        SkillSlotText::Dash => timer_percent_remaining(&cooldowns.dash),
-        SkillSlotText::Nova => timer_percent_remaining(&cooldowns.nova),
+        SkillSlotText::Finisher | SkillSlotText::Mobility | SkillSlotText::Area => {
+            timer_percent_remaining(cooldowns.slot(slot.class_slot().expect("class slot")))
+        }
         SkillSlotText::Surge => {
             if surge.max_charge == 0 || surge.charge >= surge.max_charge {
                 0.0
@@ -14127,273 +10158,38 @@ fn skill_slot_ready(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> bool {
     match slot {
         SkillSlotText::Strike => cooldowns.basic.remaining_secs() <= f32::EPSILON,
-        SkillSlotText::Rupture => {
-            cooldowns.rupture.remaining_secs() <= f32::EPSILON && fury.current >= fury.rupture_cost
-        }
-        SkillSlotText::Dash => {
-            cooldowns.dash.remaining_secs() <= f32::EPSILON && fury.current >= fury.dash_cost
-        }
-        SkillSlotText::Nova => {
-            cooldowns.nova.remaining_secs() <= f32::EPSILON && fury.current >= fury.nova_cost
+        SkillSlotText::Finisher | SkillSlotText::Mobility | SkillSlotText::Area => {
+            let class_slot = slot.class_slot().expect("class slot");
+            cooldowns.slot(class_slot).remaining_secs() <= f32::EPSILON
+                && !skill_slot_blocked(slot, fury, skills)
         }
         SkillSlotText::Surge => surge.charge >= surge.max_charge,
         SkillSlotText::Evade => evade_cooldown_remaining(evade) <= 0.0,
     }
 }
 
-fn skill_slot_blocked(slot: SkillSlotText, fury: &Fury) -> bool {
-    match slot {
-        SkillSlotText::Rupture => fury.current < fury.rupture_cost,
-        SkillSlotText::Dash => fury.current < fury.dash_cost,
-        SkillSlotText::Nova => fury.current < fury.nova_cost,
-        _ => false,
-    }
-}
-
-struct CharacterStatusInputs<'a> {
-    level: &'a PlayerLevel,
-    paragon: &'a EmberParagon,
-    equipment: &'a Equipment,
-    elixir_buff: &'a ElixirBuff,
-    death_ward: &'a DeathWard,
-    resonance: &'a str,
-    set_tactic: &'a str,
-    gem_resonance: &'a str,
-    companion: &'a CompanionBond,
-    boss: &'a str,
-}
-
-fn character_status_summary(inputs: CharacterStatusInputs) -> String {
-    let paragon = compact_label(&inputs.paragon.summary().replace("Ember Paragon ", "P"), 12);
-    let power_gem = compact_label(
-        &format!(
-            "{}{}",
-            inputs.equipment.legendary_power.label(),
-            gem_label(inputs.equipment.socketed_gem)
-        ),
-        24,
-    );
-    format!(
-        "L{} {} | Arm {:.0} Ward {} | {} | {} | {} | {} | {} | Boss {}",
-        inputs.level.level,
-        paragon,
-        total_armor(inputs.equipment, inputs.elixir_buff),
-        inputs.death_ward.remaining_revives(),
-        power_gem,
-        compact_label(inputs.resonance, 10),
-        compact_label(inputs.set_tactic, 20),
-        compact_label(inputs.gem_resonance, 10),
-        compact_label(&companion_summary(inputs.companion), 14),
-        compact_label(inputs.boss, 14),
-    )
-}
-
-struct SystemsStatusInputs<'a> {
-    progress: &'a ChapterProgress,
-    stats: &'a RunStats,
-    bounty: &'a BountyProgress,
-    challenges: &'a ChapterChallenges,
-    obelisk: &'a BloodObelisk,
-    rift: &'a EmberRift,
-    modifier: &'a ChapterModifier,
-    zone: &'a ChapterZoneState,
-}
-
-fn systems_status_summary(inputs: SystemsStatusInputs) -> String {
-    let parts = [
-        chapter_route_summary(
-            inputs.progress,
-            inputs.stats,
-            inputs.bounty,
-            inputs.obelisk,
-            inputs.rift,
-        ),
-        chapter_zone_summary(inputs.zone),
-        modifier_system_summary(inputs.modifier),
-        bounty_summary(inputs.bounty),
-        challenge_summary(inputs.challenges),
-        obelisk_summary(inputs.obelisk),
-        rift_summary(inputs.rift),
-        massacre_summary(inputs.stats),
-        valor_summary(inputs.stats),
-        reliquary_momentum_summary(inputs.stats),
-        pylon_reaper_summary(inputs.stats),
-        breaker_summary(inputs.stats),
-        affix_hunter_summary(inputs.stats),
-        affix_codex_summary(inputs.stats),
-        champion_pack_summary(inputs.stats),
-        nemesis_hunter_summary(inputs.stats),
-        treasure_vault_summary(inputs.stats).to_string(),
-        ashen_threat_summary(inputs.stats),
-        rune_weaver_summary(inputs.stats),
-        armory_adept_summary(inputs.stats),
-        portal_wayfarer_summary(inputs.stats).to_string(),
-        glory_seeker_summary(inputs.stats),
-        last_stand_summary(inputs.stats),
-        cursed_pact_summary(inputs.stats),
-        shrine_resonance_summary(inputs.stats).to_string(),
-        ashen_alchemy_summary(inputs.stats),
-        loot_curator_summary(inputs.stats),
-        codex_adept_summary(inputs.stats),
-        set_adept_summary(inputs.stats),
-        gem_adept_summary(inputs.stats),
-    ];
-    compact_label(&parts.join(" | "), 112)
-}
-
-fn modifier_system_summary(modifier: &ChapterModifier) -> String {
-    let tactic = ordeal_tactic(modifier);
-    if tactic.is_empty() {
-        format!("Ordeal {} ({})", modifier.label(), modifier.summary())
-    } else {
-        format!(
-            "Ordeal {} ({}) - tactic {}",
-            modifier.label(),
-            modifier.summary(),
-            tactic
-        )
-    }
-}
-
-struct PauseHelpInputs<'a> {
-    progress: &'a ChapterProgress,
-    difficulty: &'a DifficultySettings,
-    modifier: &'a ChapterModifier,
-    stats: &'a RunStats,
-    journey: &'a str,
-    clear_summary: &'a str,
-    season_deeds: &'a str,
-    bestiary_goal: &'a str,
-    codex_goal: &'a str,
-    crafting_goal: &'a str,
-    mastery_goal: &'a str,
-    story: &'a StoryLog,
-    quest_log: &'a str,
-    action_guide: &'a str,
-    detailed_status: &'a str,
-    systems_status: &'a str,
-    inventory_open: bool,
-    journal_open: bool,
-    audio_status: &'a str,
-}
-
-fn pause_help_text(inputs: PauseHelpInputs) -> String {
-    pause_help_lines(inputs).join("\n")
-}
-
-fn pause_help_lines(inputs: PauseHelpInputs) -> Vec<String> {
-    let run_summary = format!(
-        "{} {} | {} | {}",
-        inputs.difficulty.current.label(),
-        chapter_rating(
-            inputs.difficulty.current,
-            inputs.stats.elapsed_secs,
-            inputs.stats.kills,
-        ),
-        inputs.modifier.label(),
-        inputs.clear_summary,
-    );
-    let goals_summary = format!(
-        "{} | {} | {}",
-        compact_label(inputs.codex_goal, 38),
-        compact_label(inputs.mastery_goal, 38),
-        compact_label(inputs.crafting_goal, 38),
-    );
-    let collection_summary = format!(
-        "{} | {} | {}",
-        compact_label(inputs.season_deeds, 38),
-        compact_label(inputs.bestiary_goal, 38),
-        compact_label(inputs.journey, 38),
-    );
-    let activity_summary = format!(
-        "{} | {} | {}",
-        compact_label(inputs.systems_status, 62),
-        compact_label(&renown_run_summary(inputs.stats), 18),
-        compact_label(&stash_run_summary(inputs.stats), 52),
-    );
-
-    vec![
-        "PAUSED | Esc resume | F5 save | F9 load".to_string(),
-        format!(
-            "Objective: {} - {} | {} | Seals {}/{}",
-            inputs.progress.title,
-            phase_label(inputs.progress.phase),
-            compact_label(&inputs.progress.objective, 48),
-            inputs.progress.seal_fragments,
-            REQUIRED_SEAL_FRAGMENTS,
-        ),
-        "Combat: WASD move | LMB/RMB attack | Q/E skills | Shift evade | Y surge | Space interact"
-            .to_string(),
-        "Build: K talents | 1/2/3 invest | Z/X/C runes | B codex | [/] equip | U salvage | O/P armory"
-            .to_string(),
-        format!("Now: {}", compact_label(inputs.action_guide, 112)),
-        format!("Quest: {}", compact_label(inputs.quest_log, 112)),
-        format!("Character: {}", compact_label(inputs.detailed_status, 112)),
-        format!("Run: {}", compact_label(&run_summary, 128)),
-        format!("Goals: {}", goals_summary),
-        format!("Collection: {}", collection_summary),
-        format!("Activity: {}", activity_summary),
-        format!(
-            "Story: {}",
-            compact_label(&story_summary(inputs.story), 112)
-        ),
-        format!(
-            "Panels: Inventory {} | Journal {} | Audio: {} (M) | N/H sentinel | T town portal | F potion",
-            open_state_label(inputs.inventory_open),
-            open_state_label(inputs.journal_open),
-            inputs.audio_status,
-        ),
-    ]
-}
-
-fn open_state_label(open: bool) -> &'static str {
-    if open { "open" } else { "closed" }
+/// Locked or unaffordable: the slot cannot fire no matter the cooldown.
+fn skill_slot_blocked(slot: SkillSlotText, fury: &Fury, skills: &HudSkills) -> bool {
+    let Some(class_slot) = slot.class_slot() else {
+        return false;
+    };
+    let index = class_slot.index();
+    skills.locked_until[index].is_some() || fury.current < skills.cost[index]
 }
 
 fn skill_slot_summary(
     slot: SkillSlotText,
     fury: &Fury,
     cooldowns: &SkillCooldowns,
-    runes: &SkillRunes,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> String {
-    format!(
-        "{} {}\n{}\n{}\n{}",
-        skill_slot_keycap(slot),
-        skill_slot_name(slot),
-        skill_slot_state(slot, fury, cooldowns, surge, evade),
-        skill_slot_meter_label(slot, fury, cooldowns, surge, evade),
-        skill_slot_footer(slot, fury, runes, surge, evade),
-    )
-}
-
-fn skill_slot_footer(
-    slot: SkillSlotText,
-    fury: &Fury,
-    runes: &SkillRunes,
-    surge: &SurgeBuff,
-    evade: &Evade,
-) -> String {
-    format!(
-        "{} {}",
-        skill_slot_cost_label(slot, fury),
-        skill_slot_role_short(slot, runes, surge, evade)
-    )
-}
-
-fn skill_slot_cost_label(slot: SkillSlotText, fury: &Fury) -> String {
-    match slot {
-        SkillSlotText::Strike => format!("+{:.0}F", fury.basic_gain),
-        SkillSlotText::Rupture => format!("-{:.0}F", fury.rupture_cost),
-        SkillSlotText::Dash => format!("-{:.0}F", fury.dash_cost),
-        SkillSlotText::Nova => format!("-{:.0}F", fury.nova_cost),
-        SkillSlotText::Surge => "CHARGE".to_string(),
-        SkillSlotText::Evade => "IFRAME".to_string(),
-    }
+    skill_slot_state(slot, fury, cooldowns, surge, evade, skills)
 }
 
 fn skill_slot_keycap(slot: SkillSlotText) -> &'static str {
@@ -14412,9 +10208,9 @@ fn skill_slot_keycap_font_size(slot: SkillSlotText) -> f32 {
 fn skill_slot_glyph(slot: SkillSlotText) -> &'static str {
     match slot {
         SkillSlotText::Strike => "/",
-        SkillSlotText::Rupture => "X",
-        SkillSlotText::Dash => ">>",
-        SkillSlotText::Nova => "O",
+        SkillSlotText::Finisher => "X",
+        SkillSlotText::Mobility => ">>",
+        SkillSlotText::Area => "O",
         SkillSlotText::Surge => "!",
         SkillSlotText::Evade => "S",
     }
@@ -14423,7 +10219,7 @@ fn skill_slot_glyph(slot: SkillSlotText) -> &'static str {
 #[cfg(test)]
 fn skill_slot_glyph_font_size(slot: SkillSlotText) -> f32 {
     match slot {
-        SkillSlotText::Dash => 21.0,
+        SkillSlotText::Mobility => 21.0,
         SkillSlotText::Surge => 26.0,
         _ => 24.0,
     }
@@ -14433,22 +10229,11 @@ fn skill_slot_glyph_font_size(slot: SkillSlotText) -> f32 {
 fn skill_slot_glyph_color(slot: SkillSlotText) -> Color {
     match slot {
         SkillSlotText::Strike => Color::srgb(0.94, 0.78, 0.46),
-        SkillSlotText::Rupture => Color::srgb(1.0, 0.32, 0.22),
-        SkillSlotText::Dash => Color::srgb(0.54, 0.72, 1.0),
-        SkillSlotText::Nova => Color::srgb(0.36, 0.82, 1.0),
+        SkillSlotText::Finisher => Color::srgb(1.0, 0.32, 0.22),
+        SkillSlotText::Mobility => Color::srgb(0.54, 0.72, 1.0),
+        SkillSlotText::Area => Color::srgb(0.36, 0.82, 1.0),
         SkillSlotText::Surge => Color::srgb(1.0, 0.70, 0.22),
         SkillSlotText::Evade => Color::srgb(0.50, 1.0, 0.62),
-    }
-}
-
-fn skill_slot_name(slot: SkillSlotText) -> &'static str {
-    match slot {
-        SkillSlotText::Strike => "STRIKE",
-        SkillSlotText::Rupture => "RUPTURE",
-        SkillSlotText::Dash => "DASH",
-        SkillSlotText::Nova => "NOVA",
-        SkillSlotText::Surge => "SURGE",
-        SkillSlotText::Evade => "EVADE",
     }
 }
 
@@ -14458,21 +10243,32 @@ fn skill_slot_state(
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
     evade: &Evade,
+    skills: &HudSkills,
 ) -> String {
-    if skill_slot_blocked(slot, fury) {
-        return skill_slot_blocked_label(slot, fury);
+    if let Some(level) = slot
+        .class_slot()
+        .and_then(|class_slot| skills.locked_until[class_slot.index()])
+    {
+        return format!("Lv {level}");
+    }
+    if skill_slot_blocked(slot, fury, skills) {
+        return "Unavailable".to_string();
     }
     match slot {
         SkillSlotText::Strike => cooldown_state_label(cooldowns.basic.remaining_secs()),
-        SkillSlotText::Rupture => cooldown_state_label(cooldowns.rupture.remaining_secs()),
-        SkillSlotText::Dash => cooldown_state_label(cooldowns.dash.remaining_secs()),
-        SkillSlotText::Nova => cooldown_state_label(cooldowns.nova.remaining_secs()),
+        SkillSlotText::Finisher | SkillSlotText::Mobility | SkillSlotText::Area => {
+            cooldown_state_label(
+                cooldowns
+                    .slot(slot.class_slot().expect("class slot"))
+                    .remaining_secs(),
+            )
+        }
         SkillSlotText::Surge => {
             let active = surge_seconds_remaining(surge);
             if active > 0.0 {
                 format!("ACTIVE {active:.0}s")
             } else if surge.charge >= surge.max_charge {
-                "READY".to_string()
+                String::new()
             } else {
                 format!("CHARGE {}/{}", surge.charge, surge.max_charge)
             }
@@ -14488,101 +10284,11 @@ fn skill_slot_state(
     }
 }
 
-fn skill_slot_blocked_label(slot: SkillSlotText, fury: &Fury) -> String {
-    let missing = match slot {
-        SkillSlotText::Rupture => fury.rupture_cost - fury.current,
-        SkillSlotText::Dash => fury.dash_cost - fury.current,
-        SkillSlotText::Nova => fury.nova_cost - fury.current,
-        _ => 0.0,
-    };
-    format!("NEED {:.0}F", missing.max(1.0).ceil())
-}
-
-fn skill_slot_meter_label(
-    slot: SkillSlotText,
-    fury: &Fury,
-    cooldowns: &SkillCooldowns,
-    surge: &SurgeBuff,
-    evade: &Evade,
-) -> String {
-    if let Some(required) = skill_slot_required_fury(slot, fury)
-        && fury.current < required
-    {
-        return format!("FURY {}", skill_meter_bar(percent(fury.current, required)));
-    }
-
-    match slot {
-        SkillSlotText::Strike => {
-            let remaining = timer_percent_remaining(&cooldowns.basic);
-            let label = if remaining <= 0.0 { "RDY" } else { "CD" };
-            format!("{} {}", label, skill_meter_bar(100.0 - remaining))
-        }
-        SkillSlotText::Rupture => skill_cooldown_meter(&cooldowns.rupture),
-        SkillSlotText::Dash => skill_cooldown_meter(&cooldowns.dash),
-        SkillSlotText::Nova => skill_cooldown_meter(&cooldowns.nova),
-        SkillSlotText::Surge => {
-            let active = surge_seconds_remaining(surge);
-            if active > 0.0 {
-                format!(
-                    "BUFF {}",
-                    skill_meter_bar(percent(active, surge.duration_secs))
-                )
-            } else {
-                format!(
-                    "CHG {}",
-                    skill_meter_bar(percent(surge.charge as f32, surge.max_charge as f32))
-                )
-            }
-        }
-        SkillSlotText::Evade => {
-            let active = evade_seconds_remaining(evade);
-            if active > 0.0 {
-                format!(
-                    "IFRM {}",
-                    skill_meter_bar(percent(active, evade.active.duration().as_secs_f32()))
-                )
-            } else {
-                let remaining = skill_slot_overlay_percent(slot, fury, cooldowns, surge, evade);
-                let label = if remaining <= 0.0 { "RDY" } else { "CD" };
-                format!("{} {}", label, skill_meter_bar(100.0 - remaining))
-            }
-        }
-    }
-}
-
-fn skill_slot_required_fury(slot: SkillSlotText, fury: &Fury) -> Option<f32> {
-    match slot {
-        SkillSlotText::Rupture => Some(fury.rupture_cost),
-        SkillSlotText::Dash => Some(fury.dash_cost),
-        SkillSlotText::Nova => Some(fury.nova_cost),
-        SkillSlotText::Strike | SkillSlotText::Surge | SkillSlotText::Evade => None,
-    }
-}
-
-fn skill_cooldown_meter(timer: &Timer) -> String {
-    let remaining = timer_percent_remaining(timer);
-    let label = if remaining <= 0.0 { "RDY" } else { "CD" };
-    format!("{} {}", label, skill_meter_bar(100.0 - remaining))
-}
-
-fn skill_meter_bar(percent_full: f32) -> String {
-    const SEGMENTS: usize = 6;
-    let filled = ((percent_full.clamp(0.0, 100.0) / 100.0) * SEGMENTS as f32)
-        .round()
-        .clamp(0.0, SEGMENTS as f32) as usize;
-    let mut bar = String::from("[");
-    for index in 0..SEGMENTS {
-        bar.push(if index < filled { '#' } else { '-' });
-    }
-    bar.push(']');
-    bar
-}
-
 fn cooldown_state_label(seconds: f32) -> String {
     if seconds <= 0.05 {
-        "READY".to_string()
+        String::new()
     } else {
-        format!("CD {seconds:.1}s")
+        format!("{seconds:.1}s")
     }
 }
 
@@ -14595,15 +10301,15 @@ fn skill_slot_tactic(
 ) -> &'static str {
     match slot {
         SkillSlotText::Strike => "FURY BUILDER",
-        SkillSlotText::Rupture => match runes.rupture {
+        SkillSlotText::Finisher => match runes.rupture {
             RuptureRune::Expose => "START VULN",
             RuptureRune::Hemorrhage => "START BLEED",
         },
-        SkillSlotText::Dash => match runes.dash {
+        SkillSlotText::Mobility => match runes.dash {
             DashRune::Cleanse => "FINISH CLEANSE",
             DashRune::Reap => "FINISH REAP",
         },
-        SkillSlotText::Nova => match runes.nova {
+        SkillSlotText::Area => match runes.nova {
             NovaRune::Ember => "FINISH BURN",
             NovaRune::Frost => "FINISH FREEZE",
         },
@@ -14621,45 +10327,6 @@ fn skill_slot_tactic(
                 "I-FRAME NOW"
             } else {
                 "DODGE HITS"
-            }
-        }
-    }
-}
-
-fn skill_slot_role_short(
-    slot: SkillSlotText,
-    runes: &SkillRunes,
-    surge: &SurgeBuff,
-    evade: &Evade,
-) -> &'static str {
-    match slot {
-        SkillSlotText::Strike => "BUILD FURY",
-        SkillSlotText::Rupture => match runes.rupture {
-            RuptureRune::Expose => "START VULN",
-            RuptureRune::Hemorrhage => "START BLEED",
-        },
-        SkillSlotText::Dash => match runes.dash {
-            DashRune::Cleanse => "FINISH CLEANSE",
-            DashRune::Reap => "FINISH REAP",
-        },
-        SkillSlotText::Nova => match runes.nova {
-            NovaRune::Ember => "FINISH BURN",
-            NovaRune::Frost => "FINISH FREEZE",
-        },
-        SkillSlotText::Surge => {
-            if surge_seconds_remaining(surge) > 0.0 {
-                "DAMAGE WINDOW"
-            } else if surge.charge >= surge.max_charge {
-                "BOSS BURST"
-            } else {
-                "KILL CHARGE"
-            }
-        }
-        SkillSlotText::Evade => {
-            if evade_seconds_remaining(evade) > 0.0 {
-                "I-FRAME NOW"
-            } else {
-                "DODGE HIT"
             }
         }
     }
@@ -14690,230 +10357,6 @@ fn despawn_hud(mut commands: Commands, query: Query<Entity, (With<HudUi>, Withou
     for entity in &query {
         queue_safe_despawn(commands.reborrow(), entity);
     }
-}
-
-fn update_minimap(
-    mut commands: Commands,
-    progress: Res<ChapterProgress>,
-    map: Query<Entity, With<MinimapUi>>,
-    dots: Query<Entity, With<MinimapDot>>,
-    mut objective_text: Query<&mut Text, With<MinimapObjectiveText>>,
-    queries: MinimapQueries,
-) {
-    let Ok(map_entity) = map.single() else {
-        return;
-    };
-    let (player, enemies, loot, health_globes, fury_globes, interactables) = queries;
-    let Ok(player_transform) = player.single() else {
-        return;
-    };
-    let center = player_transform.translation;
-
-    for mut text in &mut objective_text {
-        **text = minimap_objective_line(&progress);
-    }
-    for entity in &dots {
-        queue_safe_despawn(commands.reborrow(), entity);
-    }
-
-    for transform in &loot {
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            center,
-            4.0,
-            Color::srgb(0.95, 0.72, 0.18),
-        );
-    }
-    for transform in &health_globes {
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            center,
-            4.5,
-            Color::srgb(1.0, 0.08, 0.12),
-        );
-    }
-    for transform in &fury_globes {
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            center,
-            4.2,
-            Color::srgb(0.18, 0.58, 1.0),
-        );
-    }
-    for (transform, interactable) in &interactables {
-        if interactable.used {
-            continue;
-        }
-        let role = minimap_interactable_role(&progress, interactable.kind);
-        let (size, color) = minimap_interactable_style(role);
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            center,
-            size,
-            color,
-        );
-    }
-    for (transform, enemy) in &enemies {
-        let (size, color) = minimap_enemy_style(enemy);
-        spawn_minimap_dot(
-            &mut commands,
-            map_entity,
-            transform.translation,
-            center,
-            size,
-            color,
-        );
-    }
-    spawn_minimap_dot(
-        &mut commands,
-        map_entity,
-        center,
-        center,
-        7.0,
-        Color::srgb(0.20, 0.92, 0.46),
-    );
-}
-
-fn update_objective_compass_hud(
-    progress: Res<ChapterProgress>,
-    player: Query<&Transform, With<Player>>,
-    enemies: Query<(&Transform, &Enemy, &Health)>,
-    interactables: Query<(&Transform, &Interactable)>,
-    mut panels: Query<&mut Node, With<ObjectiveCompassPanel>>,
-    mut texts: Query<(&mut Text, &ObjectiveCompassText)>,
-) {
-    let display = player.single().ok().and_then(|transform| {
-        objective_compass_display_from_targets(
-            &progress,
-            transform.translation,
-            enemies
-                .iter()
-                .map(|(transform, enemy, health)| ObjectiveCompassEnemyTarget {
-                    id: enemy.id.as_str(),
-                    current_health: health.current,
-                    position: transform.translation,
-                }),
-            interactables.iter().map(|(transform, interactable)| {
-                ObjectiveCompassInteractableTarget {
-                    kind: interactable.kind,
-                    used: interactable.used,
-                    reusable: interactable.reusable,
-                    position: transform.translation,
-                }
-            }),
-        )
-    });
-
-    let panel_display = if display.is_some() {
-        Display::Flex
-    } else {
-        Display::None
-    };
-    for mut panel in &mut panels {
-        panel.display = panel_display;
-    }
-
-    for (mut text, slot) in &mut texts {
-        **text = match (display.as_ref(), slot) {
-            (Some(display), ObjectiveCompassText::Direction) => display.direction.to_string(),
-            (Some(display), ObjectiveCompassText::Detail) => display.detail.clone(),
-            (None, _) => String::new(),
-        };
-    }
-}
-
-fn minimap_enemy_style(enemy: &Enemy) -> (f32, Color) {
-    if enemy.id == "keeper" {
-        return (9.8, Color::srgb(0.86, 0.10, 1.0));
-    }
-    if enemy.id == "treasure_imp" {
-        return (8.0, Color::srgb(1.0, 0.82, 0.18));
-    }
-    if enemy.affixes.len() >= 2 {
-        (7.8, Color::srgb(1.0, 0.36, 0.04))
-    } else if !enemy.affixes.is_empty() {
-        (6.8, Color::srgb(1.0, 0.52, 0.12))
-    } else {
-        (5.0, Color::srgb(0.92, 0.16, 0.10))
-    }
-}
-
-fn minimap_objective_line(progress: &ChapterProgress) -> String {
-    format!(
-        "{} | {}",
-        phase_label(progress.phase),
-        compact_label(&progress.objective, 30)
-    )
-}
-
-fn minimap_legend_entries() -> [(MinimapLegendRole, &'static str); 6] {
-    [
-        (MinimapLegendRole::Player, "You"),
-        (MinimapLegendRole::Main, "Main"),
-        (MinimapLegendRole::Loot, "Loot"),
-        (MinimapLegendRole::Life, "Life"),
-        (MinimapLegendRole::Fury, "Fury"),
-        (MinimapLegendRole::Threat, "Threat"),
-    ]
-}
-
-fn minimap_legend_color(role: MinimapLegendRole) -> Color {
-    match role {
-        MinimapLegendRole::Player => Color::srgb(0.20, 0.92, 0.46),
-        MinimapLegendRole::Main => Color::srgb(0.15, 0.72, 1.0),
-        MinimapLegendRole::Loot => Color::srgb(0.95, 0.72, 0.18),
-        MinimapLegendRole::Life => Color::srgb(1.0, 0.08, 0.12),
-        MinimapLegendRole::Fury => Color::srgb(0.18, 0.58, 1.0),
-        MinimapLegendRole::Threat => Color::srgb(1.0, 0.36, 0.04),
-    }
-}
-
-fn spawn_minimap_dot(
-    commands: &mut Commands,
-    map_entity: Entity,
-    world_position: Vec3,
-    center: Vec3,
-    size: f32,
-    color: Color,
-) {
-    let position = minimap_position(world_position, center);
-    let Ok(mut map_entity_commands) = commands.get_entity(map_entity) else {
-        return;
-    };
-    map_entity_commands.with_children(|map| {
-        map.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(position.x - size * 0.5),
-                top: Val::Px(position.y - size * 0.5),
-                width: Val::Px(size),
-                height: Val::Px(size),
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundColor(color),
-            MinimapDot,
-        ));
-    });
-}
-
-fn minimap_position(world_position: Vec3, center: Vec3) -> Vec2 {
-    let x =
-        (0.5 + (world_position.x - center.x) / (MINIMAP_VISIBLE_RADIUS_X * 2.0)).clamp(0.0, 1.0);
-    let z =
-        (0.5 + (world_position.z - center.z) / (MINIMAP_VISIBLE_RADIUS_Z * 2.0)).clamp(0.0, 1.0);
-    Vec2::new(
-        MINIMAP_MAP_LEFT + x * (MINIMAP_WIDTH - MINIMAP_MAP_LEFT - MINIMAP_MAP_RIGHT),
-        MINIMAP_MAP_TOP + z * (MINIMAP_HEIGHT - MINIMAP_MAP_TOP - MINIMAP_MAP_BOTTOM),
-    )
 }
 
 fn is_objective_interactable(progress: &ChapterProgress, kind: InteractableKind) -> bool {
@@ -14986,6 +10429,12 @@ fn minimap_interactable_style(role: MinimapInteractableRole) -> (f32, Color) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn hud_queries_initialize_without_component_access_conflicts() {
+        let mut world = World::new();
+        let _queries = bevy::ecs::system::SystemState::<HudQueryParams>::new(&mut world);
+    }
 
     fn test_health(current: f32, max: f32) -> Health {
         Health { current, max }
@@ -15169,20 +10618,6 @@ mod tests {
             story.record(*beat);
         }
         story
-    }
-
-    #[test]
-    fn level_up_banner_copy_surfaces_level_and_talent_points() {
-        assert_eq!(level_up_banner_copy(1, 0, 1, 0), None);
-        assert_eq!(
-            level_up_banner_copy(2, 1, 1, 0),
-            Some("LEVEL 2\n1 talent point available - K then 1/2/3".to_string())
-        );
-        assert_eq!(
-            level_up_banner_copy(2, 2, 2, 1),
-            Some("2 talent point available - K then 1/2/3".to_string())
-        );
-        assert_eq!(level_up_banner_copy(2, 0, 2, 1), None);
     }
 
     #[test]
@@ -15493,6 +10928,17 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_panel_does_not_enable_diagnostic_hud_text() {
+        assert!(clean_hud_active(
+            HudDensity::Clean,
+            &PauseState { paused: true },
+            &InventoryOpen { open: true },
+            &BuildOpen { open: true },
+            &JournalOpen { open: true },
+        ));
+    }
+
+    #[test]
     fn clean_hud_objective_text_keeps_only_actionable_route_state() {
         let progress = ChapterProgress {
             phase: ChapterPhase::Ritual,
@@ -15507,850 +10953,12 @@ mod tests {
         let text =
             hud_clean_objective_text(&progress, &zone, Vec3::ZERO, Some("NOW rift 4/8 Echo"));
 
-        assert!(text.starts_with("Ritual 2/3"));
-        assert!(text.contains("NOW rift"));
-        assert!(text.contains("Altar"));
+        assert_eq!(text, "Extinguish the ember altar");
+        assert!(!text.contains("NOW rift"));
         assert!(!text.contains("Q73%"));
         assert!(!text.contains("Final seal"));
         assert!(!text.contains("Action Guide"));
         assert!(text.chars().count() <= 64, "{text}");
-    }
-
-    #[test]
-    fn action_belt_summary_concentrates_core_arpg_state_at_bottom() {
-        let health = test_health(34.0, 120.0);
-        let barrier = Barrier {
-            current: 18.0,
-            max: 40.0,
-        };
-        let fury = test_fury(80.0);
-        let cooldowns = SkillCooldowns {
-            dash: test_timer(5.0, 0.0),
-            nova: test_timer(8.0, 0.0),
-            rupture: test_timer(3.8, 0.0),
-            basic: test_timer(0.34, 0.0),
-            dash_base: 5.0,
-            nova_base: 8.0,
-            rupture_base: 3.8,
-            basic_base: 0.34,
-        };
-        let surge = test_surge(9, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Ember,
-            rupture: RuptureRune::Expose,
-        };
-        let talents = Talents::default();
-        let mut equipment = test_equipment("rare");
-        equipment.weapon_name = "Iron Fang".to_string();
-        let damage_bonus = DamageBonus(10.0);
-        let inventory = Inventory {
-            items: vec![
-                InventoryItem {
-                    name: "Cracked Fang".to_string(),
-                    quality: "common".to_string(),
-                    damage_bonus: 1.0,
-                    crit_chance: 0.0,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::None,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-                InventoryItem {
-                    name: "Stormcall Edge".to_string(),
-                    quality: "legendary".to_string(),
-                    damage_bonus: 18.0,
-                    crit_chance: 0.12,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::Stormbrand,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-            ],
-            capacity: 2,
-        };
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Sanctum,
-            ..default()
-        };
-        let rift = EmberRift {
-            state: RiftState::Active,
-            kills: 4,
-            target_kills: crate::rift::RIFT_TARGET_KILLS,
-            remaining_secs: crate::rift::RIFT_SWIFT_SEAL_SECS,
-            ..default()
-        };
-        let boon = ChapterBoon::default();
-
-        let text = action_belt_summary(ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &RunStats::default(),
-            progress: &progress,
-            bounty: &BountyProgress::default(),
-            obelisk: &BloodObelisk::default(),
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        });
-
-        assert!(text.starts_with("HP! 34/120 +18"));
-        assert!(text.contains("Fury 80/100 spend RMB/Q/E/Y"));
-        assert!(text.contains("F 2/5"));
-        assert!(text.contains("Next F heal"));
-        assert!(text.contains("Combo F -> Shift"));
-        assert!(text.contains("Bag 2/2 FULL"));
-        assert!(text.contains("0g"));
-        assert!(text.contains("NOW rift 4/6 Echo"));
-        assert_eq!(text.lines().count(), 1);
-        assert!(text.len() <= 166, "{text}");
-        assert!(!text.contains("BELT"));
-        assert!(!text.contains("ward"));
-    }
-
-    #[test]
-    fn clean_action_belt_keeps_bottom_skills_visible_without_text_wall() {
-        let health = test_health(72.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let fury = test_fury(64.0);
-        let cooldowns = test_cooldowns();
-        let evade = test_evade(0.0, 0.0);
-        let surge = test_surge(5, 0.0);
-        let potions = test_potions(3, 0.0);
-        let inventory = Inventory {
-            items: vec![InventoryItem {
-                name: "Moonforged Cleaver".to_string(),
-                quality: "rare".to_string(),
-                damage_bonus: 9.0,
-                crit_chance: 0.0,
-                health_bonus: 0.0,
-                armor_bonus: 0.0,
-                legendary_power: LegendaryPower::None,
-                temper_level: 0,
-                socketed_gem: None,
-                slot: GearSlot::Weapon,
-            }],
-            capacity: 12,
-        };
-        let equipment = test_equipment("common");
-        let damage_bonus = DamageBonus(0.0);
-        let runes = SkillRunes::default();
-        let talents = Talents::default();
-        let stats = RunStats {
-            gold: 140,
-            ..default()
-        };
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Cache,
-            seal_fragments: 1,
-            ..default()
-        };
-        let text = action_belt_clean_summary(ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &ChapterBoon::default(),
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &BountyProgress::default(),
-            obelisk: &BloodObelisk::default(),
-            rift: &EmberRift::default(),
-            combo: None,
-            target_info: None,
-        });
-
-        assert!(text.starts_with("HP 72/120 | Fury 64/100"));
-        assert!(text.contains("RMB"));
-        assert!(text.contains("Q2s"));
-        assert!(text.contains("E"));
-        assert!(text.contains("Y5/9"));
-        assert!(text.contains("F 3/5"));
-        assert!(text.contains("Next [ equip"));
-        assert!(text.contains("Bag 1/12"));
-        assert!(text.contains("open sealed cache"));
-        assert!(!text.contains("Combo"));
-        assert!(!text.contains("Action Guide"));
-        assert!(text.chars().count() <= 118, "{text}");
-        assert_eq!(text.lines().count(), 1);
-    }
-
-    #[test]
-    fn clean_action_belt_can_surface_active_combo_window_compactly() {
-        let combo = action_belt_clean_combo_hint_from(Some("Rupture 3s -> Q/E".to_string()));
-
-        assert_eq!(combo, " | Combo Rupture 3s -> Q/E");
-        assert!(combo.chars().count() <= 32, "{combo}");
-
-        let long_combo = action_belt_clean_combo_hint_from(Some(
-            "Ancient Reliquary Rupture 3s -> Dash or Nova finisher".to_string(),
-        ));
-
-        assert!(
-            long_combo.starts_with(" | Combo Ancient Reliquary"),
-            "{long_combo}"
-        );
-        assert!(long_combo.chars().count() <= 32, "{long_combo}");
-    }
-
-    #[test]
-    fn action_belt_next_action_prioritizes_rotation_survival_and_fury_building() {
-        let health = test_health(100.0, 120.0);
-        let low_health = test_health(30.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let mut cooldowns = test_cooldowns();
-        cooldowns.rupture = test_timer(3.8, 0.0);
-        cooldowns.dash = test_timer(5.0, 0.0);
-        let ready_surge = test_surge(9, 0.0);
-        let charging_surge = test_surge(4, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let inventory = Inventory {
-            items: Vec::new(),
-            capacity: 12,
-        };
-        let equipment = test_equipment("common");
-        let damage_bonus = DamageBonus(0.0);
-        let runes = SkillRunes {
-            dash: DashRune::Cleanse,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
-        };
-        let talents = Talents::default();
-        let stats = RunStats::default();
-        let progress = ChapterProgress::default();
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let rift = EmberRift::default();
-        let fury = test_fury(80.0);
-        let boon = ChapterBoon::default();
-
-        let base = ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &charging_surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &bounty,
-            obelisk: &obelisk,
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        };
-        assert_eq!(action_belt_next_action(&base), "RMB bleed");
-        assert_eq!(action_belt_combo_hint(&base), "RMB bleed -> E freeze");
-        assert_eq!(
-            action_belt_fury_state(&base),
-            "Fury 80/100 spend RMB/Q/E/Y4/9"
-        );
-
-        let burst = ActionBeltInputs {
-            surge: &ready_surge,
-            ..base
-        };
-        assert_eq!(action_belt_next_action(&burst), "Y burst -> RMB/E");
-        assert_eq!(action_belt_combo_hint(&burst), "Y -> RMB bleed -> E freeze");
-
-        let danger = ActionBeltInputs {
-            health: &low_health,
-            ..burst
-        };
-        assert_eq!(action_belt_next_action(&danger), "F heal");
-        assert_eq!(action_belt_combo_hint(&danger), "F -> Shift");
-
-        let starved_fury = test_fury(8.0);
-        let starved = ActionBeltInputs {
-            health: &health,
-            fury: &starved_fury,
-            surge: &charging_surge,
-            ..base
-        };
-        assert_eq!(action_belt_next_action(&starved), "LMB +17F");
-        assert_eq!(action_belt_combo_hint(&starved), "LMB to 32F");
-        assert_eq!(
-            action_belt_fury_state(&starved),
-            "Fury 8/100 build LMB +17F"
-        );
-    }
-
-    #[test]
-    fn action_belt_next_action_surfaces_inventory_pressure_out_of_combat() {
-        let health = test_health(100.0, 120.0);
-        let low_health = test_health(30.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let cooldowns = test_cooldowns();
-        let surge = test_surge(4, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let mut equipment = test_equipment("rare");
-        equipment.weapon_name = "Iron Fang".to_string();
-        equipment.legendary_power = LegendaryPower::None;
-        let damage_bonus = DamageBonus(10.0);
-        let runes = SkillRunes::default();
-        let talents = Talents::default();
-        let stats = RunStats::default();
-        let progress = ChapterProgress::default();
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let rift = EmberRift::default();
-        let fury = test_fury(80.0);
-        let boon = ChapterBoon::default();
-        let upgrade = InventoryItem {
-            name: "Stormcall Edge".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 18.0,
-            crit_chance: 0.12,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Stormbrand,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let weak = InventoryItem {
-            name: "Cracked Fang".to_string(),
-            quality: "common".to_string(),
-            damage_bonus: 1.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let full_inventory = Inventory {
-            items: vec![weak.clone(), upgrade.clone()],
-            capacity: 2,
-        };
-        let upgrade_inventory = Inventory {
-            items: vec![upgrade],
-            capacity: 12,
-        };
-        let salvage_inventory = Inventory {
-            items: vec![weak],
-            capacity: 12,
-        };
-        let target = TargetInfo {
-            visible: true,
-            details: "Reflective | react: stop into reflect".to_string(),
-            ..default()
-        };
-
-        let base = ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &full_inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &bounty,
-            obelisk: &obelisk,
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        };
-
-        assert_eq!(action_belt_next_action(&base), "FULL [ equip Stormbrand");
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                inventory: &upgrade_inventory,
-                ..base
-            }),
-            "[ equip Stormbrand"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                inventory: &salvage_inventory,
-                ..base
-            }),
-            "U salvage 1"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                health: &low_health,
-                ..base
-            }),
-            "F heal"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&target),
-                ..base
-            }),
-            "stop reflect"
-        );
-    }
-
-    #[test]
-    fn action_belt_next_action_surfaces_unspent_talent_points() {
-        let health = test_health(100.0, 120.0);
-        let low_health = test_health(30.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let cooldowns = test_cooldowns();
-        let surge = test_surge(4, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let inventory = Inventory {
-            items: Vec::new(),
-            capacity: 12,
-        };
-        let equipment = test_equipment("common");
-        let damage_bonus = DamageBonus(0.0);
-        let runes = SkillRunes::default();
-        let talents = test_talents(1, 2, 1, 1);
-        let stats = RunStats::default();
-        let progress = ChapterProgress::default();
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let rift = EmberRift::default();
-        let fury = test_fury(80.0);
-        let boon = ChapterBoon::default();
-        let target = TargetInfo {
-            visible: true,
-            details: "Reflective | threat: reflect | react: stop into reflect".to_string(),
-            ..default()
-        };
-
-        let base = ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &bounty,
-            obelisk: &obelisk,
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        };
-
-        assert_eq!(action_belt_next_action(&base), "K 3 Focus");
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&target),
-                ..base
-            }),
-            "stop reflect"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                health: &low_health,
-                ..base
-            }),
-            "F heal"
-        );
-    }
-
-    #[test]
-    fn action_belt_next_action_prioritizes_boss_boon_choice_before_build_management() {
-        let health = test_health(100.0, 120.0);
-        let low_health = test_health(30.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let cooldowns = test_cooldowns();
-        let surge = test_surge(4, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let equipment = test_equipment("common");
-        let damage_bonus = DamageBonus(0.0);
-        let runes = SkillRunes::default();
-        let talents = test_talents(1, 2, 1, 1);
-        let stats = RunStats {
-            surge_kills: 2,
-            ..default()
-        };
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Boss,
-            ..default()
-        };
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let rift = EmberRift::default();
-        let fury = test_fury(80.0);
-        let boon = ChapterBoon::default();
-        let chosen_boon = ChapterBoon {
-            choice: ChapterBoonChoice::ArcaneMomentum,
-            empowered: true,
-            momentum_stacks: 2,
-        };
-        let upgrade = InventoryItem {
-            name: "Stormcall Edge".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 18.0,
-            crit_chance: 0.12,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Stormbrand,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let inventory = Inventory {
-            items: vec![upgrade],
-            capacity: 12,
-        };
-        let target = TargetInfo {
-            visible: true,
-            details: "Reflective | threat: reflect | react: stop into reflect".to_string(),
-            ..default()
-        };
-
-        let base = ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &bounty,
-            obelisk: &obelisk,
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        };
-
-        assert_eq!(action_belt_next_action(&base), "4/5/6 boon rec 6 Arcane");
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&target),
-                ..base
-            }),
-            "stop reflect"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                health: &low_health,
-                ..base
-            }),
-            "F heal"
-        );
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                boon: &chosen_boon,
-                ..base
-            }),
-            "K 3 Focus"
-        );
-        let momentum_stats = RunStats {
-            reliquary_momentum: 2,
-            best_reliquary_momentum: 2,
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                boon: &chosen_boon,
-                stats: &momentum_stats,
-                ..base
-            }),
-            "Momentum 2x burst"
-        );
-    }
-
-    #[test]
-    fn action_belt_next_action_surfaces_target_threat_counterplay() {
-        let health = test_health(100.0, 120.0);
-        let low_health = test_health(30.0, 120.0);
-        let barrier = Barrier {
-            current: 0.0,
-            max: 40.0,
-        };
-        let cooldowns = test_cooldowns();
-        let surge = test_surge(4, 0.0);
-        let evade = test_evade(0.0, 0.0);
-        let potions = test_potions(2, 0.0);
-        let inventory = Inventory {
-            items: Vec::new(),
-            capacity: 12,
-        };
-        let equipment = test_equipment("common");
-        let damage_bonus = DamageBonus(0.0);
-        let runes = SkillRunes::default();
-        let talents = Talents::default();
-        let stats = RunStats::default();
-        let progress = ChapterProgress::default();
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let rift = EmberRift::default();
-        let fury = test_fury(80.0);
-        let boon = ChapterBoon::default();
-        let reflective = TargetInfo {
-            visible: true,
-            name: "Reflective Shielded Guard".to_string(),
-            details: "Reflective / Shielded | threat: reflect, shield window | react: stop into reflect, wait shield, then burst".to_string(),
-            ..default()
-        };
-
-        let base = ActionBeltInputs {
-            health: &health,
-            barrier: &barrier,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            boon: &boon,
-            potions: &potions,
-            inventory: &inventory,
-            equipment: &equipment,
-            damage_bonus: &damage_bonus,
-            runes: &runes,
-            talents: &talents,
-            stats: &stats,
-            progress: &progress,
-            bounty: &bounty,
-            obelisk: &obelisk,
-            rift: &rift,
-            combo: None,
-            target_info: None,
-        };
-
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&reflective),
-                ..base
-            }),
-            "stop reflect"
-        );
-
-        let incoming = TargetInfo {
-            visible: true,
-            details: "Arcane / Jailer | threat: beam hazard, root trap | react: strafe beam, save Shift | incoming: strafe shot 0.2s".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&incoming),
-                ..base
-            }),
-            "Shift strafe shot"
-        );
-
-        let ground = TargetInfo {
-            visible: true,
-            details: "Molten / Desecrator | threat: death pool, ground fire | react: step off death pool, move out".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&ground),
-                ..base
-            }),
-            "Shift move out"
-        );
-
-        let chaser = TargetInfo {
-            visible: true,
-            details: "no affixes | role: chaser | tip: kite rush, punish whiffs".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&chaser),
-                ..base
-            }),
-            "Shift kite chaser"
-        );
-
-        let marksman = TargetInfo {
-            visible: true,
-            details: "no affixes | role: marksman | tip: close gap, sidestep bolts".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&marksman),
-                ..base
-            }),
-            "close marksman"
-        );
-
-        let heavy = TargetInfo {
-            visible: true,
-            details: "no affixes | role: heavy | tip: bait shockwave, punish slam".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&heavy),
-                ..base
-            }),
-            "Shift dodge heavy"
-        );
-
-        let guard = TargetInfo {
-            visible: true,
-            details: "no affixes | role: guard | tip: flank shield guard".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&guard),
-                ..base
-            }),
-            "flank guard"
-        );
-
-        let caster = TargetInfo {
-            visible: true,
-            details: "no affixes | role: caster | tip: dash through fire".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&caster),
-                ..base
-            }),
-            "Shift dash fire"
-        );
-
-        let boss = TargetInfo {
-            visible: true,
-            details: "no affixes | role: boss | tip: break stagger, deny enrage".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&boss),
-                ..base
-            }),
-            "RMB/Q stagger"
-        );
-
-        let warden = TargetInfo {
-            visible: true,
-            details: "no affixes | role: warden | tip: break ward, sidestep runes".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&warden),
-                ..base
-            }),
-            "Shift break warden"
-        );
-
-        let broken_warden = TargetInfo {
-            visible: true,
-            details: "no affixes | role: warden | ward broken: punish".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&broken_warden),
-                ..base
-            }),
-            "RMB/E punish"
-        );
-
-        let rune = TargetInfo {
-            visible: true,
-            details: "no affixes | role: warden | incoming: leave seal rune 0.2s".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&rune),
-                ..base
-            }),
-            "Shift leave seal rune"
-        );
-
-        let execute = TargetInfo {
-            visible: true,
-            details: "boss | window: burst now".to_string(),
-            ..default()
-        };
-        assert_eq!(
-            action_belt_next_action(&ActionBeltInputs {
-                target_info: Some(&execute),
-                ..base
-            }),
-            "Y burst window"
-        );
-
-        let danger = ActionBeltInputs {
-            health: &low_health,
-            target_info: Some(&execute),
-            ..base
-        };
-        assert_eq!(action_belt_next_action(&danger), "F heal");
     }
 
     #[test]
@@ -16562,19 +11170,13 @@ mod tests {
 
     #[test]
     fn journal_panel_stays_hidden_during_live_combat() {
-        let (closed_text, closed_display) =
-            journal_panel_text(false, false, "Journal full", "Pause summary");
+        let (closed_text, closed_display) = journal_panel_text(false, "Journal full");
         assert_eq!(closed_text, "");
         assert_eq!(closed_display, Display::None);
 
-        let (open_text, open_display) = journal_panel_text(true, false, "Journal full", "Pause");
+        let (open_text, open_display) = journal_panel_text(true, "Journal full");
         assert_eq!(open_text, "Journal full");
         assert_eq!(open_display, Display::Flex);
-
-        let (pause_text, pause_display) =
-            journal_panel_text(false, true, "Journal full", "Pause summary");
-        assert_eq!(pause_text, "Pause summary");
-        assert_eq!(pause_display, Display::Flex);
     }
 
     #[test]
@@ -16587,10 +11189,11 @@ mod tests {
         let text = campaign_journal_text("QUEST BOARD | Main 20%", &story, &lore);
 
         assert!(text.contains("QUEST BOARD | Main 20%"));
-        assert!(text.contains("STORY RECORD — RECENT SCENES"));
-        assert!(text.contains("Steward Edda:"));
-        assert!(text.contains("LORE CODEX"));
-        assert!(text.contains("Steward's Warning"));
+        assert!(text.contains("RECENT EVENTS"));
+        assert!(text.contains(crate::story::StoryBeat::CacheRevealed.line()));
+        assert!(text.contains("RECOVERED WRITING"));
+        assert!(text.contains(crate::lore::LoreEntryId::StewardWarning.body()));
+        assert!(!text.contains("Steward Edda:"));
     }
 
     #[test]
@@ -16615,15 +11218,7 @@ mod tests {
             affix_essence: 3,
             ..default()
         };
-        let readiness = combat_readiness_summary(CombatReadinessInputs {
-            health: &health,
-            potions: &potions,
-            fury: &fury,
-            cooldowns: &test_cooldowns(),
-            surge: &test_surge(9, 0.0),
-            evade: &test_evade(0.0, 0.0),
-            runes: &SkillRunes::default(),
-        });
+        let readiness = "Y Surge burst";
 
         let life = health_orb_text(&health, &barrier, &potions, &ward);
         assert!(life.contains("LIFE STABLE"));
@@ -16631,10 +11226,10 @@ mod tests {
         assert!(life.contains("WARD 18 | SOUL 1"));
         assert!(life.contains("F POTION 3/5 READY"));
 
-        let resource = fury_orb_text(&fury, &level, &paragon, &stats, &readiness);
+        let resource = fury_orb_text(&fury, &level, &paragon, &stats, readiness);
         assert!(resource.contains("FURY"));
         assert!(resource.contains("64 / 100"));
-        assert!(resource.contains("SPEND RMB32 Q25 E45"));
+        assert!(resource.contains("SPEND R32 Q25 E45"));
         assert!(resource.contains("BUILD LMB +18F"));
         assert!(resource.contains("LV 4"));
         assert!(resource.contains("XP 88/140"));
@@ -16822,7 +11417,7 @@ mod tests {
 
         assert!(resource.contains("FURY"));
         assert!(resource.contains("82 / 100"));
-        assert!(resource.contains("SPEND RMB32 Q25 E45"));
+        assert!(resource.contains("SPEND R32 Q25 E45"));
         assert!(resource.contains("BUILD LMB +18F"));
         assert!(resource.contains("PARA 3"));
         assert!(resource.contains("XP 42/210"));
@@ -16841,270 +11436,8 @@ mod tests {
             rupture_cost: 30.0,
         };
 
-        assert_eq!(fury_spend_line(&fury), "SPEND RMB30 Q24 E42");
+        assert_eq!(fury_spend_line(&fury), "SPEND R30 Q24 E42");
         assert_eq!(fury_builder_line(&fury), "BUILD LMB +21F");
-    }
-
-    #[test]
-    fn combat_readiness_summary_guides_survival_burst_and_fury_building() {
-        let cooldowns = test_cooldowns();
-        let ready_evade = test_evade(0.0, 0.0);
-
-        let low_health = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(22.0, 100.0),
-            potions: &test_potions(1, 0.0),
-            fury: &test_fury(80.0),
-            cooldowns: &cooldowns,
-            surge: &test_surge(9, 0.0),
-            evade: &ready_evade,
-            runes: &SkillRunes::default(),
-        });
-        assert_eq!(low_health, "F Potion heal");
-
-        let low_health_no_potion = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(22.0, 100.0),
-            potions: &test_potions(0, 0.0),
-            fury: &test_fury(80.0),
-            cooldowns: &cooldowns,
-            surge: &test_surge(9, 0.0),
-            evade: &ready_evade,
-            runes: &SkillRunes::default(),
-        });
-        assert_eq!(low_health_no_potion, "Shift Evade");
-
-        let burst = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(90.0, 100.0),
-            potions: &test_potions(1, 0.0),
-            fury: &test_fury(30.0),
-            cooldowns: &cooldowns,
-            surge: &test_surge(9, 0.0),
-            evade: &ready_evade,
-            runes: &SkillRunes::default(),
-        });
-        assert_eq!(burst, "Y Surge burst");
-
-        let build = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(90.0, 100.0),
-            potions: &test_potions(1, 0.0),
-            fury: &test_fury(12.0),
-            cooldowns: &cooldowns,
-            surge: &test_surge(0, 0.0),
-            evade: &ready_evade,
-            runes: &SkillRunes::default(),
-        });
-        assert_eq!(build, "LMB +33F");
-
-        let mut rupture_ready = test_cooldowns();
-        rupture_ready.rupture.tick(rupture_ready.rupture.duration());
-        let runes = SkillRunes {
-            rupture: RuptureRune::Expose,
-            nova: NovaRune::Frost,
-            dash: DashRune::Reap,
-        };
-        let setup = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(90.0, 100.0),
-            potions: &test_potions(1, 0.0),
-            fury: &test_fury(80.0),
-            cooldowns: &rupture_ready,
-            surge: &test_surge(0, 0.0),
-            evade: &ready_evade,
-            runes: &runes,
-        });
-        assert_eq!(setup, "RMB start vuln");
-
-        let mut nova_ready = test_cooldowns();
-        nova_ready.nova.tick(nova_ready.nova.duration());
-        let finish = combat_readiness_summary(CombatReadinessInputs {
-            health: &test_health(90.0, 100.0),
-            potions: &test_potions(1, 0.0),
-            fury: &test_fury(80.0),
-            cooldowns: &nova_ready,
-            surge: &test_surge(0, 0.0),
-            evade: &ready_evade,
-            runes: &runes,
-        });
-        assert_eq!(finish, "E Nova freeze");
-    }
-
-    #[test]
-    fn build_panel_guides_talents_runes_rotation_and_burst_windows() {
-        let health = test_health(88.0, 130.0);
-        let fury = test_fury(84.0);
-        let cooldowns = test_cooldowns();
-        let evade = test_evade(0.0, 0.0);
-        let surge = test_surge(9, 0.0);
-        let level = PlayerLevel {
-            level: 5,
-            xp: 120,
-            next_level_xp: 180,
-        };
-        let mut equipment = test_equipment("legendary");
-        equipment.weapon_name = "Stormcall Reliquary Brand of the Long Night".to_string();
-        equipment.legendary_power = LegendaryPower::Stormbrand;
-        equipment.armor_bonus = 24.0;
-        let charm = Charm {
-            name: "Stormglass Charm".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 5.0,
-            crit_chance: 0.035,
-        };
-        let talents = Talents {
-            points: 1,
-            wrath: 1,
-            vigor: 2,
-            focus: 0,
-        };
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
-        };
-        let mut codex = LegendaryCodex::default();
-        codex.unlock(LegendaryPower::Stormbrand);
-
-        let text = build_panel_text(BuildPanelInputs {
-            health: &health,
-            fury: &fury,
-            cooldowns: &cooldowns,
-            evade: &evade,
-            surge: &surge,
-            level: &level,
-            damage_bonus: &DamageBonus(14.0),
-            equipment: &equipment,
-            charm: &charm,
-            talents: &talents,
-            runes: &runes,
-            codex: &codex,
-        });
-
-        assert!(text.contains("BUILD | K close"));
-        assert!(text.contains("I bag | J journal"));
-        assert!(text.contains("Skills LMB/RMB/Q/E/Y/Shift"));
-        assert!(text.contains("Bag [/] U"));
-        assert!(text.contains("Archetype Storm Reaper balanced | rune chains"));
-        assert!(text.contains("Next K then 3 Focus"));
-        assert!(text.contains("DPS "));
-        assert!(text.contains("Tough "));
-        assert!(text.contains("Ctrl "));
-        assert!(text.contains("spend 3 Focus for cooldowns"));
-        assert!(text.contains("freeze packs, bleed them, reap executes"));
-        assert!(text.contains("Combo set: shock"));
-        assert!(text.contains("Y Surge before elite/Boss burst"));
-        assert!(text.contains("Surge Y 9/9 READY"));
-        assert!(text.contains("Evade Shift READY"));
-        assert!(text.contains("Codex 1/5"));
-        assert!(text.contains("Stormcall Reliquary"));
-        assert!(text.contains("Mastery Wrath"));
-        assert!(text.lines().count() <= 14);
-        assert!(text.lines().all(|line| line.len() <= 118));
-    }
-
-    #[test]
-    fn build_archetype_summary_names_role_score_and_payoff() {
-        let mut equipment = test_equipment("legendary");
-        equipment.weapon_name = "Soulreaver Reliquary Fang".to_string();
-        equipment.legendary_power = LegendaryPower::Soulreaver;
-        equipment.health_bonus = 44.0;
-        equipment.armor_bonus = 34.0;
-        let charm = Charm {
-            name: "Bloodglass Charm".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 6.0,
-            crit_chance: 0.04,
-        };
-        let talents = Talents {
-            wrath: 1,
-            vigor: 2,
-            focus: 2,
-            points: 0,
-        };
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
-        };
-
-        let archetype =
-            build_archetype_summary(&DamageBonus(18.0), &equipment, &charm, &talents, &runes);
-        let score = build_score_summary(&DamageBonus(18.0), &equipment, &charm, &talents, &runes);
-
-        assert_eq!(archetype, "Blood Reaver tank | rune leech");
-        assert!(score.starts_with("DPS "));
-        assert!(score.contains(" | Tough "));
-        assert!(score.contains(" | Ctrl "));
-        assert!(build_dps_score(&DamageBonus(18.0), &equipment, &charm, &talents) > 80);
-        assert!(build_toughness_score(&equipment, &charm, &talents) > 90);
-        assert!(build_control_score(&equipment, &runes, &talents) >= 60);
-    }
-
-    #[test]
-    fn legendary_rune_synergy_payoff_labels_match_combat_proc_routes() {
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Emberbrand,
-                &SkillRunes {
-                    dash: DashRune::Cleanse,
-                    nova: NovaRune::Ember,
-                    rupture: RuptureRune::Expose,
-                }
-            ),
-            Some("rune ignites")
-        );
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Frostbrand,
-                &SkillRunes {
-                    dash: DashRune::Cleanse,
-                    nova: NovaRune::Frost,
-                    rupture: RuptureRune::Hemorrhage,
-                }
-            ),
-            Some("rune chills")
-        );
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Stormbrand,
-                &SkillRunes {
-                    dash: DashRune::Reap,
-                    nova: NovaRune::Ember,
-                    rupture: RuptureRune::Expose,
-                }
-            ),
-            Some("rune chains")
-        );
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Soulreaver,
-                &SkillRunes {
-                    dash: DashRune::Cleanse,
-                    nova: NovaRune::Ember,
-                    rupture: RuptureRune::Hemorrhage,
-                }
-            ),
-            Some("rune leech")
-        );
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Aegisbrand,
-                &SkillRunes {
-                    dash: DashRune::Cleanse,
-                    nova: NovaRune::Ember,
-                    rupture: RuptureRune::Hemorrhage,
-                }
-            ),
-            Some("rune wards")
-        );
-        assert_eq!(
-            legendary_rune_synergy_payoff_label(
-                LegendaryPower::Stormbrand,
-                &SkillRunes {
-                    dash: DashRune::Cleanse,
-                    nova: NovaRune::Ember,
-                    rupture: RuptureRune::Expose,
-                }
-            ),
-            None
-        );
     }
 
     #[test]
@@ -17135,7 +11468,7 @@ mod tests {
             .tick(ready_cooldowns.rupture.duration());
         assert_eq!(
             build_rotation_summary(&ready, &ready_cooldowns, &charging_surge, &runes),
-            "RMB Expose starts combo; Q/E finish"
+            "R Expose starts combo; Q/E finish"
         );
     }
 
@@ -17202,286 +11535,37 @@ mod tests {
     }
 
     #[test]
-    fn inventory_slots_surface_equipped_upgrade_and_stash_decisions() {
-        let equipment = test_equipment("rare");
-        let damage_bonus = DamageBonus(10.0);
-        let equipped = InventoryItem {
-            name: "Test Blade".to_string(),
-            quality: "rare".to_string(),
-            damage_bonus: 10.0,
-            crit_chance: 0.05,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let upgrade = InventoryItem {
-            name: "Ember-Saint Reaver".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 18.0,
-            crit_chance: 0.12,
-            health_bonus: 24.0,
-            armor_bonus: 8.0,
-            legendary_power: LegendaryPower::Emberbrand,
-            temper_level: 1,
-            socketed_gem: Some(SocketedGem {
-                kind: crate::player::GemKind::Ruby,
-                rank: 2,
-            }),
-            slot: GearSlot::Weapon,
-        };
-        let stash = InventoryItem {
-            name: "Bent Fang".to_string(),
-            quality: "common".to_string(),
-            damage_bonus: 2.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-
-        let equipped_label = inventory_slot_label(&equipped, &equipment, &damage_bonus);
-        let upgrade_label = inventory_slot_label(&upgrade, &equipment, &damage_bonus);
-        let stash_label = inventory_slot_label(&stash, &equipment, &damage_bonus);
-
-        assert!(equipped_label.contains("EQUIPPED rare"));
-        assert!(equipped_label.contains("CURRENT | equipped"));
-        assert!(equipped_label.contains("PWR +0"));
-        assert!(upgrade_label.contains("UPGRADE legendary"));
-        assert!(upgrade_label.contains("BUILD POWER | [ equip power"));
-        assert!(upgrade_label.contains("PWR +"));
-        assert!(upgrade_label.contains("new power Emberbrand"));
-        assert!(upgrade_label.contains("ember burn build"));
-        assert!(upgrade_label.contains("socket Ruby 2"));
-        assert!(upgrade_label.contains("temper +1"));
-        assert!(upgrade_label.contains("weapon dmg +8"));
-        assert!(upgrade_label.contains("crit build +"));
-        assert!(upgrade_label.contains("toughness +"));
-        assert!(stash_label.contains("STASH common"));
-        assert!(equipped_label.contains("CURRENT"));
-        assert!(upgrade_label.contains("BUILD POWER"));
-        assert!(stash_label.contains("SALVAGE | U salvage"));
-        assert!(stash_label.contains("PWR -"));
-    }
-
-    #[test]
-    fn inventory_slot_action_hints_use_real_player_commands() {
-        let mut equipment = test_equipment("legendary");
-        equipment.weapon_name = "Equipped Fang".to_string();
-        equipment.legendary_power = LegendaryPower::Stormbrand;
-        equipment.socketed_gem = None;
-        equipment.temper_level = 0;
-        let damage_bonus = DamageBonus(18.0);
-
-        let codex_piece = InventoryItem {
-            name: "Soulreaver Archive Knife".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 4.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Soulreaver,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let socket_piece = InventoryItem {
-            name: "Ruby Socket Reaver".to_string(),
-            quality: "rare".to_string(),
-            damage_bonus: 11.0,
-            crit_chance: 0.03,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: Some(SocketedGem {
-                kind: crate::player::GemKind::Ruby,
-                rank: 3,
-            }),
-            slot: GearSlot::Weapon,
-        };
-        let temper_piece = InventoryItem {
-            name: "Tempered Sideblade".to_string(),
-            quality: "rare".to_string(),
-            damage_bonus: 11.0,
-            crit_chance: 0.03,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 2,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let salvage_piece = InventoryItem {
-            name: "Bent Scrap Fang".to_string(),
-            quality: "common".to_string(),
-            damage_bonus: 1.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-
-        assert!(inventory_slot_label(&codex_piece, &equipment, &damage_bonus).contains("B codex"));
-        assert!(
-            inventory_slot_label(&socket_piece, &equipment, &damage_bonus).contains("keep craft")
-        );
-        assert!(
-            inventory_slot_label(&temper_piece, &equipment, &damage_bonus).contains("keep craft")
-        );
-        assert!(
-            inventory_slot_label(&salvage_piece, &equipment, &damage_bonus).contains("U salvage")
-        );
-    }
-
-    #[test]
-    fn gear_build_tags_explain_current_equipment_role() {
-        let mut equipment = test_equipment("ancient");
-        equipment.weapon_name = "Ashen Reliquary Reaver".to_string();
-        equipment.crit_chance = 0.18;
-        equipment.health_bonus = 24.0;
-        equipment.armor_bonus = 18.0;
-        equipment.legendary_power = LegendaryPower::Soulreaver;
-        equipment.temper_level = 2;
-        equipment.socketed_gem = Some(SocketedGem {
-            kind: crate::player::GemKind::Emerald,
-            rank: 4,
-        });
-        let weapon = weapon_build_tag(&equipment, &DamageBonus(28.0), equipment.socketed_gem);
-        assert!(weapon.contains("DPS carry"));
-        assert!(weapon.contains("crit build"));
-        assert!(weapon.contains("toughness") || weapon.contains("life steal build"));
-
-        let charm = Charm {
-            name: "Stormglass Charm".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 6.5,
-            crit_chance: 0.045,
-        };
-        let charm_tag = charm_build_tag(&charm);
-        assert!(charm_tag.contains("DPS charm"));
-        assert!(charm_tag.contains("crit charm"));
-        assert!(charm_tag.contains("resonance piece"));
-    }
-
-    #[test]
-    fn skill_slot_summary_surfaces_cost_cooldown_and_effect() {
+    fn skill_slot_summary_keeps_art_clear_and_reports_unavailable_actions() {
         let fury = test_fury(80.0);
         let cooldowns = test_cooldowns();
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
-        };
         let surge = test_surge(4, 0.0);
         let evade = test_evade(2.0, 0.0);
-
-        let strike = skill_slot_summary(
-            SkillSlotText::Strike,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
+        assert_eq!(
+            skill_slot_summary(SkillSlotText::Strike, &fury, &cooldowns, &surge, &evade),
+            ""
         );
-        assert_eq!(strike.lines().next(), Some("LMB STRIKE"));
-        assert_eq!(strike.lines().nth(1), Some("READY"));
-        assert_eq!(strike.lines().nth(2), Some("RDY [######]"));
-        assert_eq!(strike.lines().nth(3), Some("+18F BUILD FURY"));
-        assert_eq!(strike.lines().count(), 4);
-        assert!(strike.lines().all(|line| line.len() <= 16));
-
-        let rupture = skill_slot_summary(
-            SkillSlotText::Rupture,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
+        assert_eq!(
+            skill_slot_summary(SkillSlotText::Finisher, &fury, &cooldowns, &surge, &evade),
+            "2.4s"
         );
-        assert_eq!(rupture.lines().next(), Some("RMB RUPTURE"));
-        assert_eq!(rupture.lines().nth(1), Some("CD 2.4s"));
-        assert_eq!(rupture.lines().nth(2), Some("CD [##----]"));
-        assert_eq!(rupture.lines().nth(3), Some("-32F START BLEED"));
-        assert_eq!(rupture.lines().count(), 4);
-        assert!(rupture.lines().all(|line| line.len() <= 18));
-
-        let dash = skill_slot_summary(
-            SkillSlotText::Dash,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
+        assert_eq!(
+            skill_slot_summary(
+                SkillSlotText::Area,
+                &test_fury(8.0),
+                &cooldowns,
+                &surge,
+                &evade
+            ),
+            "Unavailable"
         );
-        assert_eq!(dash.lines().next(), Some("Q DASH"));
-        assert_eq!(dash.lines().nth(1), Some("CD 1.2s"));
-        assert_eq!(dash.lines().nth(2), Some("CD [#####-]"));
-        assert_eq!(dash.lines().nth(3), Some("-25F FINISH REAP"));
-        assert_eq!(dash.lines().count(), 4);
-
-        let nova = skill_slot_summary(
-            SkillSlotText::Nova,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
+        assert_eq!(
+            skill_slot_summary(SkillSlotText::Surge, &fury, &cooldowns, &surge, &evade),
+            "CHARGE 4/9"
         );
-        assert_eq!(nova.lines().next(), Some("E NOVA"));
-        assert_eq!(nova.lines().nth(1), Some("READY"));
-        assert_eq!(nova.lines().nth(2), Some("RDY [######]"));
-        assert_eq!(nova.lines().nth(3), Some("-45F FINISH FREEZE"));
-        assert_eq!(nova.lines().count(), 4);
-
-        let surge_summary = skill_slot_summary(
-            SkillSlotText::Surge,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
+        assert_eq!(
+            skill_slot_summary(SkillSlotText::Evade, &fury, &cooldowns, &surge, &evade),
+            "2.0s"
         );
-        assert_eq!(surge_summary.lines().next(), Some("Y SURGE"));
-        assert_eq!(surge_summary.lines().nth(1), Some("CHARGE 4/9"));
-        assert_eq!(surge_summary.lines().nth(2), Some("CHG [###---]"));
-        assert_eq!(surge_summary.lines().nth(3), Some("CHARGE KILL CHARGE"));
-        assert_eq!(surge_summary.lines().count(), 4);
-
-        let evade_summary = skill_slot_summary(
-            SkillSlotText::Evade,
-            &fury,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
-        );
-        assert_eq!(evade_summary.lines().next(), Some("Shift EVADE"));
-        assert_eq!(evade_summary.lines().nth(1), Some("CD 2.0s"));
-        assert_eq!(evade_summary.lines().nth(2), Some("CD [###---]"));
-        assert_eq!(evade_summary.lines().nth(3), Some("IFRAME DODGE HIT"));
-        assert_eq!(evade_summary.lines().count(), 4);
-
-        let starved = test_fury(8.0);
-        let blocked = skill_slot_summary(
-            SkillSlotText::Nova,
-            &starved,
-            &cooldowns,
-            &runes,
-            &surge,
-            &evade,
-        );
-        assert!(blocked.contains("NEED 37F"));
-        assert!(blocked.contains("FURY [#-----]"));
-        assert!(blocked.contains("FINISH FREEZE"));
     }
 
     #[test]
@@ -17498,15 +11582,15 @@ mod tests {
         let active_evade = test_evade(0.0, 0.4);
 
         assert_eq!(
-            skill_slot_tactic(SkillSlotText::Rupture, &runes, &ready_surge, &idle_evade),
+            skill_slot_tactic(SkillSlotText::Finisher, &runes, &ready_surge, &idle_evade),
             "START VULN"
         );
         assert_eq!(
-            skill_slot_tactic(SkillSlotText::Dash, &runes, &ready_surge, &idle_evade),
+            skill_slot_tactic(SkillSlotText::Mobility, &runes, &ready_surge, &idle_evade),
             "FINISH CLEANSE"
         );
         assert_eq!(
-            skill_slot_tactic(SkillSlotText::Nova, &runes, &ready_surge, &idle_evade),
+            skill_slot_tactic(SkillSlotText::Area, &runes, &ready_surge, &idle_evade),
             "FINISH BURN"
         );
         assert_eq!(
@@ -17528,29 +11612,11 @@ mod tests {
     }
 
     #[test]
-    fn skill_slot_blocked_label_reports_missing_fury_amount() {
-        let fury = test_fury(18.0);
-
-        assert_eq!(
-            skill_slot_blocked_label(SkillSlotText::Dash, &fury),
-            "NEED 7F"
-        );
-        assert_eq!(
-            skill_slot_blocked_label(SkillSlotText::Rupture, &fury),
-            "NEED 14F"
-        );
-        assert_eq!(
-            skill_slot_blocked_label(SkillSlotText::Nova, &fury),
-            "NEED 27F"
-        );
-    }
-
-    #[test]
     fn skill_slot_themes_give_core_actions_distinct_readable_colors() {
         let strike = skill_slot_theme(SkillSlotText::Strike);
-        let rupture = skill_slot_theme(SkillSlotText::Rupture);
-        let dash = skill_slot_theme(SkillSlotText::Dash);
-        let nova = skill_slot_theme(SkillSlotText::Nova);
+        let rupture = skill_slot_theme(SkillSlotText::Finisher);
+        let dash = skill_slot_theme(SkillSlotText::Mobility);
+        let nova = skill_slot_theme(SkillSlotText::Area);
         let surge = skill_slot_theme(SkillSlotText::Surge);
         let evade = skill_slot_theme(SkillSlotText::Evade);
 
@@ -17565,9 +11631,9 @@ mod tests {
     fn skill_slot_glyphs_make_action_bar_scannable() {
         let slots = [
             SkillSlotText::Strike,
-            SkillSlotText::Rupture,
-            SkillSlotText::Dash,
-            SkillSlotText::Nova,
+            SkillSlotText::Finisher,
+            SkillSlotText::Mobility,
+            SkillSlotText::Area,
             SkillSlotText::Surge,
             SkillSlotText::Evade,
         ];
@@ -17580,10 +11646,10 @@ mod tests {
                 assert_ne!(skill_slot_glyph(*slot), skill_slot_glyph(*other));
             }
         }
-        assert_eq!(skill_slot_glyph(SkillSlotText::Dash), ">>");
+        assert_eq!(skill_slot_glyph(SkillSlotText::Mobility), ">>");
         assert!(
             skill_slot_keycap_font_size(SkillSlotText::Evade)
-                < skill_slot_keycap_font_size(SkillSlotText::Dash)
+                < skill_slot_keycap_font_size(SkillSlotText::Mobility)
         );
     }
 
@@ -17595,7 +11661,7 @@ mod tests {
         let evade = test_evade(0.0, 0.0);
         let idle_feedback = SkillFeedbackState::default();
         let base = skill_slot_frame_style(
-            SkillSlotText::Nova,
+            SkillSlotText::Area,
             &fury,
             &cooldowns,
             &surge,
@@ -17605,12 +11671,12 @@ mod tests {
         let cast_feedback = SkillFeedbackState {
             timer: test_timer(1.0, 0.6),
             pulse: Some(SkillSlotPulse {
-                slot: SkillSlotText::Nova,
+                slot: SkillSlotText::Area,
                 kind: SkillSlotPulseKind::Cast,
             }),
         };
         let cast = skill_slot_frame_style(
-            SkillSlotText::Nova,
+            SkillSlotText::Area,
             &fury,
             &cooldowns,
             &surge,
@@ -17620,12 +11686,12 @@ mod tests {
         let blocked_feedback = SkillFeedbackState {
             timer: test_timer(1.0, 0.6),
             pulse: Some(SkillSlotPulse {
-                slot: SkillSlotText::Nova,
+                slot: SkillSlotText::Area,
                 kind: SkillSlotPulseKind::Blocked,
             }),
         };
         let blocked = skill_slot_frame_style(
-            SkillSlotText::Nova,
+            SkillSlotText::Area,
             &fury,
             &cooldowns,
             &surge,
@@ -17633,7 +11699,7 @@ mod tests {
             &blocked_feedback,
         );
         let untouched_dash = skill_slot_frame_style(
-            SkillSlotText::Dash,
+            SkillSlotText::Mobility,
             &fury,
             &cooldowns,
             &surge,
@@ -17646,7 +11712,7 @@ mod tests {
         assert_eq!(
             untouched_dash,
             skill_slot_frame_style(
-                SkillSlotText::Dash,
+                SkillSlotText::Mobility,
                 &fury,
                 &cooldowns,
                 &surge,
@@ -17670,21 +11736,21 @@ mod tests {
         let active_evade = test_evade(0.0, 0.4);
 
         let ready = skill_slot_lamp_style(
-            SkillSlotText::Nova,
+            SkillSlotText::Area,
             &fury,
             &cooldowns,
             &ready_surge,
             &idle_evade,
         );
         let cooling = skill_slot_lamp_style(
-            SkillSlotText::Dash,
+            SkillSlotText::Mobility,
             &fury,
             &cooldowns,
             &ready_surge,
             &idle_evade,
         );
         let starved = skill_slot_lamp_style(
-            SkillSlotText::Nova,
+            SkillSlotText::Area,
             &starved_fury,
             &cooldowns,
             &ready_surge,
@@ -17723,311 +11789,6 @@ mod tests {
         assert!(charging.width > 18.0);
         assert!(starved.color.to_srgba().red > ready.color.to_srgba().red);
         assert!(color_luminance(active.color) > color_luminance(cooling.color));
-    }
-
-    #[test]
-    fn compact_character_hud_surfaces_gear_bag_and_build_without_menu_wall() {
-        let damage_bonus = DamageBonus(11.0);
-        let mut equipment = test_equipment("legendary");
-        equipment.weapon_name = "Stormcall Reliquary Brand".to_string();
-        equipment.legendary_power = LegendaryPower::Stormbrand;
-        equipment.crit_chance = 0.16;
-        let charm = Charm {
-            name: "Stormglass Charm".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 5.0,
-            crit_chance: 0.035,
-        };
-        let inventory = Inventory {
-            items: vec![
-                InventoryItem {
-                    name: equipment.weapon_name.clone(),
-                    quality: equipment.quality.clone(),
-                    damage_bonus: damage_bonus.0,
-                    crit_chance: equipment.crit_chance,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: equipment.legendary_power,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-                InventoryItem {
-                    name: "Moonforged Cleaver".to_string(),
-                    quality: "rare".to_string(),
-                    damage_bonus: 9.0,
-                    crit_chance: 0.06,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::None,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-            ],
-            capacity: 12,
-        };
-        let mut codex = LegendaryCodex::default();
-        codex.unlock(LegendaryPower::Stormbrand);
-        let talents = Talents {
-            wrath: 2,
-            vigor: 1,
-            focus: 0,
-            points: 0,
-        };
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
-        };
-        let resonance = reliquary_resonance(&equipment, &charm)
-            .map(|resonance| resonance.label.to_string())
-            .unwrap();
-        let stats = RunStats::default();
-        let set_tactic = reliquary_set_tactic(&equipment, &charm, &stats);
-
-        let weapon = compact_character_summary(
-            CompactCharacterText::Weapon,
-            &damage_bonus,
-            &equipment,
-            &charm,
-            &inventory,
-            &codex,
-            &talents,
-            &runes,
-            &resonance,
-            &set_tactic,
-            &stats,
-        );
-        assert!(weapon.contains("GEAR WEAPON"));
-        assert!(weapon.contains("+11"));
-        assert!(weapon.contains("16%"));
-        assert!(weapon.lines().count() <= 3);
-
-        let bag = compact_character_summary(
-            CompactCharacterText::Inventory,
-            &damage_bonus,
-            &equipment,
-            &charm,
-            &inventory,
-            &codex,
-            &talents,
-            &runes,
-            &resonance,
-            &set_tactic,
-            &stats,
-        );
-        assert!(bag.contains("I BAG 2/12"));
-        assert!(bag.contains("Next"));
-        assert!(bag.contains("U salvage 1"));
-        assert!(bag.lines().count() <= 3);
-
-        let build = compact_character_summary(
-            CompactCharacterText::Codex,
-            &damage_bonus,
-            &equipment,
-            &charm,
-            &inventory,
-            &codex,
-            &talents,
-            &runes,
-            &resonance,
-            &set_tactic,
-            &stats,
-        );
-        assert!(build.contains("K BUILD"));
-        assert!(build.contains("STORM REAP"));
-        assert!(build.contains("DPS"));
-        assert!(build.contains("1/"));
-        assert!(build.contains("Storm chain"));
-        assert!(build.lines().count() <= 3);
-    }
-
-    #[test]
-    fn bag_action_summary_prioritizes_upgrade_full_build_piece_and_salvage() {
-        let stats = RunStats::default();
-        let damage_bonus = DamageBonus(10.0);
-        let mut equipment = test_equipment("rare");
-        equipment.weapon_name = "Iron Fang".to_string();
-        equipment.legendary_power = LegendaryPower::None;
-        equipment.crit_chance = 0.05;
-        let upgrade = InventoryItem {
-            name: "Stormcall Edge".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 18.0,
-            crit_chance: 0.12,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Stormbrand,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let weak = InventoryItem {
-            name: "Cracked Fang".to_string(),
-            quality: "common".to_string(),
-            damage_bonus: 1.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let upgrade_inventory = Inventory {
-            items: vec![weak.clone(), upgrade.clone()],
-            capacity: 8,
-        };
-        assert!(
-            bag_action_summary(&stats, &upgrade_inventory, &equipment, &damage_bonus)
-                .contains("[ equip")
-        );
-        assert!(
-            bag_action_summary(&stats, &upgrade_inventory, &equipment, &damage_bonus)
-                .contains("Stormbrand")
-        );
-
-        let full_inventory = Inventory {
-            items: vec![weak.clone(), upgrade],
-            capacity: 2,
-        };
-        let full_action = bag_action_summary(&stats, &full_inventory, &equipment, &damage_bonus);
-        assert!(full_action.contains("FULL U salvage 1"));
-        assert!(full_action.contains("[ equip power"));
-        assert!(full_action.contains("Stormbrand"));
-
-        let sidegrade = InventoryItem {
-            name: "Sidegrade Fang".to_string(),
-            quality: "rare".to_string(),
-            damage_bonus: 9.5,
-            crit_chance: 0.05,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            slot: GearSlot::Weapon,
-        };
-        let build_inventory = Inventory {
-            items: vec![sidegrade],
-            capacity: 8,
-        };
-        assert_eq!(
-            bag_action_summary(&stats, &build_inventory, &equipment, &damage_bonus),
-            "stash swap PWR -2"
-        );
-
-        let socket_piece = InventoryItem {
-            name: "Socketed Fang".to_string(),
-            quality: "common".to_string(),
-            damage_bonus: 1.0,
-            crit_chance: 0.05,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: Some(SocketedGem {
-                kind: crate::player::GemKind::Ruby,
-                rank: 2,
-            }),
-            slot: GearSlot::Weapon,
-        };
-        let socket_inventory = Inventory {
-            items: vec![socket_piece],
-            capacity: 8,
-        };
-        let socket_action =
-            bag_action_summary(&stats, &socket_inventory, &equipment, &damage_bonus);
-        assert!(socket_action.contains("keep craft"));
-        assert!(socket_action.contains("socket"));
-
-        let salvage_inventory = Inventory {
-            items: vec![weak],
-            capacity: 8,
-        };
-        assert_eq!(
-            bag_action_summary(&stats, &salvage_inventory, &equipment, &damage_bonus),
-            "U salvage 1"
-        );
-    }
-
-    #[test]
-    fn inventory_panel_header_surfaces_bag_decisions_resources_and_codex() {
-        let stats = RunStats {
-            gold: 180,
-            ember_shards: 7,
-            affix_essence: 3,
-            echo_keystones: 1,
-            ..default()
-        };
-        let damage_bonus = DamageBonus(10.0);
-        let mut equipment = test_equipment("rare");
-        equipment.weapon_name = "Iron Fang".to_string();
-        equipment.legendary_power = LegendaryPower::None;
-        equipment.crit_chance = 0.05;
-        let inventory = Inventory {
-            items: vec![
-                InventoryItem {
-                    name: "Cracked Fang".to_string(),
-                    quality: "common".to_string(),
-                    damage_bonus: 1.0,
-                    crit_chance: 0.0,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::None,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-                InventoryItem {
-                    name: "Stormcall Edge".to_string(),
-                    quality: "legendary".to_string(),
-                    damage_bonus: 18.0,
-                    crit_chance: 0.12,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::Stormbrand,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-            ],
-            capacity: 12,
-        };
-        let potions = test_potions(2, 0.0);
-        let elixirs = ElixirBelt {
-            current: 1,
-            max: 3,
-            armor_bonus: 25.0,
-            duration_secs: 15.0,
-            selected: crate::player::ElixirKind::Wrath,
-        };
-        let mut codex = LegendaryCodex::default();
-        codex.unlock(LegendaryPower::Stormbrand);
-
-        let text = inventory_panel_header(
-            &stats,
-            &inventory,
-            &equipment,
-            &damage_bonus,
-            &potions,
-            &elixirs,
-            &codex,
-        );
-
-        assert!(text.contains("INVENTORY | I close"));
-        assert!(text.contains("[/] equip weapon"));
-        assert!(text.contains("U salvage 1"));
-        assert!(text.contains("B codex"));
-        assert!(text.contains("O/P armory"));
-        assert!(text.contains("Bag 2/12"));
-        assert!(text.contains("Action [ equip power"));
-        assert!(text.contains("Next legendary Stormcall"));
-        assert!(text.contains("Gold 180 Shards 7 Essence 3 Echo 1"));
-        assert!(text.contains("Elixir V Wrath G 1/3"));
-        assert!(text.lines().count() <= 3);
-        assert!(text.lines().all(|line| line.len() <= 118));
     }
 
     #[test]
@@ -18142,71 +11903,20 @@ mod tests {
     }
 
     #[test]
-    fn loot_proximity_hud_reports_distance_pickup_and_full_inventory() {
-        let move_info = LootProximityInfo {
-            visible: true,
-            priority: "BEST".to_string(),
-            label: "rare Moonforged Cleaver | +9 dmg".to_string(),
-            compare: "AUTO-EQUIP DPS GAIN [DPS] | PWR +7 | dmg +5 crit +0% hp +0 armor +0"
-                .to_string(),
-            rewards: "12 gold".to_string(),
-            distance: LOOT_PICKUP_RADIUS + 1.4,
-            pickup_ready: false,
-            inventory_full: false,
-            spare_salvage_available: false,
-            quality: "rare".to_string(),
+    fn loot_proximity_keeps_item_name_and_action_without_comparison_dump() {
+        let info = LootProximityInfo {
+            label: "rare Moonforged Cleaver | +9 dmg".into(),
+            ..default()
         };
-        let ready_info = LootProximityInfo {
-            pickup_ready: true,
-            distance: LOOT_PICKUP_RADIUS - 0.2,
-            ..move_info.clone()
-        };
-        let full_info = LootProximityInfo {
-            inventory_full: true,
-            spare_salvage_available: true,
-            quality: "legendary".to_string(),
-            ..ready_info.clone()
-        };
-
-        assert!(loot_proximity_summary(&move_info).contains("MOVE TO EQUIP BEST 1.4m"));
-        assert!(loot_proximity_summary(&move_info).contains("equip for DPS"));
-        assert!(loot_proximity_summary(&ready_info).contains("AUTO EQUIP BEST 0.0m"));
-        assert!(loot_proximity_summary(&full_info).contains("AUTO EQUIP"));
-        assert!(loot_proximity_summary(&full_info).contains("U salvage spares"));
-        assert!(loot_compare_auto_equips(&ready_info.compare));
-        let power_info = LootProximityInfo {
-            compare: "AUTO-EQUIP BUILD POWER [CODEX] | PWR +30 | dmg +0 crit +0% hp +0 armor +0 | new power Stormbrand".to_string(),
-            ..ready_info.clone()
-        };
-        assert!(loot_proximity_summary(&power_info).contains("unlock codex power"));
-
-        let craft_info = LootProximityInfo {
-            compare:
-                "SIDEGRADE SOCKET [CRAFT] | PWR -2 | dmg +0 crit +0% hp +0 armor +0 | socket Ruby 3"
-                    .to_string(),
-            ..ready_info.clone()
-        };
-        assert!(loot_proximity_summary(&craft_info).contains("keep for craft"));
-
-        let salvage_info = LootProximityInfo {
-            pickup_ready: false,
-            inventory_full: false,
-            spare_salvage_available: false,
-            compare: "STASH SALVAGE LATER [STASH] | PWR -16 | dmg -8 crit +0% hp +0 armor +0"
-                .to_string(),
-            ..ready_info.clone()
-        };
-        assert!(loot_proximity_summary(&salvage_info).contains("stash or salvage"));
-        let full_salvage_info = LootProximityInfo {
-            inventory_full: true,
-            compare: "FULL MAKE ROOM [SALVAGE] | PWR -16 | dmg -8 crit +0% hp +0 armor +0"
-                .to_string(),
-            ..ready_info.clone()
-        };
-        assert!(loot_proximity_summary(&full_salvage_info).contains("salvage spare"));
-        assert_ne!(
-            loot_proximity_color("rare"),
-            loot_proximity_color("legendary")
+        let text = loot_proximity_summary(&info);
+        assert_eq!(text, "rare Moonforged Cleaver\nMove closer to collect");
+        assert!(!text.contains("PWR"));
+        assert!(
+            loot_proximity_summary(&LootProximityInfo {
+                inventory_full: true,
+                ..info
+            })
+            .contains("[I]")
         );
     }
 
@@ -18388,7 +12098,7 @@ mod tests {
         assert_eq!(
             dash.pulse,
             Some(SkillSlotPulse {
-                slot: SkillSlotText::Dash,
+                slot: SkillSlotText::Mobility,
                 kind: SkillSlotPulseKind::Cast,
             })
         );
@@ -18397,7 +12107,7 @@ mod tests {
         assert_eq!(nova.copy, "FROST NOVA");
         assert_eq!(
             nova.pulse.map(|pulse| pulse.slot),
-            Some(SkillSlotText::Nova)
+            Some(SkillSlotText::Area)
         );
 
         let cooldown = skill_feedback_from_event("Dash not ready 2s").expect("cooldown");
@@ -18405,7 +12115,7 @@ mod tests {
         assert_eq!(
             cooldown.pulse,
             Some(SkillSlotPulse {
-                slot: SkillSlotText::Dash,
+                slot: SkillSlotText::Mobility,
                 kind: SkillSlotPulseKind::Blocked,
             })
         );
@@ -18419,7 +12129,7 @@ mod tests {
         assert_eq!(
             fury.pulse,
             Some(SkillSlotPulse {
-                slot: SkillSlotText::Nova,
+                slot: SkillSlotText::Area,
                 kind: SkillSlotPulseKind::Blocked,
             })
         );
@@ -18778,22 +12488,6 @@ mod tests {
             minimap_position(marker, center),
             minimap_position(marker + translation, center + translation)
         );
-    }
-
-    #[test]
-    fn minimap_objective_line_surfaces_phase_and_compacts_goal() {
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Ritual,
-            objective: "Extinguish the ember altar before Malrec awakens completely".to_string(),
-            ..default()
-        };
-
-        let line = minimap_objective_line(&progress);
-
-        assert!(line.starts_with("Ritual | "));
-        assert!(line.contains("Extinguish the ember altar"));
-        assert!(line.ends_with("..."));
-        assert!(line.chars().count() <= "Ritual | ".chars().count() + 33);
     }
 
     #[test]
@@ -19518,6 +13212,22 @@ mod tests {
     }
 
     #[test]
+    fn hovered_buttons_capture_pointer_before_gameplay_input() {
+        let mut app = App::new();
+        app.init_resource::<UiPointerCapture>()
+            .init_resource::<InventoryOpen>()
+            .init_resource::<BuildOpen>()
+            .init_resource::<JournalOpen>()
+            .add_systems(PreUpdate, update_ui_pointer_capture);
+        let button = app.world_mut().spawn((Button, Interaction::Pressed)).id();
+        app.update();
+        assert!(app.world().resource::<UiPointerCapture>().0);
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::None;
+        app.update();
+        assert!(!app.world().resource::<UiPointerCapture>().0);
+    }
+
+    #[test]
     fn main_menu_uses_generated_reliquary_background_with_readability_scrim() {
         assert_eq!(
             main_menu_background_image_path(),
@@ -19525,7 +13235,7 @@ mod tests {
         );
         assert!(main_menu_background_image_path().ends_with(".png"));
         assert!(main_menu_scrim_alpha() >= 0.55);
-        assert!(main_menu_scrim_alpha() <= 0.75);
+        assert!(main_menu_scrim_alpha() <= 0.95);
     }
 
     #[test]
@@ -21249,398 +14959,6 @@ mod tests {
     }
 
     #[test]
-    fn pylon_reaper_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats {
-            pylon_kills: 2,
-            ..default()
-        };
-
-        assert_eq!(pylon_reaper_summary(&stats), "Pylon Reaper 2/3");
-
-        stats.pylon_kills = 8;
-
-        assert_eq!(pylon_reaper_summary(&stats), "Pylon Reaper 3/3");
-    }
-
-    #[test]
-    fn cursed_pact_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats {
-            cursed_ambush_kills: 2,
-            ..default()
-        };
-
-        assert_eq!(cursed_pact_summary(&stats), "Cursed Pact 2/3");
-
-        stats.cursed_ambush_kills = 8;
-
-        assert_eq!(cursed_pact_summary(&stats), "Cursed Pact 3/3");
-    }
-
-    #[test]
-    fn breaker_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats {
-            breakables_smashed: 2,
-            ..default()
-        };
-
-        assert_eq!(breaker_summary(&stats), "Breaker 2/4");
-
-        stats.breakables_smashed = 8;
-
-        assert_eq!(breaker_summary(&stats), "Breaker 4/4");
-    }
-
-    #[test]
-    fn affix_hunter_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats {
-            elite_affix_kills: 2,
-            ..default()
-        };
-
-        assert_eq!(affix_hunter_summary(&stats), "Affix Hunter 2/3");
-
-        stats.elite_affix_kills = 8;
-
-        assert_eq!(affix_hunter_summary(&stats), "Affix Hunter 3/3");
-    }
-
-    #[test]
-    fn affix_codex_summary_caps_distinct_affixes() {
-        let mut stats = RunStats {
-            affix_codex_mask: 0b1011,
-            ..default()
-        };
-
-        assert_eq!(affix_codex_summary(&stats), "Affix Codex 3/6 next Molten");
-
-        stats.affix_codex_mask = u16::MAX;
-
-        assert_eq!(affix_codex_summary(&stats), "Affix Codex 6/6 complete");
-    }
-
-    #[test]
-    fn nemesis_hunter_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(nemesis_hunter_summary(&stats), "Nemesis Hunter 0/1");
-
-        stats.nemesis_kills = 4;
-
-        assert_eq!(nemesis_hunter_summary(&stats), "Nemesis Hunter 1/1");
-    }
-
-    #[test]
-    fn ashen_threat_summary_caps_at_challenge_requirement() {
-        let mut stats = RunStats {
-            ashen_threat: 140,
-            ashen_threat_surges: 2,
-            ..default()
-        };
-
-        assert_eq!(
-            ashen_threat_summary(&stats),
-            "Ashen Threat 100/100 surge 2/3"
-        );
-
-        stats.ashen_threat_surges = 8;
-
-        assert_eq!(
-            ashen_threat_summary(&stats),
-            "Ashen Threat 100/100 surge 3/3"
-        );
-    }
-
-    #[test]
-    fn rune_weaver_summary_counts_distinct_alternate_rune_hits() {
-        let mut stats = RunStats {
-            reap_dash_hits: 3,
-            frost_nova_hits: 1,
-            ..default()
-        };
-
-        assert_eq!(
-            rune_weaver_summary(&stats),
-            "Rune Weaver 2/3: C Hemorrhage then RMB hit"
-        );
-
-        stats.reap_dash_hits = 0;
-        stats.hemorrhage_rupture_hits = 1;
-        assert_eq!(
-            rune_weaver_summary(&stats),
-            "Rune Weaver 2/3: Z Reap then Q hit"
-        );
-
-        stats.reap_dash_hits = 3;
-
-        stats.hemorrhage_rupture_hits = 1;
-
-        assert_eq!(rune_weaver_summary(&stats), "Rune Weaver 3/3");
-    }
-
-    #[test]
-    fn armory_adept_summary_caps_saved_loadouts() {
-        let mut stats = RunStats {
-            armory_loadouts_saved: 2,
-            ..default()
-        };
-
-        assert_eq!(armory_adept_summary(&stats), "Armory Adept 2/3");
-
-        stats.armory_loadouts_saved = 9;
-
-        assert_eq!(armory_adept_summary(&stats), "Armory Adept 3/3");
-    }
-
-    #[test]
-    fn portal_wayfarer_summary_tracks_return_state() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(portal_wayfarer_summary(&stats), "Portal Wayfarer pending");
-
-        stats.town_portal_returns = 1;
-
-        assert_eq!(portal_wayfarer_summary(&stats), "Portal Wayfarer");
-    }
-
-    #[test]
-    fn treasure_vault_summary_tracks_opened_state() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(treasure_vault_summary(&stats), "Treasure Vault pending");
-
-        stats.treasure_vaults_opened = 1;
-
-        assert_eq!(treasure_vault_summary(&stats), "Treasure Vault opened");
-    }
-
-    #[test]
-    fn glory_seeker_summary_caps_health_globes() {
-        let mut stats = RunStats {
-            health_globes_collected: 2,
-            ..default()
-        };
-
-        assert_eq!(glory_seeker_summary(&stats), "Glory Seeker 2/3");
-
-        stats.health_globes_collected = 9;
-
-        assert_eq!(glory_seeker_summary(&stats), "Glory Seeker 3/3");
-    }
-
-    #[test]
-    fn last_stand_summary_caps_clutch_potions() {
-        let mut stats = RunStats {
-            last_stand_potions: 2,
-            ..default()
-        };
-
-        assert_eq!(last_stand_summary(&stats), "Last Stand 2/3");
-
-        stats.last_stand_potions = 9;
-
-        assert_eq!(last_stand_summary(&stats), "Last Stand 3/3");
-    }
-
-    #[test]
-    fn loot_curator_summary_caps_filter_cycles() {
-        let mut stats = RunStats {
-            loot_filter_cycles: 2,
-            ..default()
-        };
-
-        assert_eq!(loot_curator_summary(&stats), "Loot Curator 2/3");
-
-        stats.loot_filter_cycles = 9;
-
-        assert_eq!(loot_curator_summary(&stats), "Loot Curator 3/3");
-    }
-
-    #[test]
-    fn codex_adept_summary_caps_attuned_kills() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(
-            codex_adept_summary(&stats),
-            "Codex Adept 0/5: B attune power"
-        );
-
-        stats = RunStats {
-            codex_attuned_kills: 3,
-            ..default()
-        };
-
-        assert_eq!(
-            codex_adept_summary(&stats),
-            "Codex Adept 3/5: kill with B power"
-        );
-
-        stats.codex_attuned_kills = 12;
-
-        assert_eq!(codex_adept_summary(&stats), "Codex Adept 5/5");
-    }
-
-    #[test]
-    fn set_adept_summary_caps_set_resonance_kills() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(
-            set_adept_summary(&stats),
-            "Set Adept 0/8: match weapon/charm"
-        );
-
-        stats = RunStats {
-            set_resonance_kills: 6,
-            ..default()
-        };
-
-        assert_eq!(set_adept_summary(&stats), "Set Adept 6/8: keep set kills");
-
-        stats.set_resonance_kills = 12;
-
-        assert_eq!(set_adept_summary(&stats), "Set Adept 8/8");
-    }
-
-    #[test]
-    fn reliquary_set_tactic_guides_theme_matching_and_kill_progress() {
-        let mut equipment = test_equipment("legendary");
-        equipment.weapon_name = "Stormcall Reliquary Brand".to_string();
-        let mut charm = Charm {
-            name: "Moon Charm".to_string(),
-            quality: "legendary".to_string(),
-            damage_bonus: 4.0,
-            crit_chance: 0.02,
-        };
-        let stats = RunStats::default();
-
-        assert_eq!(
-            reliquary_set_tactic(&equipment, &charm, &stats),
-            "Set: match weapon/charm theme"
-        );
-
-        charm.name = "Stormglass Charm".to_string();
-        assert_eq!(
-            reliquary_set_tactic(&equipment, &charm, &stats),
-            "Set Storm chain 0/8"
-        );
-
-        let progressed = RunStats {
-            set_resonance_kills: 5,
-            ..default()
-        };
-        assert_eq!(
-            reliquary_set_tactic(&equipment, &charm, &progressed),
-            "Set Storm chain 5/8"
-        );
-
-        let mastered = RunStats {
-            set_resonance_kills: 12,
-            ..default()
-        };
-        assert_eq!(
-            reliquary_set_tactic(&equipment, &charm, &mastered),
-            "Set Storm chain mastered"
-        );
-    }
-
-    #[test]
-    fn gem_adept_summary_counts_socketed_gem_kinds() {
-        let mut stats = RunStats {
-            ruby_socketed: true,
-            emerald_socketed: true,
-            ..default()
-        };
-
-        assert_eq!(gem_adept_summary(&stats), "Gem Adept 2/4");
-
-        stats.amethyst_socketed = true;
-        stats.topaz_socketed = true;
-
-        assert_eq!(gem_adept_summary(&stats), "Gem Adept 4/4");
-    }
-
-    #[test]
-    fn shrine_resonance_summary_tracks_triggered_state() {
-        let mut stats = RunStats::default();
-
-        assert_eq!(shrine_resonance_summary(&stats), "Shrine Resonance pending");
-
-        stats.shrine_resonance_triggered = true;
-
-        assert_eq!(shrine_resonance_summary(&stats), "Shrine Resonance");
-    }
-
-    #[test]
-    fn chapter_route_summary_tracks_mainline_optional_and_threat() {
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Ritual,
-            enemies_slain: 5,
-            seal_fragments: 2,
-            ..default()
-        };
-        let stats = RunStats {
-            ashen_threat: 82,
-            champion_pack_reward_claimed: true,
-            breakables_smashed: BREAKER_TARGET_BREAKABLES,
-            pylon_kills: PYLON_REAPER_KILLS,
-            cursed_ambush_kills: CURSED_AMBUSH_KILLS,
-            elite_affix_kills: AFFIX_HUNTER_KILLS,
-            shrine_resonance_triggered: true,
-            ..default()
-        };
-        let bounty = BountyProgress {
-            reward_claimed: true,
-            ..default()
-        };
-        let obelisk = BloodObelisk {
-            state: ObeliskState::Completed,
-            ..default()
-        };
-        let rift = EmberRift {
-            state: RiftState::Completed,
-            ..default()
-        };
-
-        let summary = chapter_route_summary(&progress, &stats, &bounty, &obelisk, &rift);
-
-        assert!(summary.contains(">Ritual<"));
-        assert!(summary.contains("73%"));
-        assert!(summary.contains("Optional 9/9"));
-        assert!(summary.contains("Threat surging"));
-        assert!(summary.contains("Next restore final seal 2/3"));
-        assert!(summary.contains("PAYOFF Final seal"));
-    }
-
-    #[test]
-    fn chapter_mainline_percent_advances_by_phase() {
-        let breach = ChapterProgress {
-            enemies_slain: 2,
-            ..default()
-        };
-        let boss = ChapterProgress {
-            phase: ChapterPhase::Boss,
-            seal_fragments: REQUIRED_SEAL_FRAGMENTS,
-            boss_spawned: true,
-            ..default()
-        };
-        let victory = ChapterProgress {
-            phase: ChapterPhase::Victory,
-            boss_slain: true,
-            ..default()
-        };
-
-        assert!((chapter_mainline_percent(&breach) - 13.333).abs() < 0.01);
-        assert_eq!(chapter_mainline_percent(&boss), 80.0);
-        assert_eq!(chapter_mainline_percent(&victory), 100.0);
-        assert!(chapter_route_nodes(ChapterPhase::Boss).contains(">Boss<"));
-        assert_eq!(chapter_route_nodes_compact(&boss), "B>C>S>R>[M]");
-        let hollow_boss = ChapterProgress {
-            title: ChapterId::HollowBastion.title().to_string(),
-            ..boss
-        };
-        assert_eq!(chapter_route_nodes_compact(&hollow_boss), "B>C>S>R>[N]");
-    }
-
-    #[test]
     fn chapter_quest_log_surfaces_main_bounty_and_side_objectives() {
         let progress = ChapterProgress {
             phase: ChapterPhase::Ritual,
@@ -21716,19 +15034,11 @@ mod tests {
     }
 
     #[test]
-    fn chapter_quest_board_surfaces_main_side_story_and_threat() {
+    fn chapter_quest_board_prioritizes_readable_objectives_without_diagnostics() {
         let progress = ChapterProgress {
             phase: ChapterPhase::Ritual,
             objective: "Extinguish the ember altar".to_string(),
             seal_fragments: 2,
-            ..default()
-        };
-        let stats = RunStats {
-            champion_pack_kills: 3,
-            breakables_smashed: BREAKER_TARGET_BREAKABLES,
-            pylon_kills: PYLON_REAPER_KILLS,
-            cursed_ambush_kills: CURSED_AMBUSH_KILLS,
-            ashen_threat: 84,
             ..default()
         };
         let bounty = BountyProgress {
@@ -21748,126 +15058,32 @@ mod tests {
             best_remaining_secs: crate::rift::RIFT_SWIFT_SEAL_SECS,
             ..default()
         };
-        let mut story = StoryLog::default();
-        story.record(crate::story::StoryBeat::CursedShrine);
-        story.record(crate::story::StoryBeat::BloodObelisk);
-        story.record(crate::story::StoryBeat::EmberRift);
-
-        let board = chapter_quest_board_text(&progress, &stats, &bounty, &obelisk, &rift, &story);
+        let board = chapter_quest_board_text(&progress, &bounty, &obelisk, &rift);
 
         for expected in [
-            "QUEST BOARD",
-            "Main",
-            "Optional",
-            "Story",
-            "Threat",
-            "Priority",
-            "Bounty",
-            "Champion",
-            "Breaker",
-            "Obelisk",
-            "Rift",
-            "Lore",
-            "Ember Rift",
-            "Next:",
-            "Reward:",
+            "JOURNEY",
+            "CURRENT OBJECTIVE",
+            "Extinguish the ember altar",
+            "Seals recovered  2/3",
+            "BOUNTY",
+            "BLOOD RITE",
+            "2/4",
         ] {
             assert!(board.contains(expected), "{expected} missing from {board}");
         }
-        assert!(board.contains("restore final seal 2/3"));
-        assert!(board.contains("Priority feed obelisk 2/4"));
-        assert!(board.contains("obelisk gold, shards, essence"));
-        assert!(board.lines().count() <= 6);
-        for line in board.lines() {
-            assert!(line.chars().count() <= 125, "{line}");
+        for removed in [
+            "QUEST BOARD",
+            "Priority",
+            "Threat",
+            "Route",
+            "Optional",
+            " | ",
+        ] {
+            assert!(!board.contains(removed), "diagnostic {removed} in {board}");
         }
-    }
-
-    #[test]
-    fn chapter_quest_priority_guides_timed_claim_threat_and_cleanup() {
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Ritual,
-            seal_fragments: 2,
-            ..default()
-        };
-        let stats = RunStats::default();
-        let bounty = BountyProgress::default();
-        let obelisk = BloodObelisk::default();
-        let story = StoryLog::default();
-        let active_rift = EmberRift {
-            state: RiftState::Active,
-            kills: 4,
-            target_kills: crate::rift::RIFT_TARGET_KILLS,
-            remaining_secs: crate::rift::RIFT_SWIFT_SEAL_SECS,
-            ..default()
-        };
-
-        assert_eq!(
-            chapter_quest_priority(&progress, &stats, &bounty, &obelisk, &active_rift, &story),
-            "seal rift 4/6 for Echo"
-        );
-
-        let claimable_bounty = BountyProgress {
-            completed: true,
-            reward_claimed: false,
-            ..default()
-        };
-        assert_eq!(
-            chapter_quest_priority(
-                &progress,
-                &stats,
-                &claimable_bounty,
-                &obelisk,
-                &EmberRift::default(),
-                &story
-            ),
-            "claim bounty cache"
-        );
-
-        let threat_stats = RunStats {
-            ashen_threat: 90,
-            ..default()
-        };
-        assert_eq!(
-            chapter_quest_priority(
-                &progress,
-                &threat_stats,
-                &bounty,
-                &obelisk,
-                &EmberRift::default(),
-                &story
-            ),
-            "stabilize threat surge"
-        );
-
-        assert_eq!(
-            chapter_quest_priority(
-                &progress,
-                &stats,
-                &bounty,
-                &obelisk,
-                &EmberRift::default(),
-                &story
-            ),
-            "restore final seal 2/3"
-        );
-
-        let victory = ChapterProgress {
-            phase: ChapterPhase::Victory,
-            boss_slain: true,
-            ..default()
-        };
-        assert!(
-            chapter_quest_priority(
-                &victory,
-                &stats,
-                &bounty,
-                &obelisk,
-                &EmberRift::default(),
-                &story
-            )
-            .contains("side:")
-        );
+        for line in board.lines() {
+            assert!(line.chars().count() <= 70, "{line}");
+        }
     }
 
     #[test]
@@ -22247,7 +15463,7 @@ mod tests {
             companion: &test_companion(CompanionStance::Guardian, 9.0),
             boss: None,
         });
-        assert!(momentum_guide.contains("Momentum 3x: spend Q/RMB/E burst on Malrec"));
+        assert!(momentum_guide.contains("Momentum 3x: spend Q/R/E burst on Malrec"));
 
         let active_rift = EmberRift {
             state: RiftState::Active,
@@ -22981,13 +16197,13 @@ mod tests {
         );
 
         let runes = RunStats {
-            reap_dash_hits: 2,
-            frost_nova_hits: 1,
+            reap_hits: 2,
+            frost_hits: 1,
             ..default()
         };
         assert_eq!(
             action_guide_progression_pursuit(&runes, &equipment),
-            Some("Pursuit: Rune Weaver 2/3 - C Hemorrhage then RMB hit".to_string())
+            Some("Pursuit: Rune Weaver 2/3 - C Hemorrhage then R hit".to_string())
         );
 
         let mut legendary = test_equipment("legendary");
@@ -23231,132 +16447,6 @@ mod tests {
     }
 
     #[test]
-    fn game_over_summary_surfaces_soul_ward_failure() {
-        let stats = RunStats {
-            elapsed_secs: 481.0,
-            kills: 6,
-            gold: 20,
-            ..default()
-        };
-        let difficulty = DifficultySettings {
-            current: crate::Difficulty::Nightmare,
-        };
-        let report = DeathWardReport {
-            revives_used: 2,
-            max_revives: 2,
-            gold_penalty: 60,
-            gold_available: 20,
-            reason: "revive charges exhausted".to_string(),
-        };
-
-        let stats_summary = game_over_stats_summary(&stats, &difficulty);
-        let ward_summary = report.summary();
-        let mut records = ChapterRecords::default();
-        let remnant = claim_soul_remnant(&mut records, &stats, difficulty.current);
-        let deed_reward = claim_completed_season_deeds(&mut records);
-        let remnant_summary = soul_remnant_summary(remnant, deed_reward, &records);
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Ritual,
-            seal_fragments: 2,
-            ..default()
-        };
-        let scorecard = death_scorecard_summary(&progress, &stats, &report, remnant);
-        let pursuit =
-            death_pursuit_summary(&progress, &stats, difficulty.current, &report, remnant);
-
-        assert!(stats_summary.contains("Difficulty: Nightmare"));
-        assert!(stats_summary.contains("Time: 8:01"));
-        assert!(ward_summary.contains("revive charges exhausted"));
-        assert!(ward_summary.contains("revives 2/2"));
-        assert!(remnant_summary.contains("Soul Remnant: recovered"));
-        assert!(remnant_summary.contains("failures 1"));
-        assert!(scorecard.contains("Failure Scorecard"));
-        assert!(scorecard.contains("Main 73%"));
-        assert!(scorecard.contains("Ward short 40g"));
-        assert!(scorecard.contains("Kills 6"));
-        assert!(scorecard.contains("Remnant +"));
-        assert!(scorecard.contains("Next: bank gold for ward"));
-        assert!(pursuit.contains("ward short on gold"));
-        assert!(pursuit.contains("use well/quartermaster before altar"));
-        assert!(pursuit.contains("banked +"));
-        assert!(pursuit.contains("replay Nightmare"));
-        assert_eq!(records.failed_runs, 1);
-        assert_eq!(records.stash_gold, remnant.gold);
-    }
-
-    #[test]
-    fn death_pursuit_guides_early_and_boss_failures() {
-        let report = DeathWardReport {
-            revives_used: 2,
-            max_revives: 2,
-            gold_penalty: 40,
-            gold_available: 80,
-            reason: "revive charges exhausted".to_string(),
-        };
-        let early = death_pursuit_summary(
-            &ChapterProgress::default(),
-            &RunStats::default(),
-            crate::Difficulty::Normal,
-            &report,
-            ProfileStashBonus::default(),
-        );
-        assert!(early.contains("ward charges spent"));
-        assert!(early.contains("survive first room"));
-        assert!(early.contains("no remnant banked"));
-        let early_scorecard = death_scorecard_summary(
-            &ChapterProgress::default(),
-            &RunStats::default(),
-            &report,
-            ProfileStashBonus::default(),
-        );
-        assert!(early_scorecard.contains("Main 0%"));
-        assert!(early_scorecard.contains("Ward spent 2/2"));
-        assert!(early_scorecard.contains("No remnant"));
-        assert!(early_scorecard.contains("Next: kite and potion early"));
-
-        let boss_progress = ChapterProgress {
-            phase: ChapterPhase::Boss,
-            boss_spawned: true,
-            seal_fragments: REQUIRED_SEAL_FRAGMENTS,
-            ..default()
-        };
-        let boss_stats = RunStats {
-            elapsed_secs: 420.0,
-            kills: 34,
-            boss_staggers: 1,
-            ..default()
-        };
-        let boss = death_pursuit_summary(
-            &boss_progress,
-            &boss_stats,
-            crate::Difficulty::Hell,
-            &report,
-            ProfileStashBonus {
-                gold: 90,
-                shards: 2,
-                essence: 1,
-            },
-        );
-        assert!(boss.contains("repeat break window"));
-        assert!(boss.contains("banked +90g +2s +1e"));
-        assert!(boss.contains("replay Hell"));
-        let boss_scorecard = death_scorecard_summary(
-            &boss_progress,
-            &boss_stats,
-            &report,
-            ProfileStashBonus {
-                gold: 90,
-                shards: 2,
-                essence: 1,
-            },
-        );
-        assert!(boss_scorecard.contains("Main 80%"));
-        assert!(boss_scorecard.contains("Boss breaks 1/2"));
-        assert!(boss_scorecard.contains("Remnant +90g +2s +1e"));
-        assert!(boss_scorecard.contains("Next: save Surge for execute"));
-    }
-
-    #[test]
     fn soul_remnant_deed_claims_on_failed_run_recap() {
         let stats = RunStats {
             elapsed_secs: 240.0,
@@ -23376,7 +16466,6 @@ mod tests {
 
         let remnant = claim_soul_remnant(&mut records, &stats, crate::Difficulty::Nightmare);
         let deed_reward = claim_completed_season_deeds(&mut records);
-        let summary = soul_remnant_summary(remnant, deed_reward, &records);
 
         assert_eq!(records.failed_runs, 3);
         assert!(
@@ -23392,8 +16481,8 @@ mod tests {
                 essence: 3,
             }
         );
-        assert!(summary.contains("deed +200 gold +7 shards +3 essence"));
-        assert!(summary.contains("failures 3"));
+        assert!(records.stash_gold >= remnant.gold + deed_reward.gold);
+        assert!(records.stash_shards >= remnant.shards + deed_reward.shards);
     }
 
     #[test]
@@ -23609,98 +16698,6 @@ mod tests {
     }
 
     #[test]
-    fn pause_help_surfaces_objective_progress_and_core_actions() {
-        let progress = ChapterProgress {
-            phase: ChapterPhase::Ritual,
-            objective: "Extinguish the ember altar".to_string(),
-            seal_fragments: 2,
-            ..default()
-        };
-        let difficulty = DifficultySettings {
-            current: crate::Difficulty::Nightmare,
-        };
-        let modifier = ChapterModifier {
-            kind: crate::ordeal::ChapterModifierKind::BloodTithe,
-            affix: crate::ordeal::OrdealAffix::None,
-        };
-        let stats = RunStats {
-            elapsed_secs: 180.0,
-            kills: 8,
-            champion_pack_kills: 2,
-            nemesis_kills: 1,
-            ashen_threat: 48,
-            stash_bonus_gold: 25,
-            stash_bonus_shards: 1,
-            stash_bonus_essence: 1,
-            stash_bonus_claimed: true,
-            altar_seals: 1,
-            altar_bonus_gold: 25,
-            altar_bonus_shards: 0,
-            altar_bonus_essence: 0,
-            altar_bonus_claimed: true,
-            ..default()
-        };
-        let challenges = ChapterChallenges::new();
-        let milestones = Milestones::default();
-        let mastery = ChapterMastery::default();
-        let journey = journey_summary(&challenges, &milestones, &mastery);
-        let story = StoryLog::default();
-
-        let text = pause_help_text(PauseHelpInputs {
-            progress: &progress,
-            difficulty: &difficulty,
-            modifier: &modifier,
-            stats: &stats,
-            journey: &journey,
-            clear_summary: "Chapter Clear: Projected C | Main 73% | Optional 2/9 | Story 1/14 | Threat low | S +6 side +9 story",
-            season_deeds: "Next deed First Reliquary Clear: clear the chapter once",
-            bestiary_goal: "Bestiary next: record Ashbone Guard",
-            codex_goal: "Codex next: find a legendary weapon power",
-            crafting_goal: "Primal next: seal a swift Ember Rift for an Echo Keystone",
-            mastery_goal: "Mastery next: Treasure Hunter - slay the reliquary treasure imp",
-            story: &story,
-            quest_log: "Quest Log: Main Recover seals 2/3",
-            action_guide: "Action Guide: Press Space at the ember altar",
-            detailed_status: "Character: test details",
-            systems_status: "Champion Pack 2/4 | Nemesis Hunter 1/1 | Ashen Threat 48/100",
-            inventory_open: true,
-            journal_open: false,
-            audio_status: "audio muted",
-        });
-
-        assert!(text.contains("PAUSED | Esc resume"));
-        assert!(text.contains("Extinguish the ember altar"));
-        assert!(text.contains("Seals 2/3"));
-        assert!(text.contains("Nightmare"));
-        assert!(text.contains("Blood Tithe"));
-        assert!(text.contains("Story 1/14"));
-        assert!(text.contains("Action Guide: Press Space at the ember altar"));
-        assert!(text.contains("Quest Log: Main Recover seals 2/3"));
-        assert!(text.contains("Chapter Clear: Projected C"));
-        assert!(text.contains("Journey: Initiate"));
-        assert!(text.contains("Next deed First Reliquary Clear"));
-        assert!(text.contains("Bestiary next: record Ashbone Guard"));
-        assert!(text.contains("Codex next: find a legendary"));
-        assert!(text.contains("Primal next: seal a swift Ember Rift"));
-        assert!(text.contains("Mastery next: Treasure Hunter"));
-        assert!(text.contains("Q/E skills"));
-        assert!(text.contains("B codex"));
-        assert!(text.contains("U salvage"));
-        assert!(text.contains("F potion"));
-        assert!(text.contains("Champion Pack 2/4"));
-        assert!(text.contains("Nemesis Hunter 1/1"));
-        assert!(text.contains("Ashen Threat 48/100"));
-        assert!(text.contains("Renown: none"));
-        assert!(text.contains("Stash start +25 gold +1 shards +1 essence"));
-        assert!(text.contains("Inventory open"));
-        assert!(text.contains("Journal closed"));
-        assert!(text.contains("Audio: audio muted (M)"));
-        assert!(!text.contains("Boss Breaks"));
-        assert!(text.lines().count() <= 13);
-        assert!(text.lines().all(|line| line.len() <= 145));
-    }
-
-    #[test]
     fn ordeal_tactics_surface_live_rule_counterplay() {
         let base = "Action Guide: Slay reliquary guards 1/3 | Side Champion 0/4".to_string();
         let progress = ChapterProgress {
@@ -23751,75 +16748,6 @@ mod tests {
             ),
             base
         );
-    }
-
-    #[test]
-    fn modifier_system_summary_includes_reward_rule_and_tactic() {
-        let modifier = ChapterModifier {
-            kind: crate::ordeal::ChapterModifierKind::TormentBrand,
-            affix: OrdealAffix::CinderVeins,
-        };
-        let summary = modifier_system_summary(&modifier);
-
-        assert!(summary.contains("Ordeal Torment Brand + Cinder Veins"));
-        assert!(summary.contains("brutal enemies"));
-        assert!(summary.contains("vents and hazards bite harder"));
-        assert!(summary.contains("tactic avoid vents and pools"));
-        assert!(summary.len() <= 180);
-    }
-
-    #[test]
-    fn character_status_summary_stays_readable_and_combat_focused() {
-        let mut equipment = test_equipment("legendary");
-        equipment.legendary_power = LegendaryPower::Stormbrand;
-        equipment.socketed_gem = Some(SocketedGem {
-            kind: crate::player::GemKind::Emerald,
-            rank: 3,
-        });
-        equipment.armor_bonus = 18.0;
-        let level = PlayerLevel {
-            level: 7,
-            xp: 40,
-            next_level_xp: 100,
-        };
-        let paragon = EmberParagon {
-            rank: 2,
-            xp: 10,
-            next_rank_xp: 80,
-        };
-        let elixir = inactive_elixir_buff();
-        let ward = DeathWard {
-            checkpoint: Vec3::ZERO,
-            revives_used: 1,
-            max_revives: 2,
-            gold_penalty: 40,
-        };
-        let companion = test_companion(CompanionStance::Vanguard, 0.0);
-
-        let summary = character_status_summary(CharacterStatusInputs {
-            level: &level,
-            paragon: &paragon,
-            equipment: &equipment,
-            elixir_buff: &elixir,
-            death_ward: &ward,
-            resonance: "Resonance: legendary storm set active",
-            set_tactic: "Set Storm chain 4/8",
-            gem_resonance: "Gem Resonance: emerald sharpens critical chance",
-            companion: &companion,
-            boss: "Malrec phase two | stagger 40%",
-        });
-
-        assert!(summary.contains("L7 P2"));
-        assert!(summary.contains("Ward 1"));
-        assert!(summary.contains("Stormbrand"));
-        assert!(summary.contains("Emerald 3"));
-        assert!(summary.contains("Set Storm chain 4/8"));
-        assert!(summary.contains("Sentinel"));
-        assert!(summary.contains("Boss Malrec"));
-        assert!(!summary.contains("Boss Breaks"));
-        assert!(!summary.contains("Kills"));
-        assert!(!summary.contains("Treasure Vault"));
-        assert!(summary.len() <= 170);
     }
 
     #[test]

@@ -63,33 +63,6 @@ impl LoreJournal {
         self.latest = format!("{}: {}", entry.title(), entry.body());
         true
     }
-
-    pub fn summary(&self) -> String {
-        if self.entries.is_empty() {
-            return "Journal 0/3: no lore recovered".to_string();
-        }
-        format!(
-            "Journal {}/{}: {}",
-            self.entries.len(),
-            LORE_ENTRY_COUNT,
-            self.entries
-                .iter()
-                .map(|entry| entry.title())
-                .collect::<Vec<_>>()
-                .join(" | ")
-        )
-    }
-
-    pub fn open_text(&self) -> String {
-        if self.entries.is_empty() {
-            return "Journal: no lore recovered".to_string();
-        }
-        self.entries
-            .iter()
-            .map(|entry| format!("{} - {}", entry.title(), entry.body()))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    }
 }
 
 pub struct LorePlugin;
@@ -165,7 +138,7 @@ mod tests {
         assert!(journal.discover(LoreEntryId::StewardWarning));
         assert!(!journal.discover(LoreEntryId::StewardWarning));
         assert_eq!(journal.entries.len(), 1);
-        assert!(journal.summary().contains("Steward"));
+        assert!(journal.latest.contains("Steward"));
     }
 
     #[test]

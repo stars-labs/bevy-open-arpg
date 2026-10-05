@@ -96,7 +96,7 @@ resolve_wasm_opt() {
 WASM_OPT_BIN="$(resolve_wasm_opt || true)"
 [ -n "$WASM_OPT_BIN" ] && echo ">> wasm-opt: $("$WASM_OPT_BIN" --version)"
 
-# rand 0.9 → getrandom 0.3 needs the JS backend selected via rustflags on
+# rand 0.10 → getrandom 0.4 needs the JS backend selected via rustflags on
 # wasm32-unknown-unknown (the cargo feature alone is not enough).
 export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--cfg getrandom_backend=\"wasm_js\""
 

@@ -1,3 +1,4 @@
+use crate::class::{ClassCatalog, SelectedClass};
 use crate::player::{GearSlot, LegendaryPower};
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -7,16 +8,18 @@ use std::fs;
 
 #[derive(Clone, Debug, Deserialize, Resource)]
 pub struct PlayerTuning {
-    pub move_speed: f32,
-    pub max_health: f32,
-    pub basic_damage: f32,
-    pub basic_range: f32,
-    pub dash_damage: f32,
-    pub dash_cooldown: f32,
-    pub dash_distance: f32,
-    pub nova_damage: f32,
-    pub nova_cooldown: f32,
-    pub nova_radius: f32,
+    pub growth: CombatGrowthTuning,
+}
+
+/// Combat changes unlocked by spending points; presentation reads the same values.
+#[derive(Clone, Debug, Deserialize)]
+pub struct CombatGrowthTuning {
+    pub wrath_first_impact_bonus: f32,
+    pub wrath_impact_per_rank: f32,
+    pub vigor_base_barrier: f32,
+    pub vigor_barrier_per_rank: f32,
+    pub focus_base_fury: f32,
+    pub focus_fury_per_rank: f32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -99,7 +102,9 @@ impl Plugin for GameDataPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(load_ron::<PlayerTuning>("assets/data/player.ron"))
             .insert_resource(load_ron::<EnemyCatalog>("assets/data/enemies.ron").hydrate())
-            .insert_resource(load_ron::<LootTable>("assets/data/loot.ron"));
+            .insert_resource(load_ron::<LootTable>("assets/data/loot.ron"))
+            .insert_resource(load_ron::<ClassCatalog>("assets/data/classes.ron"))
+            .init_resource::<SelectedClass>();
     }
 }
 
@@ -124,6 +129,7 @@ fn data_file_content(path: &str) -> &'static str {
         "assets/data/player.ron" => include_str!("../assets/data/player.ron"),
         "assets/data/enemies.ron" => include_str!("../assets/data/enemies.ron"),
         "assets/data/loot.ron" => include_str!("../assets/data/loot.ron"),
+        "assets/data/classes.ron" => include_str!("../assets/data/classes.ron"),
         _ => panic!("no embedded data file for {path}"),
     }
 }

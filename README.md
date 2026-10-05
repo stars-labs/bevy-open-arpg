@@ -20,6 +20,14 @@ The campaign narrative is data-driven across 18 mainline scenes, nine per chapte
 
 Continuing from Chapter I carries the hero's level, equipment, inventory, talents, runes, codex, gems, armory, potion upgrades, and companion into Chapter II. Completing Chapter II advances the difficulty and begins the next campaign cycle.
 
+## Hero classes
+
+New campaigns start with a class selection: **Ashbound Warden** (melee sword and Fury), **Boneshot Stalker** (bow and Malice), or **Embercaller** (staff and Arcana). Each class has its own basic attack, passive, character model, six active skills and two rune choices per skill. Skills unlock across levels 1–6; equip one movement skill on `Q`, area skill on `E`, and finisher on `R` in the Skills & Talents panel (`K`). Class and loadout persist in native saves.
+
+Right-click moves; left-click attacks. The interface defaults to Simplified Chinese, with language selection in Settings. Skill releases follow their actual combat shape and damage timing.
+
+The current production build and 21 native skill recordings pass validation. The full unit suite remains blocked by 313 references to the pre-class skill API; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
+
 ## Running
 
 ```bash
@@ -203,7 +211,7 @@ cargo run -- --headless-smoke --smoke-chapter=2 --smoke-frames=120
 
 Headless mode always disables native audio and render-only debug plugins, regardless of saved preferences. `--smoke-chapter=1|2` enters that chapter and fails the process unless the game reaches `InGame` with exactly one player, making it suitable for CI gameplay startup checks.
 
-On Linux, Bevy Open ARPG defaults Bevy's renderer to a conservative WGPU compatibility profile to avoid driver-specific Vulkan startup stalls. If you need to override it while debugging, set:
+Native builds use Bevy's default device features and priority, which provide the texture capabilities required by bloom and atmospheric scattering. Explicit renderer profiles remain available for backend diagnostics:
 
 ```bash
 BEVY_OPEN_ARPG_RENDER_PROFILE=functionality cargo run
@@ -236,8 +244,9 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `Left Shift`: evade with a short burst of speed and invulnerability
 - Gamepad left stick: move
 - Gamepad east / right trigger: evade
-- `Left Mouse`: strike
-- `Right Mouse`: rupture cleave and expose enemies
+- `Left Mouse`: attack an enemy (approach if needed), or swing in place on empty ground
+- `Right Mouse`: move to the cursor; cancels automatic attacks
+- `R`: rupture cleave and expose enemies
 - `Q`: dash slash
 - `E`: ember nova
 - `Y`: unleash Nephalem Surge when fully charged
@@ -261,15 +270,16 @@ Every desktop run prints a startup line with the selected window mode, X11/Wayla
 - `;`: don the strongest bagged piece for every paper-doll armor slot (helm, chest, gloves, boots, amulet, ring)
 - `Space`: interact with chapter objectives and the quartermaster
 - `I`: open inventory (click a bag slot to equip it; click a worn paper-doll piece to stow it)
-- `K`: open build and talent panel
+- `K`: open Skills & Talents; select skill runes with the mouse and switch to Talents to spend points
 - `J`: open the task, story, and lore journal
 - `M`: mute or restore generated combat audio
 - Gamepad north: mute or restore generated combat audio
 - `F2`: toggle clean or tactical HUD density
 - `F4` with `--features dev_tools`: cycle Bevy picking debug overlay
-- `F8` with `--features dev_tools -- --free-camera`: grab/release debug free-camera cursor
+- `F10` with `--features dev_tools -- --free-camera`: grab/release debug free-camera cursor
 - Arrow keys / PageUp / PageDown with `--features dev_tools -- --free-camera`: move the debug free camera
 - `F3`: toggle debug combat-area and player-radius gizmos
+- **Settings → Language**: select 简体中文 or English; the choice is saved automatically. Settings is available from the title screen and while paused.
 - `F7`: toggle Bevy UI debug outlines for checking HUD/menu overlap
 - `F5`: save slot 1
 - `F6`: copy current run/debug summary to the system clipboard
@@ -388,12 +398,13 @@ Chapter I, "The Ashen Reliquary", is a playable vertical slice:
 - Crack the resplendent reliquary vault for a one-time high-value reward cache.
 - Drink potions under cooldown pressure, with low-health drinks tracked toward Last Stand, then upgrade the potion belt for more charges and faster recovery.
 - Use Iron, Wrath, and Haste elixirs for temporary armor and barrier, damage, or movement-speed pressure tools.
-- Spend level-up talent points on damage, survivability, or cooldown reduction; investing in Wrath, Vigor, and Focus completes Talent Adept.
-- Keep earning Ember Paragon XP after level 6; each Paragon rank rotates permanent damage, health, critical chance, and armor gains for long-tail progression, and rank 1 completes the Paragon Awakened challenge and Ember Paragon milestone.
+- Leveling up restores life and displays the actual maximum-life, damage and talent-point rewards, with a brief ground pulse and sound. A persistent unspent-point button opens Talents; click the next rank to invest in damage, survivability, or cooldown reduction; investing in Wrath, Vigor, and Focus completes Talent Adept.
+- Each talent branch also changes combat: Wrath strengthens enemy recoil, Vigor grants a shield once per damaging R/Q/E cast, and Focus grants extra Fury once per damaging basic strike. Empty swings grant no talent rewards. Weapon contact, animation and attack cooldown scale together; hits briefly hold the blade, drag and release, while misses remain fluid.
+- Keep earning Ember Paragon XP after level 6; every Paragon rank also grants one talent point, making eight-rank talents reachable; each Paragon rank rotates permanent damage, health, critical chance, and armor gains for long-tail progression, and rank 1 completes the Paragon Awakened challenge and Ember Paragon milestone.
 - Cycle skill runes for dash cleanse/reap, rupture expose/hemorrhage, and nova ember/frost variants; landing hits with Reap dash, Hemorrhage rupture, and Frost nova in one run completes Rune Weaver.
 - Both chapters now field distinct combat roles: Ashbone Guards and Hollowbound Thralls hold the line; Ashbone and Hollowbound Stalkers rush and flank; Cinder and Choir casters control space; Reliquary Marksmen and Hollow Cantors maintain range; Bonebreakers and Soul Reavers advance slowly behind heavy shockwaves; and each warden carries a signature rune attack.
 - Combat, chapter objectives, and interactable sites use Blender-generated hero and enemy silhouettes, named hit bones, shrines, wells, rifts, pylons, lore pages, breakables, slash arcs, hit sparks, bone shatters, bone-impact bursts, blood sprays, execution blood seals, arcane impacts, holy impacts, ember impacts, frost impacts, void impacts, guard-clash sparks, armor-break shards, soul-ward hits, hit-bone runes, hit-bone locks, marrow flashes, fracture echoes, shadow bursts, headshot bursts, critical bone crowns, critical bursts, dash shadow trails, stagger bursts, objective sigils, ember vents, boss summoning seals, pulsing elite affix aura rings with colored threat lights, and high-value loot prisms for readable hit, movement, hazard, mainline, boss-break, exploration, elite-pressure, and death-reward feedback.
-- Regenerate the Hollow Bastion enemy, boss, Soul Font, and soul-fissure GLBs with Blender using `blender --background --python tools/blender/generate_hollow_bastion.py`.
+- Regenerate the Hollow Bastion enemy, boss, Soul Font, and soul-fissure GLBs with Blender using the dedicated `generate_reliquary_enemies.py` and `generate_reliquary_props.py` generators.
 - Key reliquary sites, shrines, rifts, ember vents, and the boss summoning seal cast colored pulsing point lights so threats and rewards read clearly in the isometric dungeon.
 - Combat events play generated, gain-balanced audio cues for hits, criticals, loot, danger warnings, enemy deaths, victory, and defeat, with boss and clear cues mixed above common hit spam.
 - Hit feedback is placed at named hit-bone contact zones such as head, chest, weapon, left, and right so criticals, skeletons, guarded enemies, arcane elites, jailer/frozen enemies, vampiric or desecrator enemies, cultists, Seal Warden Vhal, and bosses read differently in motion.
@@ -416,7 +427,7 @@ Run the Blender generators after changing model scripts:
 nix develop -c blender --background --factory-startup \
   --python tools/blender/generate_assets.py
 nix develop -c blender --background --factory-startup \
-  --python tools/blender/generate_hollow_bastion.py
+  --python tools/blender/generate_reliquary_environment.py
 nix develop -c blender --background --factory-startup \
   --python tools/blender/generate_enemy_roster.py
 nix develop -c blender --background --factory-startup \
@@ -443,3 +454,5 @@ cargo check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+Interface typography, icon assets and interaction styling are documented in [UI style](docs/UI_STYLE.md).

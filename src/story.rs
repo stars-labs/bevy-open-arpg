@@ -195,15 +195,6 @@ impl StoryLog {
         }
     }
 
-    pub fn summary(&self) -> String {
-        let latest = if self.latest.is_empty() {
-            StoryBeat::Arrival.line()
-        } else {
-            self.latest.as_str()
-        };
-        format!("Story {}/{}: {latest}", self.beats.len(), StoryBeat::TOTAL)
-    }
-
     pub fn recap(&self) -> String {
         if self.beats.is_empty() {
             return StoryBeat::Arrival.line().to_string();
@@ -462,10 +453,6 @@ pub fn dialogue_events_for(beat: StoryBeat) -> Vec<StoryDialogueEvent> {
         .collect()
 }
 
-pub fn story_summary(story: &StoryLog) -> String {
-    story.summary()
-}
-
 pub fn story_recap(story: &StoryLog) -> String {
     story.recap()
 }
@@ -482,8 +469,7 @@ mod tests {
         assert!(!story.record(StoryBeat::CacheRevealed));
 
         assert_eq!(story.beats.len(), 2);
-        assert!(story.summary().contains("Cache Revealed"));
-        assert!(story.summary().contains("Story 2/14"));
+        assert!(story.beats.contains(&StoryBeat::CacheRevealed));
         assert!(story.recap().contains("Arrival > Cache Revealed"));
     }
 
@@ -523,7 +509,6 @@ mod tests {
         assert!(story.recap().contains("Resplendent Vault"));
         assert!(story.recap().contains("Ember Rift"));
         assert!(story.latest.contains("Ashen Pylon"));
-        assert!(story.summary().contains("Story 6/14"));
     }
 
     #[test]

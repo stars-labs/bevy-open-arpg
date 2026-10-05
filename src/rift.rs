@@ -246,19 +246,6 @@ pub fn rift_completion_reward(
         echo_keystone: swift_bonus,
     }
 }
-
-pub fn rift_summary(rift: &EmberRift) -> String {
-    match rift.state {
-        RiftState::Sealed => "Rift: sealed".to_string(),
-        RiftState::Active => format!(
-            "Rift: {}/{} kills {:.0}s",
-            rift.kills, rift.target_kills, rift.remaining_secs
-        ),
-        RiftState::Completed => format!("Rift: sealed best {:.0}s", rift.best_remaining_secs),
-        RiftState::Failed => "Rift: collapsed".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,7 +294,6 @@ mod tests {
         );
         assert_eq!(stats.echo_keystones, ECHO_KEYSTONE_SWIFT_REWARD);
         assert_eq!(rift.best_remaining_secs, RIFT_DURATION_SECS);
-        assert!(rift_summary(&rift).contains("best 60s"));
     }
 
     #[test]
@@ -360,6 +346,5 @@ mod tests {
         tick_rift(&mut rift, RIFT_DURATION_SECS + 0.1);
 
         assert_eq!(rift.state, RiftState::Failed);
-        assert!(rift_summary(&rift).contains("collapsed"));
     }
 }

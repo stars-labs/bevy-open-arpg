@@ -24,7 +24,7 @@ use crate::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 #[derive(Component)]
 pub struct LootDrop {
@@ -54,14 +54,10 @@ pub(crate) const QUICK_SALVAGE_KEY: KeyCode = KeyCode::KeyU;
 #[derive(Resource, Default, Debug, Clone)]
 pub struct LootProximityInfo {
     pub visible: bool,
-    pub priority: String,
     pub label: String,
-    pub compare: String,
-    pub rewards: String,
     pub distance: f32,
     pub pickup_ready: bool,
     pub inventory_full: bool,
-    pub spare_salvage_available: bool,
     pub quality: String,
 }
 
@@ -76,20 +72,7 @@ struct LootFilterVisual {
 }
 
 #[derive(Component)]
-struct LootBeam {
-    base_radius: f32,
-}
-
-#[derive(Component)]
 struct LootGroundRing {
-    base_scale: Vec3,
-    spin_speed: f32,
-    pulse_speed: f32,
-    pulse_amount: f32,
-}
-
-#[derive(Component, Clone, Copy)]
-struct LootPulse {
     base_scale: Vec3,
     spin_speed: f32,
     pulse_speed: f32,
@@ -164,11 +147,8 @@ struct DeathBurstStyle {
 #[derive(Clone, Copy)]
 struct DeathRemainsStyle {
     radius: f32,
-    height: f32,
     lifetime_secs: f32,
     lift: f32,
-    color: Color,
-    emissive: Color,
 }
 
 pub struct LootPlugin;
@@ -240,51 +220,12 @@ type LootReadabilityCameraQuery<'w, 's> = Query<
     'w,
     's,
     &'static Transform,
-    (
-        With<Camera3d>,
-        Without<LootLabel>,
-        Without<LootBeam>,
-        Without<LootPulse>,
-        Without<LootGroundRing>,
-    ),
+    (With<Camera3d>, Without<LootLabel>, Without<LootGroundRing>),
 >;
-type LootLabelTransformQuery<'w, 's> = Query<
-    'w,
-    's,
-    &'static mut Transform,
-    (
-        With<LootLabel>,
-        Without<LootBeam>,
-        Without<LootPulse>,
-        Without<LootGroundRing>,
-    ),
->;
-type LootBeamTransformQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static mut Transform, &'static LootBeam),
-    (
-        Without<LootLabel>,
-        Without<LootPulse>,
-        Without<LootGroundRing>,
-    ),
->;
-type LootPulseTransformQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static mut Transform, &'static LootPulse),
-    (
-        Without<LootLabel>,
-        Without<LootBeam>,
-        Without<LootGroundRing>,
-    ),
->;
-type LootGroundRingTransformQuery<'w, 's> = Query<
-    'w,
-    's,
-    (&'static mut Transform, &'static LootGroundRing),
-    (Without<LootLabel>, Without<LootBeam>, Without<LootPulse>),
->;
+type LootLabelTransformQuery<'w, 's> =
+    Query<'w, 's, &'static mut Transform, (With<LootLabel>, Without<LootGroundRing>)>;
+type LootGroundRingTransformQuery<'w, 's> =
+    Query<'w, 's, (&'static mut Transform, &'static LootGroundRing), Without<LootLabel>>;
 type LootGlowQuery<'w, 's> = Query<'w, 's, (&'static mut PointLight, &'static LootGlow)>;
 type LootFilterVisualQuery<'w, 's> =
     Query<'w, 's, (&'static LootFilterVisual, &'static mut Visibility)>;
@@ -348,6 +289,7 @@ impl LootFilterTier {
 
 #[derive(SystemParam)]
 struct InteractableRewardInputs<'w, 's> {
+    game_assets: Res<'w, GameAssets>,
     commands: Commands<'w, 's>,
     render_assets: (
         ResMut<'w, Assets<Mesh>>,
@@ -550,16 +492,19 @@ fn drop_loot_for_dead_enemies(
         if let Some(event) = death_screen_shake_event(&enemy.id, is_elite) {
             inputs.writers.2.write(event);
         }
-        spawn_death_burst_vfx(
-            &mut inputs.commands,
-            &inputs.game_assets,
-            transform.translation,
-            death_burst_kind(&enemy.id, is_elite),
-        );
+        // Ordinary enemies already received contact feedback from the killing hit.
+        // Let their falling model communicate death without a second flash.
+        if is_elite || matches!(enemy.id.as_str(), "keeper" | "treasure_imp" | "nemesis") {
+            spawn_death_burst_vfx(
+                &mut inputs.commands,
+                &inputs.game_assets,
+                transform.translation,
+                death_burst_kind(&enemy.id, is_elite),
+            );
+        }
         spawn_death_remains(
             &mut inputs.commands,
-            &mut inputs.render_assets.0,
-            &mut inputs.render_assets.1,
+            &inputs.game_assets,
             transform.translation,
             death_remains_kind(&enemy.id, is_elite),
         );
@@ -663,7 +608,8 @@ fn drop_loot_for_dead_enemies(
                     &mut inputs.commands,
                     &mut inputs.render_assets.0,
                     &mut inputs.render_assets.1,
-                    transform.translation + Vec3::new(0.7, 0.35, 0.35),
+                    &inputs.game_assets,
+                    transform.translation + Vec3::new(0.7, 0.02, 0.35),
                     CHAMPION_PACK_REWARD_GOLD,
                     cache_weapon,
                     "Champion reliquary cache".to_string(),
@@ -728,7 +674,8 @@ fn drop_loot_for_dead_enemies(
                 &mut inputs.commands,
                 &mut inputs.render_assets.0,
                 &mut inputs.render_assets.1,
-                transform.translation + Vec3::new(0.0, 0.25, 0.0),
+                &inputs.game_assets,
+                transform.translation + Vec3::new(0.0, 0.02, 0.0),
                 gold,
                 weapon,
                 format!("Loot from {}", enemy.display_name),
@@ -737,9 +684,8 @@ fn drop_loot_for_dead_enemies(
         if health_globe_drops(&enemy.id, is_elite, rng.random::<f32>()) {
             spawn_health_globe(
                 &mut inputs.commands,
-                &mut inputs.render_assets.0,
-                &mut inputs.render_assets.1,
-                transform.translation + Vec3::new(0.55, 0.32, -0.25),
+                inputs.game_assets.health_pickup.clone(),
+                transform.translation + Vec3::new(0.55, 0.02, -0.25),
             );
             inputs.writers.1.write(CombatEvent {
                 text: "Health globe dropped".to_string(),
@@ -748,9 +694,8 @@ fn drop_loot_for_dead_enemies(
         if fury_globe_drops(&enemy.id, is_elite, rng.random::<f32>()) {
             spawn_fury_globe(
                 &mut inputs.commands,
-                &mut inputs.render_assets.0,
-                &mut inputs.render_assets.1,
-                transform.translation + Vec3::new(-0.48, 0.30, 0.28),
+                inputs.game_assets.fury_pickup.clone(),
+                transform.translation + Vec3::new(-0.48, 0.02, 0.28),
             );
             inputs.writers.1.write(CombatEvent {
                 text: "Fury globe dropped".to_string(),
@@ -770,9 +715,7 @@ fn drop_loot_for_dead_enemies(
             });
         }
 
-        if let Ok(mut entity_commands) = inputs.commands.get_entity(entity) {
-            entity_commands.try_despawn();
-        }
+        crate::enemy_death::begin_enemy_death(&mut inputs.commands, entity, *transform);
     }
 }
 
@@ -799,7 +742,8 @@ fn reward_interactables(
                     &mut inputs.commands,
                     &mut inputs.render_assets.0,
                     &mut inputs.render_assets.1,
-                    event.position + Vec3::new(0.0, 0.35, 0.8),
+                    &inputs.game_assets,
+                    event.position + Vec3::new(0.0, 0.02, 0.8),
                     inputs.modifier.scale_reward(45),
                     weapon,
                     "Sealed reliquary cache".to_string(),
@@ -837,7 +781,8 @@ fn reward_interactables(
                     &mut inputs.commands,
                     &mut inputs.render_assets.0,
                     &mut inputs.render_assets.1,
-                    event.position + Vec3::new(0.0, 0.45, 0.95),
+                    &inputs.game_assets,
+                    event.position + Vec3::new(0.0, 0.02, 0.95),
                     inputs.modifier.scale_reward(120),
                     weapon,
                     "Resplendent reliquary vault".to_string(),
@@ -857,7 +802,8 @@ fn reward_interactables(
                     &mut inputs.commands,
                     &mut inputs.render_assets.0,
                     &mut inputs.render_assets.1,
-                    event.position + Vec3::new(0.0, 0.45, 1.0),
+                    &inputs.game_assets,
+                    event.position + Vec3::new(0.0, 0.02, 1.0),
                     inputs.modifier.scale_reward(80),
                     weapon,
                     "Cursed reliquary offering".to_string(),
@@ -2301,54 +2247,6 @@ pub(crate) fn soul_sigil_cache_ready_summary(sigils: u32) -> Option<String> {
     ))
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct SalvagePreview {
-    pub items: usize,
-    pub gold: u32,
-    pub shards: u32,
-    pub essence: u32,
-}
-
-pub(crate) fn salvage_preview(inventory: &Inventory, equipment: &Equipment) -> SalvagePreview {
-    let mut kept_equipped = false;
-    let mut preview = SalvagePreview::default();
-    for item in &inventory.items {
-        if !kept_equipped && item.name == equipment.weapon_name {
-            kept_equipped = true;
-            continue;
-        }
-        preview.items += 1;
-        preview.gold += item_sale_value(item);
-        preview.shards += item_salvage_shards(item);
-        preview.essence += item_salvage_essence(item);
-    }
-    preview
-}
-
-pub(crate) fn loot_pursuit_summary(
-    stats: &RunStats,
-    inventory: &Inventory,
-    equipment: &Equipment,
-) -> String {
-    let salvage = salvage_preview(inventory, equipment);
-    if salvage.items > 0 {
-        return format!(
-            "U salvage {}: +{}g +{}s +{}e",
-            salvage.items, salvage.gold, salvage.shards, salvage.essence
-        );
-    }
-    if inventory.items.len() >= inventory.capacity {
-        return "Bag full: equip upgrade or visit quartermaster".to_string();
-    }
-    if equipment.quality == "ancient" || equipment.quality == "primal" {
-        return primal_infusion_pursuit_summary(stats, equipment);
-    }
-    if gear_quality_is_legendary_or_better(&equipment.quality) {
-        return "Loot next: socket gem, awaken ancient, then chase primal".to_string();
-    }
-    "Loot next: hunt elites for legendary gear and shards".to_string()
-}
-
 fn quartermaster_spare_item_count(inventory: &Inventory, equipment: &Equipment) -> usize {
     let mut kept_equipped = false;
     inventory
@@ -2865,43 +2763,28 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
     match kind {
         DeathRemainsKind::Ash => DeathRemainsStyle {
             radius: 0.58,
-            height: 0.035,
             lifetime_secs: 3.2,
             lift: 0.018,
-            color: Color::srgb(0.13, 0.018, 0.012),
-            emissive: Color::srgb(0.02, 0.004, 0.002),
         },
         DeathRemainsKind::Bone => DeathRemainsStyle {
             radius: 0.64,
-            height: 0.035,
             lifetime_secs: 3.8,
             lift: 0.02,
-            color: Color::srgb(0.36, 0.32, 0.25),
-            emissive: Color::srgb(0.035, 0.025, 0.018),
         },
         DeathRemainsKind::EliteBrand => DeathRemainsStyle {
             radius: 0.9,
-            height: 0.045,
             lifetime_secs: 5.2,
             lift: 0.024,
-            color: Color::srgb(0.42, 0.025, 0.012),
-            emissive: Color::srgb(0.16, 0.018, 0.006),
         },
         DeathRemainsKind::TreasureAsh => DeathRemainsStyle {
             radius: 0.82,
-            height: 0.04,
             lifetime_secs: 4.6,
             lift: 0.022,
-            color: Color::srgb(0.72, 0.42, 0.08),
-            emissive: Color::srgb(0.18, 0.09, 0.018),
         },
         DeathRemainsKind::BossSeal => DeathRemainsStyle {
             radius: 1.35,
-            height: 0.055,
             lifetime_secs: 7.4,
             lift: 0.03,
-            color: Color::srgb(0.62, 0.055, 0.018),
-            emissive: Color::srgb(0.32, 0.036, 0.012),
         },
     }
 }
@@ -2909,34 +2792,34 @@ fn death_remains_style(kind: DeathRemainsKind) -> DeathRemainsStyle {
 fn death_burst_style(kind: DeathBurstKind) -> DeathBurstStyle {
     match kind {
         DeathBurstKind::Spark => DeathBurstStyle {
-            scale: 0.9,
-            lifetime_secs: 0.32,
-            lift: 0.82,
-            light_intensity: 260.0,
+            scale: 0.20,
+            lifetime_secs: 0.12,
+            lift: 0.45,
+            light_intensity: 45.0,
             light_range: 2.4,
             light_color: Color::srgb(1.0, 0.38, 0.18),
         },
         DeathBurstKind::Burst => DeathBurstStyle {
-            scale: 1.55,
-            lifetime_secs: 0.55,
-            lift: 1.02,
-            light_intensity: 560.0,
+            scale: 0.32,
+            lifetime_secs: 0.18,
+            lift: 0.50,
+            light_intensity: 80.0,
             light_range: 3.6,
             light_color: Color::srgb(1.0, 0.22, 0.08),
         },
         DeathBurstKind::Prism => DeathBurstStyle {
-            scale: 1.35,
-            lifetime_secs: 0.72,
-            lift: 1.12,
-            light_intensity: 740.0,
+            scale: 0.40,
+            lifetime_secs: 0.22,
+            lift: 0.55,
+            light_intensity: 110.0,
             light_range: 4.4,
             light_color: Color::srgb(1.0, 0.78, 0.28),
         },
         DeathBurstKind::Cataclysm => DeathBurstStyle {
-            scale: 2.05,
-            lifetime_secs: 0.92,
-            lift: 1.24,
-            light_intensity: 980.0,
+            scale: 0.62,
+            lifetime_secs: 0.30,
+            lift: 0.06,
+            light_intensity: 160.0,
             light_range: 5.8,
             light_color: Color::srgb(1.0, 0.36, 0.12),
         },
@@ -2969,7 +2852,7 @@ fn spawn_death_burst_vfx(
     let scene = match kind {
         DeathBurstKind::Spark => assets.hit_spark.clone(),
         DeathBurstKind::Burst => assets.crit_burst.clone(),
-        DeathBurstKind::Prism => assets.loot_prism.clone(),
+        DeathBurstKind::Prism => assets.hit_spark.clone(),
         DeathBurstKind::Cataclysm => assets.boss_summon_portal.clone(),
     };
     let style = death_burst_style(kind);
@@ -3026,42 +2909,32 @@ fn spawn_elite_affix_break_death_vfx(
 fn elite_affix_break_death_style(affix_count: usize) -> DeathBurstStyle {
     let pressure = affix_count.saturating_sub(2).min(4) as f32;
     DeathBurstStyle {
-        scale: 1.08 + pressure * 0.08,
+        scale: 0.28 + pressure * 0.025,
         lift: 0.44 + pressure * 0.03,
-        light_intensity: 780.0 + pressure * 90.0,
+        light_intensity: 65.0 + pressure * 12.0,
         light_range: 4.6 + pressure * 0.35,
         light_color: Color::srgb(0.70, 0.38, 1.0),
-        lifetime_secs: 0.58 + pressure * 0.04,
+        lifetime_secs: 0.16 + pressure * 0.02,
     }
 }
 
 fn spawn_death_remains(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    assets: &GameAssets,
     position: Vec3,
     kind: DeathRemainsKind,
 ) {
     let style = death_remains_style(kind);
-    let base_scale = Vec3::new(1.0, 1.0, 1.0);
-    let material = materials.add(StandardMaterial {
-        base_color: style.color,
-        emissive: style.emissive.into(),
-        alpha_mode: AlphaMode::Opaque,
-        perceptual_roughness: 0.92,
-        ..default()
-    });
+    let base_scale = Vec3::splat(style.radius);
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(style.radius, style.height))),
-        MeshMaterial3d(material),
-        Transform::from_translation(position + Vec3::Y * style.lift)
-            .with_scale(base_scale * death_remains_scale_factor(0.0)),
+        WorldAssetRoot(assets.death_remains.clone()),
+        Transform::from_translation(position + Vec3::Y * style.lift).with_scale(base_scale),
         DeathRemains {
             timer: Timer::from_seconds(style.lifetime_secs, TimerMode::Once),
             duration_secs: style.lifetime_secs,
             base_scale,
         },
-        Name::new("Death Remains"),
+        Name::new("Discarded Bone and Armour"),
     ));
 }
 
@@ -3208,10 +3081,12 @@ fn loot_drop_from_weapon(gold: u32, weapon: &crate::data::LootEntry) -> LootDrop
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_loot_drop(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    assets: &GameAssets,
     position: Vec3,
     gold: u32,
     weapon: &crate::data::LootEntry,
@@ -3219,21 +3094,14 @@ fn spawn_loot_drop(
 ) {
     let drop = loot_drop_from_weapon(gold, weapon);
     let color = loot_quality_color(&weapon.quality);
-    let beam_height = loot_beam_height(&weapon.quality);
-    let pulse = loot_pulse_for_quality(&weapon.quality);
+    let glow_height = loot_glow_height(&weapon.quality);
     let ground_ring = loot_ground_ring_for_quality(&weapon.quality);
     let label_text = loot_label_text(&drop);
 
     let loot_entity = commands
         .spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.45, 0.18, 0.45))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color,
-                emissive: color.into(),
-                ..default()
-            })),
+            WorldAssetRoot(assets.loot_prism.clone()),
             Transform::from_translation(position),
-            pulse,
             drop,
             LootEntity,
             Name::new(source_name),
@@ -3261,12 +3129,12 @@ fn spawn_loot_drop(
 
     let ring_entity = commands
         .spawn((
-            Mesh3d(meshes.add(Cylinder::new(
-                loot_ground_ring_radius(&weapon.quality),
-                0.035,
+            Mesh3d(meshes.add(Torus::new(
+                loot_ground_ring_radius(&weapon.quality) - 0.012,
+                loot_ground_ring_radius(&weapon.quality) + 0.012,
             ))),
             MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color.with_alpha(loot_ground_ring_alpha(&weapon.quality)),
+                base_color: color,
                 emissive: color.into(),
                 alpha_mode: AlphaMode::Opaque,
                 ..default()
@@ -3282,30 +3150,7 @@ fn spawn_loot_drop(
         .id();
     commands.entity(loot_entity).add_child(ring_entity);
 
-    if beam_height > 0.0 {
-        let radius = loot_beam_radius(&weapon.quality);
-        let beam_entity = commands
-            .spawn((
-                Mesh3d(meshes.add(Cylinder::new(radius, beam_height))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: color.with_alpha(0.34),
-                    emissive: color.into(),
-                    alpha_mode: AlphaMode::Opaque,
-                    ..default()
-                })),
-                Transform::from_xyz(0.0, beam_height * 0.5 + 0.16, 0.0),
-                LootBeam {
-                    base_radius: radius,
-                },
-                LootFilterVisual {
-                    min_rank: loot_quality_rank(&weapon.quality),
-                },
-                LootEntity,
-                Name::new("Loot Rarity Beam"),
-            ))
-            .id();
-        commands.entity(loot_entity).add_child(beam_entity);
-
+    if glow_height > 0.0 {
         let glow_entity = commands
             .spawn((
                 PointLight {
@@ -3315,11 +3160,11 @@ fn spawn_loot_drop(
                     shadow_maps_enabled: false,
                     ..default()
                 },
-                Transform::from_xyz(0.0, beam_height.min(2.2) * 0.55 + 0.42, 0.0),
+                Transform::from_xyz(0.0, glow_height.min(2.2) * 0.55 + 0.42, 0.0),
                 LootGlow {
                     base_intensity: loot_glow_intensity(&weapon.quality),
-                    pulse_speed: pulse.pulse_speed,
-                    pulse_amount: 0.18,
+                    pulse_speed: loot_pulse_speed(&weapon.quality),
+                    pulse_amount: loot_pulse_amount(&weapon.quality),
                 },
                 LootFilterVisual {
                     min_rank: loot_quality_rank(&weapon.quality),
@@ -3482,32 +3327,6 @@ fn loot_focus_score(
         score -= 45.0;
     }
     score - distance * 5.0
-}
-
-fn loot_priority_label(
-    drop: &LootDrop,
-    equipped: ItemStats,
-    inventory_has_room: bool,
-) -> &'static str {
-    let candidate = ItemStats::from(drop);
-    let power_delta = item_power(candidate) - item_power(equipped);
-    if (candidate.legendary_power != LegendaryPower::None
-        && candidate.legendary_power != equipped.legendary_power)
-        || power_delta >= 0.0
-    {
-        "BEST"
-    } else if power_delta >= -5.0
-        || loot_quality_rank(&drop.quality) >= loot_quality_rank("legendary")
-        || drop.socketed_gem.is_some()
-        || drop.bonus_gem.is_some()
-        || drop.bonus_charm.is_some()
-    {
-        "NEXT"
-    } else if inventory_has_room {
-        "LOW"
-    } else {
-        "SALVAGE"
-    }
 }
 
 fn loot_role_tag(
@@ -3690,42 +3509,13 @@ fn loot_ground_ring_radius(quality: &str) -> f32 {
     }
 }
 
-fn loot_ground_ring_alpha(quality: &str) -> f32 {
-    match quality {
-        "primal" => 0.46,
-        "ancient" => 0.40,
-        "legendary" => 0.34,
-        "rare" => 0.28,
-        _ => 0.20,
-    }
-}
-
-fn loot_beam_height(quality: &str) -> f32 {
+fn loot_glow_height(quality: &str) -> f32 {
     match quality {
         "primal" => 1.9,
         "ancient" => 1.6,
         "legendary" => 1.35,
         "rare" => 0.9,
         _ => 0.0,
-    }
-}
-
-fn loot_beam_radius(quality: &str) -> f32 {
-    match quality {
-        "primal" => 0.11,
-        "ancient" => 0.1,
-        "legendary" => 0.09,
-        "rare" => 0.075,
-        _ => 0.0,
-    }
-}
-
-fn loot_pulse_for_quality(quality: &str) -> LootPulse {
-    LootPulse {
-        base_scale: Vec3::ONE,
-        spin_speed: loot_spin_speed(quality),
-        pulse_speed: loot_pulse_speed(quality),
-        pulse_amount: loot_pulse_amount(quality),
     }
 }
 
@@ -4002,54 +3792,25 @@ fn fury_globe_amount(max_fury: f32, fury_fraction: f32) -> f32 {
     (max_fury * fury_fraction).round().max(1.0)
 }
 
-fn spawn_health_globe(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    position: Vec3,
-) {
-    let color = Color::srgb(0.95, 0.05, 0.09);
+fn spawn_health_globe(commands: &mut Commands, scene: Handle<WorldAsset>, position: Vec3) {
     commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.24))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
-            emissive: color.into(),
-            ..default()
-        })),
+        WorldAssetRoot(scene),
         Transform::from_translation(position),
         HealthGlobe {
             heal_fraction: 0.30,
         },
-        Name::new("Health Globe"),
+        Name::new("Crimson Healing Phial"),
     ));
 }
 
-fn spawn_fury_globe(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    position: Vec3,
-) {
-    let color = Color::srgb(0.18, 0.58, 1.0);
+fn spawn_fury_globe(commands: &mut Commands, scene: Handle<WorldAsset>, position: Vec3) {
     commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.21))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
-            emissive: color.into(),
-            ..default()
-        })),
+        WorldAssetRoot(scene),
         Transform::from_translation(position),
         FuryGlobe {
             fury_fraction: 0.38,
         },
-        PointLight {
-            color,
-            intensity: 160.0,
-            range: 2.2,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Name::new("Fury Globe"),
+        Name::new("Azure Fury Phial"),
     ));
 }
 
@@ -4057,14 +3818,11 @@ fn update_loot_readability(
     time: Res<Time>,
     camera: LootReadabilityCameraQuery,
     mut labels: LootLabelTransformQuery,
-    mut beams: LootBeamTransformQuery,
-    mut pulses: LootPulseTransformQuery,
     mut rings: LootGroundRingTransformQuery,
     mut glows: LootGlowQuery,
 ) {
     let camera_rotation = camera.single().ok().map(|transform| transform.rotation);
     let elapsed_secs = time.elapsed_secs();
-    let pulse = elapsed_secs.sin() * 0.08 + 1.0;
     let label_bob = (time.elapsed_secs() * 2.6).sin() * 0.04;
 
     for mut transform in &mut labels {
@@ -4072,24 +3830,6 @@ fn update_loot_readability(
         if let Some(rotation) = camera_rotation {
             transform.rotation = rotation;
         }
-    }
-
-    for (mut transform, beam) in &mut beams {
-        transform.scale.x = pulse;
-        transform.scale.z = pulse;
-        let radius_weight = (beam.base_radius * 8.0).clamp(0.6, 1.0);
-        transform.scale.y = 1.0 + (pulse - 1.0) * 0.2 * radius_weight;
-    }
-
-    for (mut transform, loot_pulse) in &mut pulses {
-        transform.rotate_y(loot_pulse.spin_speed * time.delta_secs());
-        let scale = loot_pulse.base_scale
-            * loot_pulse_factor(
-                elapsed_secs,
-                loot_pulse.pulse_speed,
-                loot_pulse.pulse_amount,
-            );
-        transform.scale = scale;
     }
 
     for (mut transform, ring) in &mut rings {
@@ -4158,13 +3898,7 @@ fn update_loot_proximity_info(
         return;
     };
 
-    *info = loot_proximity_info(
-        drop,
-        distance,
-        equipped,
-        inventory_has_room,
-        salvage_preview(inventory, equipment).items > 0,
-    );
+    *info = loot_proximity_info(drop, distance, inventory_has_room);
 }
 
 fn focused_loot_drop<'a>(
@@ -4208,20 +3942,14 @@ fn focused_loot_drop_from_iter<'a>(
 fn loot_proximity_info(
     drop: &LootDrop,
     distance: f32,
-    equipped: ItemStats,
     inventory_has_room: bool,
-    spare_salvage_available: bool,
 ) -> LootProximityInfo {
     LootProximityInfo {
         visible: true,
-        priority: loot_priority_label(drop, equipped, inventory_has_room).to_string(),
         label: loot_label_primary_text(drop),
-        compare: loot_ground_compare_summary(drop, equipped, inventory_has_room),
-        rewards: loot_label_reward_summary(drop),
         distance,
         pickup_ready: distance <= LOOT_PICKUP_RADIUS,
         inventory_full: !inventory_has_room,
-        spare_salvage_available,
         quality: drop.quality.clone(),
     }
 }
@@ -4613,6 +4341,29 @@ mod tests {
     use rand::SeedableRng;
 
     #[test]
+    fn restorative_pickups_use_scene_roots_and_keep_pickup_values() {
+        let mut world = World::new();
+        let position = Vec3::new(2.0, 0.02, 3.0);
+        spawn_health_globe(&mut world.commands(), Handle::default(), position);
+        spawn_fury_globe(&mut world.commands(), Handle::default(), position);
+        world.flush();
+        let health = world
+            .query::<(&WorldAssetRoot, &Transform, &HealthGlobe)>()
+            .single(&world)
+            .unwrap();
+        assert_eq!(health.1.translation, position);
+        assert_eq!(health.2.heal_fraction, 0.30);
+        let fury = world
+            .query::<(&WorldAssetRoot, &Transform, &FuryGlobe)>()
+            .single(&world)
+            .unwrap();
+        assert_eq!(fury.1.translation, position);
+        assert_eq!(fury.2.fury_fraction, 0.38);
+        assert_eq!(world.query::<&Mesh3d>().iter(&world).count(), 0);
+        assert_eq!(world.query::<&PointLight>().iter(&world).count(), 0);
+    }
+
+    #[test]
     fn loot_exit_cleanup_handles_entities_with_multiple_runtime_markers() {
         let mut app = App::new();
         let entity = app
@@ -4819,7 +4570,6 @@ mod tests {
         assert!(treasure.radius > ash.radius);
         assert!(boss.radius > elite.radius);
         assert!(boss.lifetime_secs > elite.lifetime_secs);
-        assert!(boss.height > ash.height);
     }
 
     #[test]
@@ -6838,72 +6588,6 @@ mod tests {
     }
 
     #[test]
-    fn salvage_preview_preserves_equipped_item_and_prices_spares() {
-        let equipment = Equipment {
-            weapon_name: "Stormcall Reliquary Brand".to_string(),
-            quality: "legendary".to_string(),
-            crit_chance: 0.16,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Stormbrand,
-            temper_level: 0,
-            socketed_gem: None,
-            worn: Equipment::empty_worn(),
-        };
-        let inventory = Inventory {
-            items: vec![
-                InventoryItem {
-                    name: equipment.weapon_name.clone(),
-                    quality: equipment.quality.clone(),
-                    damage_bonus: 11.0,
-                    crit_chance: equipment.crit_chance,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: equipment.legendary_power,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-                InventoryItem {
-                    name: "Moonforged Cleaver".to_string(),
-                    quality: "rare".to_string(),
-                    damage_bonus: 9.0,
-                    crit_chance: 0.06,
-                    health_bonus: 0.0,
-                    armor_bonus: 0.0,
-                    legendary_power: LegendaryPower::None,
-                    temper_level: 0,
-                    socketed_gem: None,
-                    slot: GearSlot::Weapon,
-                },
-                InventoryItem {
-                    name: "Aegis-Saint Reliquary Guard".to_string(),
-                    quality: "legendary".to_string(),
-                    damage_bonus: 12.0,
-                    crit_chance: 0.09,
-                    health_bonus: 20.0,
-                    armor_bonus: 10.0,
-                    legendary_power: LegendaryPower::Aegisbrand,
-                    temper_level: 1,
-                    socketed_gem: Some(SocketedGem {
-                        kind: GemKind::Ruby,
-                        rank: 2,
-                    }),
-                    slot: GearSlot::Weapon,
-                },
-            ],
-            capacity: 12,
-        };
-
-        let preview = salvage_preview(&inventory, &equipment);
-
-        assert_eq!(preview.items, 2);
-        assert!(preview.gold > 0);
-        assert!(preview.shards >= 14);
-        assert!(preview.essence >= 1);
-    }
-
-    #[test]
     fn quick_salvage_preserves_equipped_item_and_grants_cache_rewards() {
         let equipment = Equipment {
             weapon_name: "Stormcall Reliquary Brand".to_string(),
@@ -6981,7 +6665,7 @@ mod tests {
             ],
             capacity: 12,
         };
-        let preview = salvage_preview(&inventory, &equipment);
+        let spare_gold: u32 = inventory.items.iter().skip(1).map(item_sale_value).sum();
         let mut stats = RunStats::default();
 
         let salvage = salvage_spare_inventory_into_stats(&mut inventory, &equipment, &mut stats);
@@ -6989,61 +6673,11 @@ mod tests {
         assert_eq!(salvage.items, 4);
         assert_eq!(inventory.items.len(), 1);
         assert_eq!(inventory.items[0].name, equipment.weapon_name);
-        assert_eq!(stats.gold, preview.gold + SALVAGE_CACHE_GOLD_REWARD);
-        assert_eq!(
-            stats.ember_shards,
-            preview.shards + SALVAGE_CACHE_SHARD_REWARD
-        );
-        assert_eq!(
-            stats.affix_essence,
-            preview.essence + SALVAGE_CACHE_ESSENCE_REWARD
-        );
+        assert_eq!(stats.gold, spare_gold + SALVAGE_CACHE_GOLD_REWARD);
+        assert_eq!(stats.ember_shards, 28 + SALVAGE_CACHE_SHARD_REWARD);
+        assert_eq!(stats.affix_essence, 4 + SALVAGE_CACHE_ESSENCE_REWARD);
         assert_eq!(stats.salvage_caches, 1);
         assert!(salvage.summary().contains("salvage cache x1"));
-    }
-
-    #[test]
-    fn loot_pursuit_summary_points_to_salvage_or_next_chase() {
-        let mut equipment = Equipment {
-            weapon_name: "Ancient Ashen Reliquary Reaver".to_string(),
-            quality: "ancient".to_string(),
-            crit_chance: 0.16,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::Emberbrand,
-            temper_level: 0,
-            socketed_gem: None,
-            worn: Equipment::empty_worn(),
-        };
-        let mut stats = RunStats::default();
-        let mut inventory = Inventory {
-            items: vec![InventoryItem {
-                name: "Spare Fang".to_string(),
-                quality: "common".to_string(),
-                damage_bonus: 3.0,
-                crit_chance: 0.02,
-                health_bonus: 0.0,
-                armor_bonus: 1.0,
-                legendary_power: LegendaryPower::None,
-                temper_level: 0,
-                socketed_gem: None,
-                slot: GearSlot::Weapon,
-            }],
-            capacity: 12,
-        };
-
-        let summary = loot_pursuit_summary(&stats, &inventory, &equipment);
-        assert!(summary.contains("U salvage 1"));
-        assert!(summary.contains("+"));
-
-        inventory.items.clear();
-        stats.echo_keystones = 0;
-        let summary = loot_pursuit_summary(&stats, &inventory, &equipment);
-        assert!(summary.contains("Echo Keystone"));
-
-        equipment.quality = "rare".to_string();
-        let summary = loot_pursuit_summary(&stats, &inventory, &equipment);
-        assert!(summary.contains("legendary gear"));
     }
 
     #[test]
@@ -7403,16 +7037,14 @@ mod tests {
 
     #[test]
     fn loot_readability_scales_with_quality() {
-        assert_eq!(loot_beam_height("common"), 0.0);
-        assert_eq!(loot_beam_radius("common"), 0.0);
+        assert_eq!(loot_glow_height("common"), 0.0);
         assert!(loot_ground_ring_radius("primal") > loot_ground_ring_radius("rare"));
-        assert!(loot_ground_ring_alpha("legendary") > loot_ground_ring_alpha("common"));
         assert!(loot_label_font_size("primal") > loot_label_font_size("ancient"));
         assert!(loot_label_font_size("ancient") > loot_label_font_size("legendary"));
         assert!(loot_label_font_size("legendary") > loot_label_font_size("rare"));
-        assert!(loot_beam_height("legendary") > loot_beam_height("rare"));
-        assert!(loot_beam_height("ancient") > loot_beam_height("legendary"));
-        assert!(loot_beam_height("primal") > loot_beam_height("ancient"));
+        assert!(loot_glow_height("legendary") > loot_glow_height("rare"));
+        assert!(loot_glow_height("ancient") > loot_glow_height("legendary"));
+        assert!(loot_glow_height("primal") > loot_glow_height("ancient"));
         assert_ne!(loot_quality_color("rare"), loot_quality_color("legendary"));
         assert!(loot_spin_speed("primal") > loot_spin_speed("legendary"));
         assert!(loot_pulse_amount("ancient") > loot_pulse_amount("rare"));
@@ -7595,16 +7227,6 @@ mod tests {
 
     #[test]
     fn loot_proximity_info_reports_pickup_readiness_and_inventory_state() {
-        let equipped = ItemStats {
-            quality: "rare",
-            damage_bonus: 8.0,
-            crit_chance: 0.04,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-        };
         let drop = LootDrop {
             gold: 17,
             damage_bonus: 18.0,
@@ -7623,28 +7245,16 @@ mod tests {
             slot: GearSlot::Weapon,
         };
 
-        let ready = loot_proximity_info(&drop, LOOT_PICKUP_RADIUS - 0.1, equipped, true, false);
+        let ready = loot_proximity_info(&drop, LOOT_PICKUP_RADIUS - 0.1, true);
         assert!(ready.visible);
         assert!(ready.pickup_ready);
         assert!(!ready.inventory_full);
         assert_eq!(ready.quality, "legendary");
         assert!(ready.label.contains("Ember-Saint Relic Blade"));
-        assert!(ready.compare.contains("AUTO-EQUIP"));
-        assert!(ready.compare.contains("BUILD POWER"));
-        assert!(ready.compare.contains("PWR +"));
-        assert!(ready.compare.contains("new power Emberbrand"));
-        assert!(ready.compare.contains("temper +1"));
-        assert!(ready.compare.contains("weapon dmg +10"));
-        assert_eq!(ready.priority, "BEST");
-        assert!(ready.rewards.contains("17 gold"));
-        assert!(ready.rewards.contains("elixir"));
 
-        let full = loot_proximity_info(&drop, LOOT_PICKUP_RADIUS + 2.0, equipped, false, true);
+        let full = loot_proximity_info(&drop, LOOT_PICKUP_RADIUS + 2.0, false);
         assert!(!full.pickup_ready);
         assert!(full.inventory_full);
-        assert!(full.spare_salvage_available);
-        assert_eq!(full.priority, "BEST");
-        assert!(full.compare.contains("AUTO-EQUIP"));
     }
 
     #[test]
@@ -7703,7 +7313,6 @@ mod tests {
 
         assert_eq!(focused.label, "Ember-Saint Relic Blade");
         assert_eq!(distance, LOOT_PICKUP_RADIUS + 1.6);
-        assert_eq!(loot_priority_label(focused, equipped, true), "BEST");
 
         let (fallback, distance) = focused_loot_drop_from_iter(
             vec![(&junk, 0.2), (&upgrade, LOOT_PICKUP_RADIUS + 6.0)].into_iter(),
@@ -7714,61 +7323,6 @@ mod tests {
 
         assert_eq!(fallback.label, "Cracked Fang");
         assert_eq!(distance, 0.2);
-    }
-
-    #[test]
-    fn loot_priority_label_separates_build_pickups_from_salvage() {
-        let equipped = ItemStats {
-            quality: "rare",
-            damage_bonus: 12.0,
-            crit_chance: 0.04,
-            health_bonus: 10.0,
-            armor_bonus: 8.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-        };
-        let socket_sidegrade = LootDrop {
-            gold: 0,
-            damage_bonus: 0.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: Some(SocketedGem::new(GemKind::Ruby)),
-            bonus_gem: None,
-            bonus_charm: None,
-            potions: 0,
-            elixirs: 0,
-            quality: "rare".to_string(),
-            label: "Socketed Moonforged Cleaver".to_string(),
-            slot: GearSlot::Weapon,
-        };
-        let weak = LootDrop {
-            gold: 2,
-            damage_bonus: 1.0,
-            crit_chance: 0.0,
-            health_bonus: 0.0,
-            armor_bonus: 0.0,
-            legendary_power: LegendaryPower::None,
-            temper_level: 0,
-            socketed_gem: None,
-            bonus_gem: None,
-            bonus_charm: None,
-            potions: 0,
-            elixirs: 0,
-            quality: "common".to_string(),
-            label: "Bent Fang".to_string(),
-            slot: GearSlot::Weapon,
-        };
-
-        assert_eq!(
-            loot_priority_label(&socket_sidegrade, equipped, true),
-            "NEXT"
-        );
-        assert_eq!(loot_priority_label(&weak, equipped, true), "LOW");
-        assert_eq!(loot_priority_label(&weak, equipped, false), "SALVAGE");
     }
 
     #[test]

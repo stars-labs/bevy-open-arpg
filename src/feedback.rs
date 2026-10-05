@@ -7,7 +7,7 @@ use crate::{
         Staggered, enemy_cursor_pick_radius,
     },
     not_paused,
-    player::Health,
+    player::{Health, Player, PlayerLevelUp},
 };
 use bevy::prelude::*;
 use bevy::time::{Real, Virtual};
@@ -61,7 +61,7 @@ pub struct HitStopEvent {
 impl HitStopEvent {
     pub fn new(relative_speed: f32, duration_secs: f32) -> Self {
         Self {
-            relative_speed: relative_speed.clamp(0.16, 0.82),
+            relative_speed: relative_speed.clamp(0.04, 0.82),
             duration_secs: duration_secs.clamp(0.012, 0.12),
         }
     }
@@ -402,8 +402,42 @@ struct FloatingTextStyle {
     lifetime_secs: f32,
 }
 
+/// Material identity supplied by resolved combat contact, not parsed UI prose.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum ContactSound {
+    Steel,
+    Expose,
+    Blood,
+    Cleanse,
+    Reap,
+    Ember,
+    Frost,
+}
+
+#[derive(Message, Debug, Clone, Copy)]
+pub(crate) struct ContactSoundEvent {
+    pub kind: ContactSound,
+    pub strength: f32,
+}
+
+#[derive(Resource, Default)]
+struct ContactAudioGate {
+    last_played: Option<f32>,
+}
+
+impl ContactAudioGate {
+    fn admit(&mut self, now: f32) -> bool {
+        if self.last_played.is_some_and(|last| now - last < 0.08) {
+            return false;
+        }
+        self.last_played = Some(now);
+        true
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SoundCue {
+    Contact(ContactSound, bool),
     Hit,
     Critical,
     Loot,
@@ -420,7 +454,14 @@ enum SoundCue {
 }
 
 #[cfg(test)]
-const ALL_SOUND_CUES: [SoundCue; 13] = [
+const ALL_SOUND_CUES: [SoundCue; 20] = [
+    SoundCue::Contact(ContactSound::Steel, false),
+    SoundCue::Contact(ContactSound::Expose, false),
+    SoundCue::Contact(ContactSound::Blood, false),
+    SoundCue::Contact(ContactSound::Cleanse, false),
+    SoundCue::Contact(ContactSound::Reap, false),
+    SoundCue::Contact(ContactSound::Ember, false),
+    SoundCue::Contact(ContactSound::Frost, false),
     SoundCue::Hit,
     SoundCue::Critical,
     SoundCue::Loot,
@@ -449,6 +490,8 @@ impl Plugin for FeedbackPlugin {
             .init_resource::<AudioBackendRetry>()
             .init_resource::<AudioBackendStatus>()
             .init_resource::<AudioCueLimiter>()
+            .init_resource::<ContactAudioGate>()
+            .add_message::<ContactSoundEvent>()
             .init_resource::<EnemyHoverTarget>()
             .init_resource::<TargetInfo>()
             .init_resource::<BasicAttackIntent>()
@@ -462,6 +505,9 @@ impl Plugin for FeedbackPlugin {
                 Update,
                 (
                     collect_combat_events,
+                    play_contact_audio,
+                    level_up_feedback,
+                    animate_level_up_glow,
                     spawn_floating_combat_text,
                     update_floating_combat_text,
                     attach_enemy_health_bars,
@@ -474,11 +520,14 @@ impl Plugin for FeedbackPlugin {
                     )
                         .chain(),
                     update_camera_shake,
-                    update_hit_stop,
+                    update_hit_stop.after(crate::combat::CombatSet::PlayerDamage),
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
-            .add_systems(OnExit(GameState::InGame), reset_hit_stop)
+            .add_systems(
+                OnExit(GameState::InGame),
+                (reset_hit_stop, clear_level_up_glow),
+            )
             .add_systems(OnEnter(GameState::Victory), play_victory_sound)
             .add_systems(OnEnter(GameState::GameOver), play_defeat_sound);
     }
@@ -561,6 +610,143 @@ fn collect_combat_events(
             play_sound_cue(&audio, &audio_settings, cue);
         }
         log.push_event(&event.text);
+    }
+}
+
+fn play_contact_audio(
+    mut events: MessageReader<ContactSoundEvent>,
+    time: Res<Time<Real>>,
+    mut gate: ResMut<ContactAudioGate>,
+    audio: Res<GameAudio>,
+    settings: Res<AudioSettings>,
+) {
+    let strongest = events
+        .read()
+        .filter(|event| event.strength > 0.0)
+        .max_by(|a, b| a.strength.total_cmp(&b.strength));
+    if let Some(event) = strongest
+        && gate.admit(time.elapsed_secs())
+    {
+        play_sound_cue(
+            &audio,
+            &settings,
+            SoundCue::Contact(event.kind, event.strength >= 1.3),
+        );
+    }
+}
+
+#[derive(Component)]
+struct LevelUpGlow {
+    age: f32,
+    spark_angle: Option<f32>,
+}
+
+#[derive(Default)]
+struct LevelUpGlowAssets {
+    ring: Handle<Mesh>,
+    spark: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn level_up_feedback(
+    mut commands: Commands,
+    mut earned: MessageReader<PlayerLevelUp>,
+    player: Query<&Transform, With<Player>>,
+    old: Query<Entity, With<LevelUpGlow>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cached: Local<Option<LevelUpGlowAssets>>,
+    audio: Res<GameAudio>,
+    audio_settings: Res<AudioSettings>,
+) {
+    if earned.read().last().is_none() {
+        return;
+    }
+    play_sound_cue(&audio, &audio_settings, SoundCue::Quest);
+    let Ok(player) = player.single() else {
+        return;
+    };
+    for entity in &old {
+        commands.entity(entity).despawn();
+    }
+    let assets = cached.get_or_insert_with(|| LevelUpGlowAssets {
+        ring: meshes.add(Annulus::new(0.72, 0.74)),
+        spark: meshes.add(Cuboid::new(0.018, 0.055, 0.018)),
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.78, 0.38, 0.9),
+            emissive: LinearRgba::new(1.2, 0.7, 0.22, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Opaque,
+            ..default()
+        }),
+    });
+    commands.spawn((
+        Mesh3d(assets.ring.clone()),
+        MeshMaterial3d(assets.material.clone()),
+        Transform::from_translation(player.translation + Vec3::Y * 0.045)
+            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            .with_scale(Vec3::splat(0.6)),
+        LevelUpGlow {
+            age: 0.0,
+            spark_angle: None,
+        },
+        Name::new("Level gained — ground halo"),
+    ));
+    for index in 0..6 {
+        let angle = index as f32 * std::f32::consts::TAU / 6.0;
+        commands.spawn((
+            Mesh3d(assets.spark.clone()),
+            MeshMaterial3d(assets.material.clone()),
+            Transform::from_translation(
+                player.translation + Vec3::new(angle.cos() * 0.40, 0.12, angle.sin() * 0.40),
+            ),
+            LevelUpGlow {
+                age: 0.0,
+                spark_angle: Some(angle),
+            },
+            Name::new("Level gained — ember"),
+        ));
+    }
+}
+
+fn animate_level_up_glow(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut particles: Query<(
+        Entity,
+        &mut LevelUpGlow,
+        &mut Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, mut glow, mut transform, material) in &mut particles {
+        glow.age += time.delta_secs();
+        let amount = (glow.age / 0.75).min(1.0);
+        if amount >= 1.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            let brightness = 1.0 - amount;
+            material.base_color = Color::srgb(brightness, 0.78 * brightness, 0.38 * brightness);
+            material.emissive = LinearRgba::new(1.2, 0.7, 0.22, 1.0) * brightness;
+        }
+        if let Some(angle) = glow.spark_angle {
+            transform.translation +=
+                Vec3::new(angle.cos() * 0.12, 0.60, angle.sin() * 0.12) * time.delta_secs();
+            transform.scale = Vec3::splat(1.0 - amount * 0.7);
+        } else {
+            let collapse = ((1.0 - amount) / 0.25).min(1.0);
+            transform.scale = Vec3::splat((0.6 + amount * 0.6) * collapse);
+        }
+    }
+}
+
+fn clear_level_up_glow(mut commands: Commands, glows: Query<Entity, With<LevelUpGlow>>) {
+    for entity in &glows {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -741,7 +927,7 @@ fn try_start_audio_backend(
         *status = AudioBackendStatus::Ready;
         return;
     }
-    if rodio::OutputStream::try_default().is_err() {
+    if rodio::DeviceSinkBuilder::open_default_sink().is_err() {
         if warn_failures {
             bevy::log::warn!("Bevy Open ARPG audio: no output device available");
         }
@@ -766,7 +952,7 @@ fn try_start_audio_backend(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
-    let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+    let Ok(handle) = rodio::DeviceSinkBuilder::open_default_sink() else {
         bevy::log::warn!("Bevy Open ARPG audio: no output device available");
         return;
     };
@@ -783,21 +969,26 @@ fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn play_audio_file(
-    handle: &rodio::OutputStreamHandle,
-    path: &Path,
-    gain: f32,
-) -> Result<(), String> {
+fn play_audio_file(handle: &rodio::MixerDeviceSink, path: &Path, gain: f32) -> Result<(), String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let source = rodio::Decoder::new(BufReader::new(file)).map_err(|error| error.to_string())?;
-    let sink = rodio::Sink::try_new(handle).map_err(|error| error.to_string())?;
-    sink.append(source.amplify(gain.clamp(0.0, 1.4)));
-    sink.detach();
+    let player = rodio::Player::connect_new(handle.mixer());
+    player.append(source.amplify(gain.clamp(0.0, 1.4)));
+    player.detach();
     Ok(())
 }
 
 fn sound_cue_file(cue: SoundCue) -> &'static str {
     match cue {
+        SoundCue::Contact(kind, _) => match kind {
+            ContactSound::Steel => "contact_steel.wav",
+            ContactSound::Expose => "contact_expose.wav",
+            ContactSound::Blood => "contact_blood.wav",
+            ContactSound::Cleanse => "contact_cleanse.wav",
+            ContactSound::Reap => "contact_reap.wav",
+            ContactSound::Ember => "contact_ember.wav",
+            ContactSound::Frost => "contact_frost.wav",
+        },
         SoundCue::Hit => "hit.wav",
         SoundCue::Critical => "critical.wav",
         SoundCue::Loot => "loot.wav",
@@ -816,6 +1007,7 @@ fn sound_cue_file(cue: SoundCue) -> &'static str {
 
 fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
     match cue {
+        SoundCue::Contact(_, _) => 0.08,
         SoundCue::Hit => 0.045,
         SoundCue::Critical => 0.08,
         SoundCue::Loot => 0.14,
@@ -833,6 +1025,13 @@ fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
 
 fn sound_cue_gain(cue: SoundCue) -> f32 {
     match cue {
+        SoundCue::Contact(_, heavy) => {
+            if heavy {
+                0.95
+            } else {
+                0.66
+            }
+        }
         SoundCue::Hit => 0.48,
         SoundCue::Utility => 0.52,
         SoundCue::Skill => 0.62,
@@ -850,6 +1049,22 @@ fn sound_cue_gain(cue: SoundCue) -> f32 {
 }
 
 fn sound_cue_for_combat_event(text: &str) -> Option<SoundCue> {
+    // Typed contacts own these sounds; a log must not replay a second generic impact.
+    if text.contains("Strike hit for")
+        || text.contains("nova hit for")
+        || matches!(
+            text,
+            "Cleanse Dash"
+                | "Reap Dash"
+                | "Expose Rupture"
+                | "Hemorrhage Rupture"
+                | "Ember Nova"
+                | "Frost Nova"
+        )
+    {
+        return None;
+    }
+
     if text.contains("collapsed before")
         || text.contains("faded before")
         || text.contains("failed")
@@ -904,8 +1119,6 @@ fn sound_cue_for_combat_event(text: &str) -> Option<SoundCue> {
         || text.contains("primal")
         || text.contains("BUILD POWER")
         || text.contains("POWER SPIKE")
-        || text.contains("Level up")
-        || text.contains("Level ")
     {
         return Some(SoundCue::Critical);
     }
@@ -1056,10 +1269,11 @@ fn attach_enemy_health_bars(
     });
     let background_mesh = meshes.add(Cuboid::new(0.92, 0.06, 0.08));
     let fill_mesh = meshes.add(Cuboid::new(0.86, 0.07, 0.09));
-    let focus_ring_mesh = meshes.add(Torus::new(0.58, 0.035));
+    let focus_ring_mesh = meshes.add(enemy_focus_ring_mesh());
     let focus_ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.78, 0.18, 0.78),
-        emissive: Color::srgb(1.0, 0.45, 0.08).into(),
+        base_color: Color::srgb(0.86, 0.62, 0.19),
+        emissive: Color::srgb(0.45, 0.24, 0.035).into(),
+        unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
     });
@@ -1082,6 +1296,7 @@ fn attach_enemy_health_bars(
                     1.0,
                 )),
                 EnemyHealthBarFill,
+                crate::enemy_death::DeathDecoration,
                 EnemyEntity,
                 Name::new("Enemy Health Fill"),
             ))
@@ -1096,6 +1311,7 @@ fn attach_enemy_health_bars(
                     1.0,
                 )),
                 EnemyHealthBarBackground,
+                crate::enemy_death::DeathDecoration,
                 EnemyEntity,
                 Name::new("Enemy Health Bar"),
             ))
@@ -1104,11 +1320,10 @@ fn attach_enemy_health_bars(
             .spawn((
                 Mesh3d(focus_ring_mesh.clone()),
                 MeshMaterial3d(focus_ring_material.clone()),
-                Transform::from_xyz(0.0, 0.075, 0.0)
-                    .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
-                    .with_scale(Vec3::splat(enemy_focus_ring_base_scale(enemy))),
+                enemy_focus_ring_transform(enemy),
                 Visibility::Hidden,
                 EnemyFocusRing,
+                crate::enemy_death::DeathDecoration,
                 EnemyEntity,
                 Name::new("Enemy Target Focus Ring"),
             ))
@@ -1125,6 +1340,7 @@ fn attach_enemy_health_bars(
                 EnemyNameplate {
                     enemy: enemy_entity,
                 },
+                crate::enemy_death::DeathDecoration,
                 EnemyEntity,
                 Name::new("Enemy Nameplate"),
             ))
@@ -1917,14 +2133,34 @@ fn enemy_affix_reaction_label(affix: EnemyAffix) -> &'static str {
     }
 }
 
+fn enemy_focus_ring_mesh() -> Mesh {
+    // Bevy's constructor takes inner/outer radii, not major/tube radii.
+    // Explicit fields also make the intended thin tube unambiguous.
+    Mesh::from(Torus {
+        major_radius: 0.58,
+        minor_radius: 0.014,
+    })
+}
+
+fn enemy_focus_ring_scale(radius_scale: f32) -> Vec3 {
+    // Pulse only the radius, keeping the indicator flat against the floor.
+    Vec3::new(radius_scale, 0.6, radius_scale)
+}
+
+fn enemy_focus_ring_transform(enemy: &Enemy) -> Transform {
+    // Torus meshes already lie in XZ: rotating 90 degrees made it upright.
+    Transform::from_xyz(0.0, 0.035, 0.0)
+        .with_scale(enemy_focus_ring_scale(enemy_focus_ring_base_scale(enemy)))
+}
+
 fn enemy_focus_ring_pose(enemy: &Enemy, intensity: f32, critical: bool) -> EnemyFocusRingPose {
     let intensity = intensity.clamp(0.0, 1.0);
     let base = enemy_focus_ring_base_scale(enemy);
     let critical_boost = if critical { 0.18 } else { 0.0 };
     let pulse = 0.10 + intensity * (0.22 + critical_boost);
     EnemyFocusRingPose {
-        translation: Vec3::new(0.0, 0.075, 0.0),
-        scale: Vec3::splat(base * (1.0 + pulse)),
+        translation: Vec3::new(0.0, 0.035, 0.0),
+        scale: enemy_focus_ring_scale(base * (1.0 + pulse)),
         visibility: if intensity > 0.0 {
             Visibility::Visible
         } else {
@@ -1937,8 +2173,8 @@ fn enemy_hover_focus_ring_pose(enemy: &Enemy, elapsed_secs: f32) -> EnemyFocusRi
     let base = enemy_focus_ring_base_scale(enemy);
     let pulse = 0.10 + elapsed_secs.mul_add(4.2, 0.0).sin().abs() * 0.08;
     EnemyFocusRingPose {
-        translation: Vec3::new(0.0, 0.075, 0.0),
-        scale: Vec3::splat(base * (1.0 + pulse)),
+        translation: Vec3::new(0.0, 0.035, 0.0),
+        scale: enemy_focus_ring_scale(base * (1.0 + pulse)),
         visibility: Visibility::Visible,
     }
 }
@@ -1947,8 +2183,8 @@ fn enemy_intent_focus_ring_pose(enemy: &Enemy, elapsed_secs: f32) -> EnemyFocusR
     let base = enemy_focus_ring_base_scale(enemy);
     let pulse = 0.16 + elapsed_secs.mul_add(6.4, 0.0).sin().abs() * 0.07;
     EnemyFocusRingPose {
-        translation: Vec3::new(0.0, 0.075, 0.0),
-        scale: Vec3::splat(base * (1.0 + pulse)),
+        translation: Vec3::new(0.0, 0.035, 0.0),
+        scale: enemy_focus_ring_scale(base * (1.0 + pulse)),
         visibility: Visibility::Visible,
     }
 }
@@ -2014,6 +2250,9 @@ fn update_hit_stop(
     mut state: ResMut<HitStopState>,
     mut events: MessageReader<HitStopEvent>,
 ) {
+    // Age the previous contact first. A new impact gets its full real-time window,
+    // even on a slow frame; simultaneous targets select the strongest, never sum.
+    state.remaining_secs = (state.remaining_secs - real_time.delta_secs()).max(0.0);
     for event in events.read() {
         if event.duration_secs >= state.remaining_secs {
             state.remaining_secs = event.duration_secs;
@@ -2021,32 +2260,34 @@ fn update_hit_stop(
             state.relative_speed = event.relative_speed;
         }
     }
-
-    if state.remaining_secs <= 0.0 {
-        if (virtual_time.relative_speed() - 1.0).abs() > f32::EPSILON {
-            virtual_time.set_relative_speed(1.0);
-        }
-        return;
+    let speed = if state.remaining_secs > 0.0 {
+        hit_stop_recovery_speed(
+            state.relative_speed,
+            state.remaining_secs,
+            state.duration_secs,
+        )
+    } else {
+        1.0
+    };
+    if (virtual_time.relative_speed() - speed).abs() > f32::EPSILON {
+        virtual_time.set_relative_speed(speed);
     }
-
-    state.remaining_secs = (state.remaining_secs - real_time.delta_secs()).max(0.0);
-    if state.remaining_secs <= 0.0 {
-        virtual_time.set_relative_speed(1.0);
-        return;
-    }
-
-    virtual_time.set_relative_speed(hit_stop_recovery_speed(
-        state.relative_speed,
-        state.remaining_secs,
-        state.duration_secs,
-    ));
 }
 
 fn hit_stop_recovery_speed(relative_speed: f32, remaining_secs: f32, duration_secs: f32) -> f32 {
-    let relative_speed = relative_speed.clamp(0.16, 0.82);
-    let recovery = 1.0 - remaining_secs / duration_secs.max(0.001);
-    let eased_recovery = recovery.clamp(0.0, 1.0).powi(2);
-    relative_speed + (1.0 - relative_speed) * eased_recovery
+    let contact_speed = relative_speed.clamp(0.04, 0.82);
+    let progress = (1.0 - remaining_secs / duration_secs.max(0.001)).clamp(0.0, 1.0);
+    // Hold the edge at contact, drag it through the target, then release the cut.
+    if progress < 0.38 {
+        contact_speed
+    } else if progress < 0.72 {
+        let drag = (progress - 0.38) / 0.34;
+        contact_speed + (0.42_f32.max(contact_speed) - contact_speed) * drag
+    } else {
+        let release = (progress - 0.72) / 0.28;
+        let drag_speed = 0.42_f32.max(contact_speed);
+        drag_speed + (1.0 - drag_speed) * (1.0 - (1.0 - release).powi(2))
+    }
 }
 
 fn reset_hit_stop(mut virtual_time: ResMut<Time<Virtual>>, mut state: ResMut<HitStopState>) {
@@ -2120,7 +2361,7 @@ mod tests {
     fn hit_stop_events_clamp_and_recover_toward_normal_time() {
         let event = HitStopEvent::new(0.02, 0.5);
 
-        assert_eq!(event.relative_speed, 0.16);
+        assert_eq!(event.relative_speed, 0.04);
         assert_eq!(event.duration_secs, 0.12);
 
         let early = hit_stop_recovery_speed(0.25, 0.09, 0.10);
@@ -2128,7 +2369,45 @@ mod tests {
 
         assert!(early < 0.35);
         assert!(late > 0.85);
-        assert_eq!(hit_stop_recovery_speed(0.02, 0.10, 0.10), 0.16);
+        assert_eq!(hit_stop_recovery_speed(0.02, 0.10, 0.10), 0.04);
+    }
+
+    #[test]
+    fn contact_pause_has_hold_drag_and_release_phases() {
+        let duration = 0.070;
+        let speed = |elapsed: f32| hit_stop_recovery_speed(0.09, duration - elapsed, duration);
+        assert_eq!(speed(0.0), 0.09);
+        assert_eq!(speed(0.020), 0.09);
+        assert!((0.09..0.42).contains(&speed(0.038)));
+        assert!(speed(0.063) > 0.85);
+        assert_eq!(speed(duration), 1.0);
+    }
+
+    #[test]
+    fn simultaneous_targets_do_not_stack_hitstop_duration() {
+        let mut app = App::new();
+        app.insert_resource(Time::<Real>::default())
+            .insert_resource(Time::<Virtual>::default())
+            .init_resource::<HitStopState>()
+            .add_message::<HitStopEvent>()
+            .add_systems(Update, update_hit_stop);
+        for _ in 0..5 {
+            app.world_mut().write_message(HitStopEvent::new(0.09, 0.07));
+        }
+        app.update();
+        assert_eq!(app.world().resource::<HitStopState>().duration_secs, 0.07);
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().relative_speed(),
+            0.09
+        );
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs_f32(0.080));
+        app.update();
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().relative_speed(),
+            1.0
+        );
     }
 
     #[test]
@@ -2160,7 +2439,7 @@ mod tests {
     fn combat_event_text_maps_to_distinct_sound_cues() {
         assert_eq!(
             sound_cue_for_combat_event("Critical Strike hit for 42"),
-            Some(SoundCue::Critical)
+            None
         );
         assert_eq!(
             sound_cue_for_combat_event("Desecrator pool hit for 12; burning"),
@@ -2196,10 +2475,7 @@ mod tests {
             sound_cue_for_combat_event("Potion restored 45 health"),
             Some(SoundCue::Potion)
         );
-        assert_eq!(
-            sound_cue_for_combat_event("Frost Nova"),
-            Some(SoundCue::Skill)
-        );
+        assert_eq!(sound_cue_for_combat_event("Frost Nova"), None);
         assert_eq!(
             sound_cue_for_combat_event("Combo Ready: finish Rupture with Dash or Nova"),
             Some(SoundCue::Combo)
@@ -2297,7 +2573,7 @@ mod tests {
         );
         assert_eq!(
             sound_cue_for_combat_event("Level 2 reached; gained 1 talent point"),
-            Some(SoundCue::Critical)
+            None
         );
         assert_eq!(
             sound_cue_for_combat_event("Final seal claimed: the Keeper awakens"),
@@ -2357,10 +2633,7 @@ mod tests {
             sound_cue_for_combat_event("Ashbone Guard slain"),
             Some(SoundCue::Death)
         );
-        assert_eq!(
-            sound_cue_for_combat_event("Strike hit for 20"),
-            Some(SoundCue::Hit)
-        );
+        assert_eq!(sound_cue_for_combat_event("Strike hit for 20"), None);
         assert_eq!(sound_cue_for_combat_event("Generated 12 fury"), None);
         assert_eq!(sound_cue_for_combat_event("No combat events yet"), None);
     }
@@ -3051,6 +3324,39 @@ mod tests {
     }
 
     #[test]
+    fn focus_ring_geometry_is_a_thin_horizontal_annulus_even_at_maximum_pulse() {
+        let mesh = enemy_focus_ring_mesh();
+        let bevy::mesh::VertexAttributeValues::Float32x3(vertices) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+        else {
+            panic!("focus ring has no positions");
+        };
+        for enemy in [test_enemy("skeleton", vec![]), test_enemy("keeper", vec![])] {
+            let initial = enemy_focus_ring_transform(&enemy);
+            assert_eq!(initial.rotation, Quat::IDENTITY);
+            let peak = enemy_focus_ring_pose(&enemy, 1.0, true);
+            for transform in [
+                initial,
+                Transform::from_translation(peak.translation).with_scale(peak.scale),
+            ] {
+                for vertex in vertices {
+                    let point = transform.transform_point(Vec3::from_array(*vertex));
+                    let radius = Vec2::new(point.x, point.z).length();
+                    assert!(
+                        radius >= 0.565 * transform.scale.x,
+                        "target ring must leave its center open"
+                    );
+                    assert!(radius <= 0.595 * transform.scale.x);
+                    assert!(
+                        (0.026..=0.044).contains(&point.y),
+                        "target ring must stay thin and horizontal"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn enemy_focus_ring_pose_scales_priority_and_critical_targets() {
         let normal = test_enemy("skeleton", vec![]);
         let elite = test_enemy(
@@ -3135,5 +3441,23 @@ mod tests {
         assert!(hover.scale.x < intent.scale.x);
         assert!(intent.scale.x < hit.scale.x);
         assert_eq!(intent.translation, hit.translation);
+    }
+    #[test]
+    fn contact_audio_is_material_specific_and_batch_limited() {
+        let mut gate = ContactAudioGate::default();
+        assert!(gate.admit(1.0));
+        assert!(!gate.admit(1.0));
+        assert!(!gate.admit(1.04));
+        assert!(gate.admit(1.09));
+        assert_ne!(
+            sound_cue_file(SoundCue::Contact(ContactSound::Frost, false)),
+            sound_cue_file(SoundCue::Contact(ContactSound::Ember, false))
+        );
+        assert!(
+            sound_cue_gain(SoundCue::Contact(ContactSound::Steel, true))
+                > sound_cue_gain(SoundCue::Contact(ContactSound::Steel, false))
+        );
+        assert_eq!(sound_cue_for_combat_event("Cleanse Dash"), None);
+        assert_eq!(sound_cue_for_combat_event("Ember nova hit for 14"), None);
     }
 }

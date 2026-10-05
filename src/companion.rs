@@ -138,23 +138,6 @@ pub fn companion_range(base_range: f32, stance: CompanionStance) -> f32 {
         CompanionStance::Vanguard | CompanionStance::Guardian => base_range,
     }
 }
-
-pub fn companion_summary(bond: &CompanionBond) -> String {
-    let command_status = if bond.command_cooldown <= 0.0 {
-        "H ready".to_string()
-    } else {
-        format!("H {:.0}s", bond.command_cooldown.ceil())
-    };
-    format!(
-        "Sentinel {} R{} {}/{} XP {}",
-        bond.stance.label(),
-        bond.rank,
-        bond.xp,
-        bond.next_rank_xp,
-        command_status
-    )
-}
-
 pub fn sentinel_command_tuning(rank: u32, stance: CompanionStance) -> SentinelCommandTuning {
     let rank = rank.max(1) as f32;
     match stance {
@@ -606,22 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn companion_summary_reports_rank_and_progress() {
-        let bond = CompanionBond {
-            rank: 3,
-            xp: 12,
-            next_rank_xp: 145,
-            stance: CompanionStance::Guardian,
-            command_cooldown: 0.0,
-        };
-
-        assert_eq!(
-            companion_summary(&bond),
-            "Sentinel Guardian R3 12/145 XP H ready"
-        );
-    }
-
-    #[test]
     fn sentinel_command_tuning_gives_each_stance_a_distinct_role() {
         let vanguard = sentinel_command_tuning(3, CompanionStance::Vanguard);
         let guardian = sentinel_command_tuning(3, CompanionStance::Guardian);
@@ -630,16 +597,6 @@ mod tests {
         assert!(vanguard.damage > guardian.damage);
         assert!(guardian.barrier > 0.0);
         assert!(seeker.radius > vanguard.radius);
-        assert!(companion_summary(&CompanionBond::default()).contains("H ready"));
-    }
-
-    #[test]
-    fn companion_summary_reports_sentinel_command_cooldown() {
-        let bond = CompanionBond {
-            command_cooldown: 3.2,
-            ..CompanionBond::default()
-        };
-
-        assert!(companion_summary(&bond).contains("H 4s"));
+        assert_eq!(CompanionBond::default().command_cooldown, 0.0);
     }
 }

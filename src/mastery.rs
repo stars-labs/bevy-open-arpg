@@ -3,7 +3,7 @@ use crate::{
     bounty::BountyProgress,
     challenge::{ChallengeId, ChapterChallenges},
     feedback::CombatEvent,
-    lore::{LORE_ENTRY_COUNT, LoreJournal},
+    lore::LoreJournal,
     player::{LegendaryCodex, Player},
 };
 use bevy::prelude::*;
@@ -113,86 +113,6 @@ pub fn mastery_summary(mastery: &ChapterMastery) -> String {
         format!("Mastery: {} ({} pts)", mastery.rank.label(), mastery.points)
     }
 }
-
-pub fn mastery_next_goal_summary(
-    stats: &RunStats,
-    bounty: &BountyProgress,
-    challenges: &ChapterChallenges,
-    journal: &LoreJournal,
-    codex: &LegendaryCodex,
-) -> String {
-    let points = calculate_mastery_points(stats, bounty, challenges, journal, codex);
-    let rank_goal = next_mastery_rank_goal(points)
-        .map(|(rank, threshold)| format!("next {} at {} pts", rank.label(), threshold))
-        .unwrap_or_else(|| "Paragon rank reached".to_string());
-
-    if let Some(challenge) = first_available_mastery_challenge(challenges, stats.elapsed_secs) {
-        return format!(
-            "Mastery next: {} - {} | {}",
-            challenge.id.label(),
-            challenge.id.description(),
-            rank_goal
-        );
-    }
-    if !bounty.completed {
-        return format!("Mastery next: complete the bounty | {rank_goal}");
-    }
-    if journal.entries.len() < LORE_ENTRY_COUNT {
-        return format!(
-            "Mastery next: recover lore pages {}/{} | {}",
-            journal.entries.len(),
-            LORE_ENTRY_COUNT,
-            rank_goal
-        );
-    }
-    if stats.best_valor_stacks < 5 {
-        return format!(
-            "Mastery next: reach five Valor stacks ({}/5) | {}",
-            stats.best_valor_stacks, rank_goal
-        );
-    }
-    if stats.boss_staggers < BOSS_BREAK_TARGET {
-        return format!(
-            "Mastery next: break Malrec {}/{} times | {}",
-            stats.boss_staggers, BOSS_BREAK_TARGET, rank_goal
-        );
-    }
-    if stats.kills == 0 {
-        return format!("Mastery next: defeat Malrec before Ashen Enrage | {rank_goal}");
-    }
-    if stats.boss_enraged {
-        return format!("Mastery next: future run defeat Malrec before Ashen Enrage | {rank_goal}");
-    }
-    if let Some(power) = codex.next_missing_power() {
-        return format!(
-            "Mastery next: unlock {} in the codex | {}",
-            power.label(),
-            rank_goal
-        );
-    }
-
-    "Mastery complete: all chapter mastery point sources secured".to_string()
-}
-
-fn next_mastery_rank_goal(points: u32) -> Option<(MasteryRank, u32)> {
-    match points {
-        0..=2 => Some((MasteryRank::Adept, 3)),
-        3..=5 => Some((MasteryRank::Master, 6)),
-        6..=9 => Some((MasteryRank::Conqueror, 10)),
-        10..=14 => Some((MasteryRank::Paragon, 15)),
-        _ => None,
-    }
-}
-
-fn first_available_mastery_challenge(
-    challenges: &ChapterChallenges,
-    elapsed_secs: f32,
-) -> Option<&crate::challenge::ChallengeProgress> {
-    challenges.challenges.iter().find(|challenge| {
-        !challenge.completed && (challenge.id != ChallengeId::SwiftClear || elapsed_secs <= 360.0)
-    })
-}
-
 fn completed_challenge_points(challenges: &ChapterChallenges, elapsed_secs: f32) -> u32 {
     let mut points = challenges
         .challenges
@@ -418,88 +338,5 @@ mod tests {
         assert_eq!(boss_mastery_points(&empty_stats), 0);
         assert_eq!(boss_mastery_points(&clean_boss), 2);
         assert_eq!(boss_mastery_points(&enraged_boss), 1);
-    }
-
-    #[test]
-    fn mastery_next_goal_guides_available_point_sources() {
-        let stats = RunStats {
-            elapsed_secs: 420.0,
-            ..RunStats::default()
-        };
-        let bounty = BountyProgress::default();
-        let challenges = ChapterChallenges::new();
-        let journal = LoreJournal::default();
-        let codex = LegendaryCodex::default();
-
-        let summary = mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex);
-
-        assert!(summary.contains("Treasure Hunter"));
-        assert!(summary.contains("next Adept at 3 pts"));
-        assert!(!summary.contains("Swift Clear"));
-    }
-
-    #[test]
-    fn mastery_next_goal_falls_through_to_run_and_codex_goals() {
-        let mut challenges = ChapterChallenges::new();
-        for challenge in &mut challenges.challenges {
-            challenge.completed = true;
-        }
-        let bounty = BountyProgress {
-            completed: true,
-            ..BountyProgress::default()
-        };
-        let mut stats = RunStats {
-            elapsed_secs: 420.0,
-            ..RunStats::default()
-        };
-        let mut journal = LoreJournal::default();
-        let mut codex = LegendaryCodex::default();
-
-        assert!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex)
-                .contains("recover lore pages 0/3")
-        );
-
-        journal.entries = vec![
-            LoreEntryId::StewardWarning,
-            LoreEntryId::AcolyteOath,
-            LoreEntryId::MalrecPact,
-        ];
-        assert!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex)
-                .contains("five Valor stacks")
-        );
-
-        stats.best_valor_stacks = 5;
-        assert!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex)
-                .contains("break Malrec 0/2")
-        );
-
-        stats.boss_staggers = BOSS_BREAK_TARGET;
-        assert!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex)
-                .contains("defeat Malrec before Ashen Enrage")
-        );
-
-        stats.kills = 12;
-        for power in [
-            LegendaryPower::Emberbrand,
-            LegendaryPower::Frostbrand,
-            LegendaryPower::Stormbrand,
-            LegendaryPower::Soulreaver,
-        ] {
-            codex.unlock(power);
-        }
-        assert!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex)
-                .contains("unlock Aegisbrand")
-        );
-
-        codex.unlock(LegendaryPower::Aegisbrand);
-        assert_eq!(
-            mastery_next_goal_summary(&stats, &bounty, &challenges, &journal, &codex),
-            "Mastery complete: all chapter mastery point sources secured"
-        );
     }
 }

@@ -1,7 +1,18 @@
+mod presentation;
+mod ranged;
+#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+mod review;
+mod skill_vfx;
+mod skill_vfx_art;
+
 use crate::{
     GameState, RunStats,
     assets::GameAssets,
     bestiary::{Bestiary, bestiary_damage_multiplier},
+    class::{
+        ClassCatalog, Movement, Passive, REAP_HEAL_PER_HIT, ResourceKind, Rune, SelectedClass,
+        SkillLoadout, SkillSlot, StrikeShape,
+    },
     data::PlayerTuning,
     dungeon::{Breakable, DungeonLayout, clamp_dungeon_translation},
     enemy::{
@@ -12,11 +23,11 @@ use crate::{
     feedback::{CombatEvent, FloatingCombatTextEvent, HitStopEvent, ScreenShakeEvent},
     not_paused,
     player::{
-        Barrier, Burning, Charm, ConduitBuff, DamageBonus, DashRune, ElixirBuff, Equipment, Evade,
-        Fury, GloryBuff, Health, LegendaryCodex, LegendaryPower, NovaRune, Player, PlayerAnimation,
-        PlayerAttackMotion, RelicBuff, ReliquarySet, RuptureRune, SkillCooldowns, SkillRunes,
-        SurgeBuff, Talents, apply_player_damage_with_evade, damage_multiplier,
-        elixir_damage_multiplier, glory_damage_multiplier, mitigated_damage,
+        Barrier, Burning, Charm, ConduitBuff, DamageBonus, ElixirBuff, Equipment, Evade, Fury,
+        GloryBuff, Health, LegendaryCodex, LegendaryPower, Player, PlayerAnimation,
+        PlayerAttackMotion, PlayerLevel, RelicBuff, ReliquarySet, SkillCooldowns, SurgeBuff,
+        TalentBranch, Talents, apply_player_damage_with_evade, attack_contact_fraction,
+        damage_multiplier, elixir_damage_multiplier, glory_damage_multiplier, mitigated_damage,
         surge_damage_multiplier, surge_fury_multiplier, themed_reliquary_set, total_armor,
         total_crit_chance, total_damage_bonus,
     },
@@ -24,12 +35,8 @@ use crate::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use rand::Rng;
-
-#[derive(Component)]
-struct HitFlash {
-    timer: Timer,
-}
+use presentation::{ContactFeedback, TalentProcFeedback};
+use rand::RngExt;
 
 #[derive(Component)]
 struct CombatVfx {
@@ -50,7 +57,7 @@ fn hit_react_for_contact(
     hit_react_for_damage(critical).with_recoil_from(
         source,
         target,
-        base_distance * impact_scale.clamp(0.55, 1.85),
+        base_distance * impact_scale.clamp(0.0, 1.85),
     )
 }
 
@@ -65,58 +72,34 @@ const SKILL_INPUT_BUFFER_SECS: f32 = 0.18;
 
 #[derive(Resource, Debug, Default)]
 struct SkillInputBuffer {
-    dash_secs: f32,
-    rupture_secs: f32,
-    nova_secs: f32,
+    /// Seconds each slot's key press stays buffered, indexed by `SkillSlot::index`.
+    secs: [f32; 3],
 }
 
 impl SkillInputBuffer {
     fn tick(&mut self, delta_secs: f32) {
-        self.dash_secs = (self.dash_secs - delta_secs).max(0.0);
-        self.rupture_secs = (self.rupture_secs - delta_secs).max(0.0);
-        self.nova_secs = (self.nova_secs - delta_secs).max(0.0);
-    }
-
-    fn capture(&mut self, dash: bool, rupture: bool, nova: bool) {
-        if dash {
-            self.dash_secs = SKILL_INPUT_BUFFER_SECS;
-        }
-        if rupture {
-            self.rupture_secs = SKILL_INPUT_BUFFER_SECS;
-        }
-        if nova {
-            self.nova_secs = SKILL_INPUT_BUFFER_SECS;
+        for secs in &mut self.secs {
+            *secs = (*secs - delta_secs).max(0.0);
         }
     }
 
-    fn dash_requested(&self) -> bool {
-        self.dash_secs > 0.0
+    fn capture(&mut self, slot: SkillSlot) {
+        self.secs[slot.index()] = SKILL_INPUT_BUFFER_SECS;
     }
 
-    fn rupture_requested(&self) -> bool {
-        self.rupture_secs > 0.0
+    fn requested(&self, slot: SkillSlot) -> bool {
+        self.secs[slot.index()] > 0.0
     }
 
-    fn nova_requested(&self) -> bool {
-        self.nova_secs > 0.0
-    }
-
-    fn clear_dash(&mut self) {
-        self.dash_secs = 0.0;
-    }
-
-    fn clear_rupture(&mut self) {
-        self.rupture_secs = 0.0;
-    }
-
-    fn clear_nova(&mut self) {
-        self.nova_secs = 0.0;
+    fn clear(&mut self, slot: SkillSlot) {
+        self.secs[slot.index()] = 0.0;
     }
 }
 
 #[derive(Resource, Debug)]
 pub struct CombatComboState {
-    primer: Option<ComboPrimer>,
+    /// The slot whose skill last marked enemies for a follow-up.
+    primer: Option<SkillSlot>,
     timer: Timer,
 }
 
@@ -130,7 +113,7 @@ impl Default for CombatComboState {
 }
 
 impl CombatComboState {
-    fn prime(&mut self, primer: ComboPrimer) {
+    fn prime(&mut self, primer: SkillSlot) {
         self.primer = Some(primer);
         self.timer = Timer::from_seconds(COMBO_WINDOW_SECS, TimerMode::Once);
         self.timer.reset();
@@ -141,36 +124,13 @@ impl CombatComboState {
         self.timer = Timer::from_seconds(0.0, TimerMode::Once);
     }
 
-    fn active_primer(&self) -> Option<ComboPrimer> {
+    fn active_primer(&self) -> Option<SkillSlot> {
         if self.timer.is_finished() {
             None
         } else {
             self.primer
         }
     }
-
-    pub fn hud_hint(&self) -> Option<String> {
-        self.active_primer().map(|primer| {
-            format!(
-                "{} {:.0}s -> {}",
-                combo_primer_label(primer),
-                self.timer.remaining_secs().ceil().max(1.0),
-                combo_hud_finisher_label(primer)
-            )
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ComboPrimer {
-    Rupture,
-    Nova,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ComboFinisher {
-    Dash,
-    Nova,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -191,27 +151,107 @@ struct ComboChainBonus {
     label: Option<&'static str>,
 }
 
-struct ArcAttack {
-    origin: Vec3,
-    facing: Vec3,
-    range: f32,
-    damage: f32,
-    impact_scale: f32,
-    crit_chance: f32,
-    legendary_powers: LegendaryPowerSet,
-    skill: Option<SkillCast>,
+/// Where a blow lands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HitArea {
+    Arc {
+        origin: Vec3,
+        forward: Vec3,
+        range: f32,
+    },
+    Radial {
+        center: Vec3,
+        radius: f32,
+    },
+    /// The one enemy or breakable a missile touched.
+    Target(Entity),
 }
 
-#[derive(Component, Debug)]
-struct PendingPlayerArcAttack {
-    timer: Timer,
-    facing: Vec3,
-    range: f32,
+impl HitArea {
+    fn contains(self, entity: Entity, position: Vec3) -> bool {
+        match self {
+            Self::Arc {
+                origin,
+                forward,
+                range,
+            } => arc_target_hit(origin, forward, position, range),
+            Self::Radial { center, radius } => center.distance(position) <= radius,
+            Self::Target(target) => target == entity,
+        }
+    }
+
+    /// The point struck enemies recoil away from.
+    fn recoil_origin(self, source: Vec3) -> Vec3 {
+        match self {
+            Self::Arc { origin, .. } => origin,
+            Self::Radial { center, .. } => center,
+            Self::Target(_) => source,
+        }
+    }
+}
+
+/// Everything about a blow that is fixed the moment it is thrown.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct StrikeProfile {
     damage: f32,
     impact_scale: f32,
     crit_chance: f32,
     legendary_powers: LegendaryPowerSet,
     skill: Option<SkillCast>,
+    /// Blows at arm's length freeze the swing; missiles and bursts must not stall the game.
+    hit_stop: bool,
+    /// Long Shot passive: (minimum distance, damage multiplier).
+    long_shot: Option<(f32, f32)>,
+    /// Ledger id shared by every missile of one cast, so once-per-cast rewards pay once.
+    cast: u32,
+    /// Focus: bonus resource for a basic attack that connects.
+    fury_bonus: f32,
+    /// Vigor: barrier for a skill that connects.
+    barrier_reward: f32,
+}
+
+struct Strike {
+    area: HitArea,
+    /// Where the hero stood when the blow was thrown.
+    source: Vec3,
+    profile: StrikeProfile,
+}
+
+/// A strike waiting for its animation's contact (or release) frame.
+#[derive(Component, Debug)]
+struct PendingPlayerStrike {
+    timer: Timer,
+    facing: Vec3,
+    /// Cursor point captured at the key press, for ground-targeted shapes.
+    target: Vec3,
+    shape: StrikeShape,
+    motion: PlayerAttackMotion,
+    profile: StrikeProfile,
+}
+
+/// Pays rewards that belong to a cast rather than to each enemy or missile it hits.
+#[derive(Component, Debug, Default)]
+pub(crate) struct CastLedger {
+    next: u32,
+    barrier_paid: u32,
+    focus_paid: u32,
+}
+
+impl CastLedger {
+    fn begin(&mut self) -> u32 {
+        self.next = self.next.wrapping_add(1).max(1);
+        self.next
+    }
+
+    /// True only the first time `cast` asks for this reward.
+    fn claim(paid: &mut u32, cast: u32) -> bool {
+        if *paid == cast {
+            false
+        } else {
+            *paid = cast;
+            true
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -225,6 +265,7 @@ impl LegendaryPowerSet {
         Self { weapon, attuned }
     }
 
+    #[cfg(test)]
     fn none() -> Self {
         Self::new(LegendaryPower::None, LegendaryPower::None)
     }
@@ -246,11 +287,11 @@ struct BossStaggerTrigger {
     damage: f32,
 }
 
+/// The slot a skill was cast from and the rune it carried.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum SkillCast {
-    Dash(DashRune),
-    Rupture(RuptureRune),
-    Nova(NovaRune),
+struct SkillCast {
+    slot: SkillSlot,
+    rune: Rune,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -260,6 +301,7 @@ struct LegendaryProcTrigger {
 }
 
 impl LegendaryProcTrigger {
+    #[cfg(test)]
     fn basic(critical: bool) -> Self {
         Self {
             critical,
@@ -267,6 +309,7 @@ impl LegendaryProcTrigger {
         }
     }
 
+    #[cfg(test)]
     fn skill(critical: bool, skill: SkillCast) -> Self {
         Self {
             critical,
@@ -274,30 +317,17 @@ impl LegendaryProcTrigger {
         }
     }
 
-    fn from_attack(critical: bool, attack: &ArcAttack) -> Self {
-        if let Some(skill) = attack.skill {
-            Self::skill(critical, skill)
-        } else {
-            Self::basic(critical)
-        }
+    fn from_cast(critical: bool, skill: Option<SkillCast>) -> Self {
+        Self { critical, skill }
     }
 
     fn has_skill_synergy(self, power: LegendaryPower) -> bool {
-        legendary_power_skill_synergy(power, self.skill)
+        legendary_power_rune_synergy(power, self.skill.map(|cast| cast.rune))
     }
 
     fn should_proc(self, power: LegendaryPower) -> bool {
         self.critical || self.has_skill_synergy(power)
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct HitContact {
-    target: Vec3,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    critical: bool,
-    scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -315,35 +345,14 @@ struct HitImpactProfile {
     tier: HitImpactTier,
 }
 
+#[derive(Default)]
 struct CombatVfxAssets {
     slash_arc: Handle<WorldAsset>,
-    hit_spark: Handle<WorldAsset>,
-    bone_shatter: Handle<WorldAsset>,
-    bone_impact: Handle<WorldAsset>,
-    blood_spray: Handle<WorldAsset>,
-    execution_burst: Handle<WorldAsset>,
-    arcane_impact: Handle<WorldAsset>,
     holy_impact: Handle<WorldAsset>,
     ember_impact: Handle<WorldAsset>,
     frost_impact: Handle<WorldAsset>,
-    void_impact: Handle<WorldAsset>,
-    frenzy_impact: Handle<WorldAsset>,
-    vampiric_siphon: Handle<WorldAsset>,
-    desecrator_burst: Handle<WorldAsset>,
-    guard_clash: Handle<WorldAsset>,
-    armor_break: Handle<WorldAsset>,
-    soul_ward_hit: Handle<WorldAsset>,
-    hit_bone_rune: Handle<WorldAsset>,
-    hit_bone_lock: Handle<WorldAsset>,
-    marrow_flash: Handle<WorldAsset>,
-    bone_fracture_echo: Handle<WorldAsset>,
-    elite_affix_break: Handle<WorldAsset>,
     shadow_burst: Handle<WorldAsset>,
-    headshot_burst: Handle<WorldAsset>,
-    crit_bone_crown: Handle<WorldAsset>,
-    crit_burst: Handle<WorldAsset>,
     stagger_burst: Handle<WorldAsset>,
-    shadow_trail: Handle<WorldAsset>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -355,39 +364,12 @@ enum HitBone {
     Right,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum HitEffect {
-    Spark,
-    Bone,
-    BoneImpact,
-    Blood,
-    Execution,
-    Arcane,
-    Holy,
-    Ember,
-    Frost,
-    Void,
-    Frenzy,
-    Vampiric,
-    Desecrator,
-    GuardClash,
-    ArmorBreak,
-    SoulWard,
-    Shadow,
-    Headshot,
-    Critical,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum HitOverlay {
-    Rune,
-    Marrow,
-    Critical,
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct AttackOutcome {
     hits: u32,
+    damaging_hits: u32,
+    /// Enemies that received the rune's status (exposed, bleeding or chilled).
+    rune_applied: u32,
     boss_staggers: u32,
     life_stolen: f32,
     barrier_gained: f32,
@@ -459,6 +441,8 @@ type CombatPlayerCoreQuery<'w, 's> = Query<
         &'static mut Fury,
         &'static mut SkillCooldowns,
         &'static mut PlayerAnimation,
+        &'static mut CastLedger,
+        Option<&'static PendingPlayerStrike>,
     ),
     With<Player>,
 >;
@@ -474,13 +458,15 @@ type CombatPlayerStatsQuery<'w, 's> = Query<
         &'static ElixirBuff,
         &'static SurgeBuff,
         &'static Evade,
-        &'static SkillRunes,
+        &'static SkillLoadout,
         &'static Talents,
         &'static LegendaryCodex,
+        &'static PlayerLevel,
     ),
     With<Player>,
 >;
-type PendingPlayerArcAttackQuery<'w, 's> = Query<
+/// The hero as seen by strikes that land after the cast (contact frames, missiles, bursts).
+type StrikeHeroQuery<'w, 's> = Query<
     'w,
     's,
     (
@@ -489,14 +475,65 @@ type PendingPlayerArcAttackQuery<'w, 's> = Query<
         &'static mut Health,
         &'static mut Barrier,
         &'static mut Fury,
+        &'static mut CastLedger,
+        &'static mut PlayerAnimation,
         &'static Equipment,
+        &'static Charm,
         &'static ElixirBuff,
         &'static Evade,
         &'static SurgeBuff,
-        &'static mut PendingPlayerArcAttack,
+        Option<&'static mut PendingPlayerStrike>,
     ),
     With<Player>,
 >;
+
+/// Who collects what a landed strike pays back.
+struct Hero<'a> {
+    position: Vec3,
+    health: &'a mut Health,
+    barrier: &'a mut Barrier,
+    fury: &'a mut Fury,
+    ledger: &'a mut CastLedger,
+    equipment: &'a Equipment,
+    charm: &'a Charm,
+    elixir: &'a ElixirBuff,
+    evade: &'a Evade,
+    surge: &'a SurgeBuff,
+}
+
+/// Runs `reward` with the hero, for strikes that resolve away from the cast system.
+fn with_hero(heroes: &mut StrikeHeroQuery, reward: impl FnOnce(Hero)) {
+    let Ok((
+        _,
+        transform,
+        mut health,
+        mut barrier,
+        mut fury,
+        mut ledger,
+        _,
+        equipment,
+        charm,
+        elixir,
+        evade,
+        surge,
+        _,
+    )) = heroes.single_mut()
+    else {
+        return;
+    };
+    reward(Hero {
+        position: transform.translation,
+        health: &mut health,
+        barrier: &mut barrier,
+        fury: &mut fury,
+        ledger: &mut ledger,
+        equipment,
+        charm,
+        elixir,
+        evade,
+        surge,
+    });
+}
 
 #[derive(SystemParam)]
 struct CombatInputs<'w, 's> {
@@ -507,31 +544,265 @@ struct CombatInputs<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera3d>>,
     tuning: Res<'w, PlayerTuning>,
+    catalog: Res<'w, ClassCatalog>,
+    selected: Res<'w, SelectedClass>,
     dungeon_layout: Res<'w, DungeonLayout>,
-    bestiary: Res<'w, Bestiary>,
-    assets: Res<'w, GameAssets>,
-    stats: ResMut<'w, RunStats>,
-    combo: ResMut<'w, CombatComboState>,
     input_buffer: ResMut<'w, SkillInputBuffer>,
     basic_attack_intent: ResMut<'w, BasicAttackIntent>,
-    commands: Commands<'w, 's>,
-    combat_events: MessageWriter<'w, CombatEvent>,
-    floating_text: MessageWriter<'w, FloatingCombatTextEvent>,
-    screen_shake: MessageWriter<'w, ScreenShakeEvent>,
-    hit_stop: MessageWriter<'w, HitStopEvent>,
 }
 
+/// Everything a strike touches besides the hero: targets, feedback and run bookkeeping.
 #[derive(SystemParam)]
-struct PendingAttackInputs<'w, 's> {
-    time: Res<'w, Time>,
+struct StrikeWorld<'w, 's> {
+    commands: Commands<'w, 's>,
     assets: Res<'w, GameAssets>,
     bestiary: Res<'w, Bestiary>,
     stats: ResMut<'w, RunStats>,
-    commands: Commands<'w, 's>,
+    combo: ResMut<'w, CombatComboState>,
     combat_events: MessageWriter<'w, CombatEvent>,
     floating_text: MessageWriter<'w, FloatingCombatTextEvent>,
     screen_shake: MessageWriter<'w, ScreenShakeEvent>,
     hit_stop: MessageWriter<'w, HitStopEvent>,
+    enemies: EnemyTargets<'w, 's>,
+    breakables: BreakableTargets<'w, 's>,
+}
+
+/// One strike leaving the hero: its shape decides whether it lands now or later.
+struct Release {
+    origin: Vec3,
+    facing: Vec3,
+    target: Vec3,
+    shape: StrikeShape,
+    profile: StrikeProfile,
+}
+
+impl StrikeWorld<'_, '_> {
+    /// Hit now (arcs, bursts around the hero) or launch what will hit later.
+    /// Returns the outcome of whatever landed immediately.
+    fn release(&mut self, hero: Hero, resource: ResourceKind, release: Release) -> AttackOutcome {
+        let Release {
+            origin,
+            facing,
+            target,
+            shape,
+            profile,
+        } = release;
+        // Present confirmed releases, including empty casts, at their true footprint.
+        if let Some(cast) = profile.skill
+            && !matches!(shape, StrikeShape::GroundBlast { .. })
+        {
+            self.commands.write_message(skill_vfx::SkillVisual {
+                origin,
+                facing,
+                shape,
+                cast,
+                strength: profile.impact_scale,
+            });
+        }
+        match shape {
+            StrikeShape::Arc { range } => self.land(
+                hero,
+                resource,
+                HitArea::Arc {
+                    origin,
+                    forward: facing,
+                    range,
+                },
+                origin,
+                profile,
+            ),
+            StrikeShape::Radial { radius } => self.land(
+                hero,
+                resource,
+                HitArea::Radial {
+                    center: origin,
+                    radius,
+                },
+                origin,
+                profile,
+            ),
+            StrikeShape::Projectiles { .. } => {
+                ranged::launch_projectiles(
+                    &mut self.commands,
+                    &self.assets,
+                    origin,
+                    facing,
+                    shape,
+                    profile,
+                );
+                AttackOutcome::default()
+            }
+            StrikeShape::GroundBlast { radius, delay, .. } => {
+                ranged::mark_ground_blast(
+                    &mut self.commands,
+                    origin,
+                    target,
+                    radius,
+                    delay,
+                    profile,
+                );
+                AttackOutcome::default()
+            }
+        }
+    }
+
+    /// Strike an area, break what is breakable inside it and pay the hero's rewards.
+    fn land(
+        &mut self,
+        hero: Hero,
+        resource: ResourceKind,
+        area: HitArea,
+        source: Vec3,
+        profile: StrikeProfile,
+    ) -> AttackOutcome {
+        let vfx = combat_vfx_assets(&self.assets);
+        let outcome = apply_strike(
+            &mut self.commands,
+            &mut AttackFeedback {
+                combat_events: &mut self.combat_events,
+                floating_text: &mut self.floating_text,
+                screen_shake: &mut self.screen_shake,
+                hit_stop: &mut self.hit_stop,
+            },
+            &vfx,
+            Strike {
+                area,
+                source,
+                profile,
+            },
+            &mut self.enemies,
+            &self.bestiary,
+        );
+        damage_breakables(area, profile.damage, &mut self.breakables);
+        self.settle(hero, resource, profile, outcome);
+        outcome
+    }
+
+    /// Resource, healing, barrier, combo and run-stat consequences of a landed strike.
+    fn settle(
+        &mut self,
+        hero: Hero,
+        resource: ResourceKind,
+        profile: StrikeProfile,
+        outcome: AttackOutcome,
+    ) {
+        let Hero {
+            position,
+            health,
+            barrier,
+            fury,
+            ledger,
+            equipment,
+            charm,
+            elixir,
+            evade,
+            surge,
+        } = hero;
+        match profile.skill {
+            None => {
+                if outcome.damaging_hits > 0 {
+                    let base_gain = fury.basic_gain
+                        * outcome.damaging_hits as f32
+                        * surge_fury_multiplier(surge);
+                    let gained = fury.gain(base_gain);
+                    let bonus = if CastLedger::claim(&mut ledger.focus_paid, profile.cast) {
+                        fury.gain(profile.fury_bonus)
+                    } else {
+                        0.0
+                    };
+                    if bonus > 0.0 {
+                        self.commands.write_message(TalentProcFeedback {
+                            position,
+                            branch: TalentBranch::Focus,
+                            amount: bonus,
+                        });
+                    }
+                    if gained + bonus > 0.0 {
+                        self.combat_events.write(CombatEvent {
+                            text: format!("Generated {:.0} {}", gained + bonus, resource.label()),
+                        });
+                    }
+                }
+            }
+            Some(cast) => {
+                match cast.rune {
+                    Rune::Reap if outcome.hits > 0 => {
+                        self.stats.reap_hits = self.stats.reap_hits.saturating_add(outcome.hits);
+                        let restored = REAP_HEAL_PER_HIT * outcome.hits as f32;
+                        health.current = (health.current + restored).min(health.max);
+                        self.combat_events.write(CombatEvent {
+                            text: format!("Reap restored {restored:.0} health"),
+                        });
+                    }
+                    Rune::Frost if outcome.hits > 0 => {
+                        self.stats.frost_hits = self.stats.frost_hits.saturating_add(outcome.hits);
+                    }
+                    Rune::Hemorrhage => {
+                        self.stats.hemorrhage_hits = self
+                            .stats
+                            .hemorrhage_hits
+                            .saturating_add(outcome.rune_applied);
+                    }
+                    _ => {}
+                }
+                if outcome.damaging_hits > 0
+                    && CastLedger::claim(&mut ledger.barrier_paid, profile.cast)
+                {
+                    grant_vigor_barrier(
+                        &mut self.commands,
+                        barrier,
+                        position,
+                        profile.barrier_reward,
+                    );
+                }
+                apply_combo_finisher(
+                    &mut self.combo,
+                    ComboFinisherPlayer {
+                        fury,
+                        health,
+                        barrier,
+                        equipment,
+                        charm,
+                    },
+                    cast.slot,
+                    outcome.hits,
+                    resource,
+                    ComboFinisherFeedback {
+                        combat_events: &mut self.combat_events,
+                        screen_shake: &mut self.screen_shake,
+                    },
+                );
+                if outcome.hits > 0 && cast.slot != SkillSlot::Mobility {
+                    self.combo.prime(cast.slot);
+                    if cast.slot == SkillSlot::Area {
+                        self.combat_events.write(CombatEvent {
+                            text: "Combo Ready: rush the marked enemies".to_string(),
+                        });
+                    }
+                }
+                if let Some(text) = rune_effect_text(cast.rune, outcome.rune_applied) {
+                    self.combat_events.write(CombatEvent { text });
+                }
+            }
+        }
+        apply_boss_break_reward(
+            fury,
+            barrier,
+            outcome.boss_staggers,
+            &mut self.stats,
+            &mut self.combat_events,
+        );
+        apply_life_steal(health, outcome.life_stolen, &mut self.combat_events);
+        apply_legendary_barrier(barrier, outcome.barrier_gained, &mut self.combat_events);
+        apply_reflected_damage(
+            health,
+            barrier,
+            outcome.reflected_damage,
+            total_armor(equipment, elixir),
+            evade,
+            &mut self.combat_events,
+        );
+    }
 }
 
 pub struct CombatPlugin;
@@ -543,32 +814,42 @@ pub enum CombatSet {
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CombatComboState>()
-            .init_resource::<SkillInputBuffer>()
-            .init_resource::<BasicAttackIntent>()
-            .add_systems(
-                OnEnter(GameState::InGame),
-                (reset_combat_combo, reset_basic_attack_intent),
-            )
-            .add_systems(
-                Update,
+        #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+        review::install(app);
+        app.add_plugins((
+            presentation::CombatPresentationPlugin,
+            skill_vfx::SkillVfxPlugin,
+        ))
+        .init_resource::<CombatComboState>()
+        .init_resource::<SkillInputBuffer>()
+        .init_resource::<BasicAttackIntent>()
+        .add_systems(
+            OnEnter(GameState::InGame),
+            (reset_combat_combo, reset_basic_attack_intent),
+        )
+        .add_systems(
+            Update,
+            (
                 (
-                    (
-                        player_attacks,
-                        resolve_pending_player_arc_attacks,
-                        tick_conduit_lightning,
-                        tick_enemy_burning,
-                    )
-                        .chain()
-                        .in_set(CombatSet::PlayerDamage),
-                    tick_hit_flash,
-                    tick_combat_vfx,
-                    tick_vulnerable,
-                    tick_combat_combo,
+                    player_attacks,
+                    resolve_pending_player_strikes,
+                    ranged::fly_player_projectiles,
+                    ranged::burst_ground_blasts,
+                    tick_conduit_lightning,
+                    tick_enemy_burning,
                 )
-                    .run_if(in_state(GameState::InGame).and_then(not_paused)),
+                    .chain()
+                    .in_set(CombatSet::PlayerDamage),
+                tick_combat_vfx,
+                tick_vulnerable,
+                tick_combat_combo,
             )
-            .add_systems(OnExit(GameState::InGame), despawn_combat_vfx);
+                .run_if(in_state(GameState::InGame).and_then(not_paused)),
+        )
+        .add_systems(
+            OnExit(GameState::InGame),
+            (despawn_combat_vfx, ranged::despawn_ranged_strikes),
+        );
     }
 }
 
@@ -589,10 +870,9 @@ fn tick_combat_combo(time: Res<Time>, mut combo: ResMut<CombatComboState>) {
 
 fn player_attacks(
     mut inputs: CombatInputs,
+    mut world: StrikeWorld,
     mut player_core: CombatPlayerCoreQuery,
     player_stats: CombatPlayerStatsQuery,
-    mut enemies: EnemyTargets,
-    mut breakables: BreakableTargets,
 ) {
     let Ok((
         player_entity,
@@ -602,24 +882,43 @@ fn player_attacks(
         mut fury,
         mut cooldowns,
         mut animation,
+        mut ledger,
+        pending_strike,
     )) = player_core.single_mut()
     else {
         return;
     };
-    let Ok((bonus, charm, equipment, buff, glory, elixir, surge, evade, runes, talents, codex)) =
-        player_stats.single()
+    let Ok((
+        bonus,
+        charm,
+        equipment,
+        buff,
+        glory,
+        elixir,
+        surge,
+        evade,
+        loadout,
+        talents,
+        codex,
+        level,
+    )) = player_stats.single()
     else {
         return;
     };
+    let class = inputs.catalog.get(inputs.selected.0);
+    let resource = class.resource.kind;
+    let growth = &inputs.tuning.growth;
     let total_multiplier = damage_multiplier(buff)
         * elixir_damage_multiplier(elixir)
         * glory_damage_multiplier(glory)
         * surge_damage_multiplier(surge)
-        * talents.damage_multiplier();
+        * talents.damage_multiplier()
+        * unbowed_multiplier(class.passive, &player_health);
     let damage_bonus = total_damage_bonus(bonus, equipment, charm);
     let crit_chance = (total_crit_chance(equipment, charm) + talents.crit_bonus()).min(0.60);
     let legendary_powers = LegendaryPowerSet::new(equipment.legendary_power, codex.attuned);
-    let vfx = combat_vfx_assets(&inputs.assets);
+    let long_shot = long_shot_passive(class.passive);
+    let basic_reach = class.basic.strike.reach();
     // A click on a UI panel is panel input, not a strike command.
     let cursor_ground = if inputs.ui_capture.0 {
         None
@@ -629,61 +928,82 @@ fn player_attacks(
     let cursor_primary_attack_target = cursor_ground_primary_attack_target(
         cursor_ground,
         player_transform.translation,
-        inputs.tuning.basic_range,
-        &enemies,
+        basic_reach,
+        &world.enemies,
     );
-    update_basic_attack_intent(
-        &mut inputs.basic_attack_intent,
-        &inputs.mouse,
-        cursor_ground,
-        cursor_primary_attack_target,
-    );
+    if !inputs.ui_capture.0 {
+        update_basic_attack_intent(
+            &mut inputs.basic_attack_intent,
+            &inputs.mouse,
+            cursor_ground,
+            cursor_primary_attack_target,
+        );
+    }
     let primary_attack_target = intended_primary_attack_target(
         &mut inputs.basic_attack_intent,
         cursor_primary_attack_target,
         player_transform.translation,
-        inputs.tuning.basic_range,
-        &enemies,
+        basic_reach,
+        &world.enemies,
     );
-    let dash_pressed = inputs.keyboard.just_pressed(KeyCode::KeyQ);
-    let rupture_pressed = inputs.mouse.just_pressed(MouseButton::Right);
-    let nova_pressed = inputs.keyboard.just_pressed(KeyCode::KeyE);
+    let mut pressed = [false; 3];
+    for slot in SkillSlot::ALL {
+        pressed[slot.index()] = inputs.keyboard.just_pressed(slot.key())
+            && (slot != SkillSlot::Finisher || !inputs.ui_capture.0);
+    }
     inputs.input_buffer.tick(inputs.time.delta_secs());
-    inputs
-        .input_buffer
-        .capture(dash_pressed, rupture_pressed, nova_pressed);
+    for slot in SkillSlot::ALL {
+        if pressed[slot.index()] {
+            inputs.input_buffer.capture(slot);
+        }
+    }
+    if pending_strike.is_some() {
+        return;
+    }
 
-    if basic_attack_requested(
-        &inputs.mouse,
-        &cooldowns,
-        &inputs.basic_attack_intent,
-        primary_attack_target,
-    ) {
+    if !inputs.ui_capture.0
+        && cursor_ground.is_some()
+        && animation.attack_progress() >= 1.0
+        && basic_attack_requested(
+            &inputs.mouse,
+            &cooldowns,
+            &inputs.basic_attack_intent,
+            primary_attack_target,
+        )
+    {
+        let aim = primary_attack_target
+            .map(|target| target.position)
+            .or(cursor_ground);
         let facing = attack_facing_from_cursor(
             player_transform.translation,
             player_transform.forward().as_vec3(),
-            primary_attack_target
-                .map(|target| target.position)
-                .or(cursor_ground),
+            aim,
         );
         animation.face_direction(facing);
-        animation.trigger_attack(PlayerAttackMotion::Basic, 0.42);
-        spawn_slash_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            facing,
-            0.78,
-        );
-        inputs
+        let cycle = cooldowns.basic_base * talents.cooldown_multiplier();
+        animation.trigger_attack(class.basic.motion, cycle);
+        let profile = StrikeProfile {
+            damage: (class.basic.damage + damage_bonus) * total_multiplier,
+            impact_scale: talents.combat_impact_multiplier(growth),
+            crit_chance,
+            legendary_powers,
+            skill: None,
+            hit_stop: stalls_on_hit(class.basic.strike),
+            long_shot,
+            cast: ledger.begin(),
+            fury_bonus: talents.basic_fury_bonus(growth),
+            barrier_reward: 0.0,
+        };
+        world
             .commands
             .entity(player_entity)
-            .try_insert(queued_basic_arc_attack(
+            .try_insert(queued_strike(
+                cycle,
                 facing,
-                inputs.tuning.basic_range,
-                (inputs.tuning.basic_damage + damage_bonus) * total_multiplier,
-                crit_chance,
-                legendary_powers,
+                aim.unwrap_or(player_transform.translation + facing),
+                class.basic.strike,
+                class.basic.motion,
+                profile,
             ));
         let basic_base = cooldowns.basic_base;
         reset_scaled(
@@ -693,694 +1013,361 @@ fn player_attacks(
         );
     }
 
-    if inputs.input_buffer.dash_requested() && !cooldowns.dash.is_finished() && dash_pressed {
-        inputs.combat_events.write(CombatEvent {
-            text: skill_unavailable_text("Dash", cooldowns.dash.remaining_secs()),
-        });
-    }
-
-    if inputs.input_buffer.dash_requested() && cooldowns.dash.is_finished() {
-        let dash_cost = fury.dash_cost * talents.fury_cost_multiplier();
-        if !fury.spend(dash_cost) {
-            inputs.input_buffer.clear_dash();
-            if dash_pressed {
-                inputs.combat_events.write(CombatEvent {
-                    text: format!("Need {dash_cost:.0} fury for dash"),
+    for slot in [SkillSlot::Mobility, SkillSlot::Finisher, SkillSlot::Area] {
+        if !inputs.input_buffer.requested(slot) {
+            continue;
+        }
+        let pressed = pressed[slot.index()];
+        let (skill, rune) = class.equipped(loadout, slot);
+        if level.level < skill.unlock_level {
+            inputs.input_buffer.clear(slot);
+            if pressed {
+                world.combat_events.write(CombatEvent {
+                    text: format!("{} unlocks at level {}", skill.name, skill.unlock_level),
                 });
             }
-            return;
+            continue;
         }
-        inputs.input_buffer.clear_dash();
-        inputs.combat_events.write(CombatEvent {
-            text: skill_cast_text(SkillCast::Dash(runes.dash)),
-        });
-        inputs
-            .screen_shake
-            .write(skill_cast_screen_shake(SkillCast::Dash(runes.dash)));
-        animation.trigger_attack(PlayerAttackMotion::Dash, 0.38);
-        let direction = player_transform.forward().as_vec3().normalize_or_zero();
-        let dash_start = player_transform.translation;
-        let dash_distance = match runes.dash {
-            DashRune::Cleanse => inputs.tuning.dash_distance,
-            DashRune::Reap => inputs.tuning.dash_distance * 0.82,
-        };
-        player_transform.translation = clamp_dungeon_translation(
-            &inputs.dungeon_layout,
-            player_transform.translation + direction * dash_distance,
-        );
-        spawn_slash_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            direction,
-            1.05,
-        );
-        spawn_shadow_trail_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            direction,
-            1.2,
-        );
-        spawn_dash_cast_vfx(
-            &mut inputs.commands,
-            &vfx,
-            dash_start,
-            player_transform.translation,
-            direction,
-            runes.dash,
-        );
-        let outcome = apply_arc_damage(
-            &mut inputs.commands,
-            &mut AttackFeedback {
-                combat_events: &mut inputs.combat_events,
-                floating_text: &mut inputs.floating_text,
-                screen_shake: &mut inputs.screen_shake,
-                hit_stop: &mut inputs.hit_stop,
-            },
-            &vfx,
-            ArcAttack {
-                origin: player_transform.translation,
-                facing: direction,
-                range: inputs.tuning.basic_range + 1.2,
-                damage: (inputs.tuning.dash_damage + damage_bonus)
-                    * total_multiplier
-                    * dash_damage_multiplier(runes.dash),
-                impact_scale: 1.12,
-                crit_chance,
-                legendary_powers,
-                skill: Some(SkillCast::Dash(runes.dash)),
-            },
-            &mut enemies,
-            &inputs.bestiary,
-        );
-        apply_arc_breakable_damage(
-            &mut inputs.commands,
-            ArcAttack {
-                origin: player_transform.translation,
-                facing: direction,
-                range: inputs.tuning.basic_range + 1.2,
-                damage: (inputs.tuning.dash_damage + damage_bonus)
-                    * total_multiplier
-                    * dash_damage_multiplier(runes.dash),
-                impact_scale: 0.95,
-                crit_chance: 0.0,
-                legendary_powers: LegendaryPowerSet::none(),
-                skill: None,
-            },
-            &mut breakables,
-        );
-        if runes.dash == DashRune::Reap && outcome.hits > 0 {
-            inputs.stats.reap_dash_hits = inputs.stats.reap_dash_hits.saturating_add(outcome.hits);
-            let restored = 8.0 * outcome.hits as f32;
-            player_health.current = (player_health.current + restored).min(player_health.max);
-            inputs.combat_events.write(CombatEvent {
-                text: format!("Reap restored {restored:.0} health"),
-            });
+        if !cooldowns.slot(slot).is_finished() {
+            if pressed {
+                world.combat_events.write(CombatEvent {
+                    text: skill_unavailable_text(
+                        &skill.name,
+                        cooldowns.slot(slot).remaining_secs(),
+                    ),
+                });
+            }
+            continue;
         }
-        apply_combo_finisher(
-            &mut inputs.combo,
-            ComboFinisherPlayer {
-                fury: &mut fury,
-                health: &mut player_health,
-                barrier: &mut player_barrier,
-                equipment,
-                charm,
-            },
-            ComboFinisher::Dash,
-            outcome.hits,
-            ComboFinisherFeedback {
-                combat_events: &mut inputs.combat_events,
-                screen_shake: &mut inputs.screen_shake,
-            },
-        );
-        apply_boss_break_reward(
-            &mut fury,
-            &mut player_barrier,
-            outcome.boss_staggers,
-            &mut inputs.stats,
-            &mut inputs.combat_events,
-        );
-        apply_life_steal(
-            &mut player_health,
-            outcome.life_stolen,
-            &mut inputs.combat_events,
-        );
-        apply_legendary_barrier(
-            &mut player_barrier,
-            outcome.barrier_gained,
-            &mut inputs.combat_events,
-        );
-        apply_reflected_damage(
-            &mut player_health,
-            &mut player_barrier,
-            outcome.reflected_damage,
-            total_armor(equipment, elixir),
-            evade,
-            &mut inputs.combat_events,
-        );
-        let dash_base = cooldowns.dash_base;
-        reset_scaled(
-            &mut cooldowns.dash,
-            dash_base,
-            talents.cooldown_multiplier(),
-        );
-        if runes.dash == DashRune::Cleanse {
-            inputs
-                .commands
-                .entity(player_entity)
-                .try_remove::<Burning>();
-        }
-    }
-
-    if inputs.input_buffer.rupture_requested()
-        && !cooldowns.rupture.is_finished()
-        && rupture_pressed
-    {
-        inputs.combat_events.write(CombatEvent {
-            text: skill_unavailable_text("Rupture", cooldowns.rupture.remaining_secs()),
-        });
-    }
-
-    if inputs.input_buffer.rupture_requested() && cooldowns.rupture.is_finished() {
         let facing = attack_facing_from_cursor(
             player_transform.translation,
             player_transform.forward().as_vec3(),
             cursor_ground,
         );
-        animation.face_direction(facing);
-        let rupture_cost = fury.rupture_cost * talents.fury_cost_multiplier();
-        if !fury.spend(rupture_cost) {
-            inputs.input_buffer.clear_rupture();
-            if rupture_pressed {
-                inputs.combat_events.write(CombatEvent {
-                    text: format!("Need {rupture_cost:.0} fury for rupture"),
-                });
-            }
-            return;
-        }
-        inputs.input_buffer.clear_rupture();
-        inputs.combat_events.write(CombatEvent {
-            text: skill_cast_text(SkillCast::Rupture(runes.rupture)),
-        });
-        inputs
-            .screen_shake
-            .write(skill_cast_screen_shake(SkillCast::Rupture(runes.rupture)));
-        animation.trigger_attack(PlayerAttackMotion::Rupture, 0.58);
-        let rupture_range = inputs.tuning.basic_range + 0.9;
-        let rupture_damage = (inputs.tuning.dash_damage * 0.82 + damage_bonus * 0.75)
-            * total_multiplier
-            * rupture_damage_multiplier(runes.rupture);
-        spawn_slash_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            facing,
-            1.25,
-        );
-        spawn_rupture_cast_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            facing,
-            rupture_range,
-            runes.rupture,
-        );
-        let outcome = apply_arc_damage(
-            &mut inputs.commands,
-            &mut AttackFeedback {
-                combat_events: &mut inputs.combat_events,
-                floating_text: &mut inputs.floating_text,
-                screen_shake: &mut inputs.screen_shake,
-                hit_stop: &mut inputs.hit_stop,
-            },
-            &vfx,
-            ArcAttack {
-                origin: player_transform.translation,
-                facing,
-                range: rupture_range,
-                damage: rupture_damage,
-                impact_scale: 1.28,
-                crit_chance,
-                legendary_powers,
-                skill: Some(SkillCast::Rupture(runes.rupture)),
-            },
-            &mut enemies,
-            &inputs.bestiary,
-        );
-        let affected = match runes.rupture {
-            RuptureRune::Expose => apply_rupture_vulnerable(
-                &mut inputs.commands,
+        if skill.requires_target
+            && !strike_has_target(
                 player_transform.translation,
                 facing,
-                rupture_range,
-                &mut enemies,
-            ),
-            RuptureRune::Hemorrhage => apply_rupture_bleed(
-                &mut inputs.commands,
-                player_transform.translation,
-                facing,
-                rupture_range,
-                rupture_damage,
-                &mut enemies,
-                &inputs.bestiary,
-            ),
-        };
-        if runes.rupture == RuptureRune::Hemorrhage && affected > 0 {
-            inputs.stats.hemorrhage_rupture_hits = inputs
-                .stats
-                .hemorrhage_rupture_hits
-                .saturating_add(affected);
-        }
-        if outcome.hits > 0 || affected > 0 {
-            inputs.combo.prime(ComboPrimer::Rupture);
-            inputs.combat_events.write(CombatEvent {
-                text: "Combo Ready: finish Rupture with Dash or Nova".to_string(),
-            });
-        }
-        apply_boss_break_reward(
-            &mut fury,
-            &mut player_barrier,
-            outcome.boss_staggers,
-            &mut inputs.stats,
-            &mut inputs.combat_events,
-        );
-        apply_arc_breakable_damage(
-            &mut inputs.commands,
-            ArcAttack {
-                origin: player_transform.translation,
-                facing,
-                range: rupture_range,
-                damage: rupture_damage,
-                impact_scale: 1.05,
-                crit_chance: 0.0,
-                legendary_powers: LegendaryPowerSet::none(),
-                skill: None,
-            },
-            &mut breakables,
-        );
-        apply_life_steal(
-            &mut player_health,
-            outcome.life_stolen,
-            &mut inputs.combat_events,
-        );
-        apply_legendary_barrier(
-            &mut player_barrier,
-            outcome.barrier_gained,
-            &mut inputs.combat_events,
-        );
-        apply_reflected_damage(
-            &mut player_health,
-            &mut player_barrier,
-            outcome.reflected_damage,
-            total_armor(equipment, elixir),
-            evade,
-            &mut inputs.combat_events,
-        );
-        if affected > 0 {
-            inputs.combat_events.write(CombatEvent {
-                text: rupture_effect_text(runes.rupture, affected),
-            });
-        }
-        let rupture_base = cooldowns.rupture_base;
-        reset_scaled(
-            &mut cooldowns.rupture,
-            rupture_base,
-            talents.cooldown_multiplier(),
-        );
-    }
-
-    if inputs.input_buffer.nova_requested() && !cooldowns.nova.is_finished() && nova_pressed {
-        inputs.combat_events.write(CombatEvent {
-            text: skill_unavailable_text("Nova", cooldowns.nova.remaining_secs()),
-        });
-    }
-
-    if inputs.input_buffer.nova_requested() && cooldowns.nova.is_finished() {
-        let nova_cost = fury.nova_cost * talents.fury_cost_multiplier();
-        if !fury.spend(nova_cost) {
-            inputs.input_buffer.clear_nova();
-            if nova_pressed {
-                inputs.combat_events.write(CombatEvent {
-                    text: format!("Need {nova_cost:.0} fury for nova"),
-                });
-            }
-            return;
-        }
-        inputs.input_buffer.clear_nova();
-        inputs.combat_events.write(CombatEvent {
-            text: skill_cast_text(SkillCast::Nova(runes.nova)),
-        });
-        inputs
-            .screen_shake
-            .write(skill_cast_screen_shake(SkillCast::Nova(runes.nova)));
-        animation.trigger_attack(PlayerAttackMotion::Nova, 0.56);
-        spawn_nova_cast_vfx(
-            &mut inputs.commands,
-            &vfx,
-            player_transform.translation,
-            runes.nova,
-            inputs.tuning.nova_radius,
-        );
-        let mut storm_chains = Vec::new();
-        let mut life_stolen = 0.0;
-        let mut barrier_gained = 0.0;
-        let mut reflected_damage = 0.0;
-        let mut boss_staggers = 0;
-        let mut nova_hits = 0;
-        for (
-            entity,
-            enemy_transform,
-            enemy,
-            mut health,
-            ward,
-            chilled,
-            vulnerable,
-            stagger,
-            staggered,
-        ) in &mut enemies
+                skill.strike,
+                world
+                    .enemies
+                    .iter()
+                    .map(|(_, transform, _, health, ..)| (transform.translation, health.current))
+                    .chain(
+                        world
+                            .breakables
+                            .iter()
+                            .map(|(_, transform, health)| (transform.translation, health.current)),
+                    ),
+            )
         {
-            let distance = player_transform
-                .translation
-                .distance(enemy_transform.translation);
-            if distance <= inputs.tuning.nova_radius {
-                nova_hits += 1;
-                let damage = (inputs.tuning.nova_damage + damage_bonus)
-                    * total_multiplier
-                    * nova_damage_multiplier(runes.nova);
-                let critical = roll_critical(crit_chance);
-                let damage = bestiary_adjusted_damage(damage, enemy, &inputs.bestiary);
-                let final_damage = apply_enemy_affix_damage(
-                    apply_critical_damage(damage, critical),
-                    enemy,
-                    chilled,
-                    vulnerable,
-                    staggered,
-                );
-                let ward_result = apply_seal_warden_ward(
-                    &mut inputs.commands,
-                    &mut inputs.combat_events,
-                    &vfx,
-                    WardHitContext {
-                        entity,
-                        target: enemy_transform.translation,
-                        enemy,
-                        incoming_damage: final_damage,
-                        ward,
-                    },
-                );
-                let final_damage = ward_result.health_damage;
-                health.current -= final_damage;
-                let boss_break = trigger_boss_stagger(
-                    &mut inputs.commands,
-                    &mut inputs.combat_events,
-                    &vfx,
-                    enemy,
-                    BossStaggerTrigger {
-                        entity,
-                        target: enemy_transform.translation,
-                        damage: final_damage,
-                    },
-                    stagger,
-                    staggered,
-                );
-                if boss_break {
-                    boss_staggers += 1;
-                    inputs.hit_stop.write(boss_break_hit_stop_event());
-                }
-                let impact_profile = hit_impact_profile(enemy, critical, 1.35, boss_break);
-                spawn_hit_vfx(
-                    &mut inputs.commands,
-                    &vfx,
-                    enemy_transform.translation,
-                    enemy,
-                    critical,
-                    hit_impact_vfx_scale(impact_profile),
-                );
-                if final_damage > 0.0 {
-                    inputs.combat_events.write(CombatEvent {
-                        text: damage_text(
-                            &format!("{} nova", runes.nova.label()),
-                            final_damage,
-                            critical,
-                        ),
-                    });
-                }
-                inputs.floating_text.write(FloatingCombatTextEvent {
-                    text: floating_damage_text_for_ward_result(
-                        final_damage,
-                        ward_result,
-                        impact_profile,
-                    ),
-                    position: hit_bone_world_position(enemy_transform.translation, enemy, critical),
-                    critical,
+            inputs.input_buffer.clear(slot);
+            if pressed {
+                world.combat_events.write(CombatEvent {
+                    text: format!("{}: move closer and face an enemy", skill.name),
                 });
-                trigger_hit_impact_screen_shake(&mut inputs.screen_shake, impact_profile);
-                trigger_hit_impact_hit_stop(&mut inputs.hit_stop, impact_profile);
-                if runes.nova == NovaRune::Frost {
-                    inputs.commands.entity(entity).try_insert(Chilled {
-                        timer: Timer::from_seconds(2.8, TimerMode::Once),
-                        slow_multiplier: 0.48,
-                    });
-                }
-                let proc_trigger =
-                    LegendaryProcTrigger::skill(critical, SkillCast::Nova(runes.nova));
-                if let Some(burning) =
-                    legendary_burning(legendary_powers, proc_trigger, final_damage)
-                {
-                    inputs.commands.entity(entity).try_insert(burning);
-                    inputs.combat_events.write(CombatEvent {
-                        text: "Emberbrand ignited enemy".to_string(),
-                    });
-                }
-                if let Some(chilled) = legendary_chilled(legendary_powers, proc_trigger) {
-                    inputs.commands.entity(entity).try_insert(chilled);
-                    inputs.combat_events.write(CombatEvent {
-                        text: "Frostbrand chilled enemy".to_string(),
-                    });
-                }
-                if let Some(damage) =
-                    stormbrand_chain_damage(legendary_powers, proc_trigger, final_damage)
-                {
-                    storm_chains.push(StormChain {
-                        source: entity,
-                        origin: enemy_transform.translation,
-                        damage,
-                    });
-                }
-                life_stolen += legendary_life_steal(legendary_powers, proc_trigger, final_damage);
-                barrier_gained += legendary_barrier(legendary_powers, proc_trigger, final_damage);
-                reflected_damage += reflective_damage(enemy, final_damage);
-                inputs.commands.entity(entity).try_insert((
-                    HitFlash {
-                        timer: Timer::from_seconds(0.18, TimerMode::Once),
-                    },
-                    hit_react_for_contact(
-                        critical,
-                        player_transform.translation,
-                        enemy_transform.translation,
-                        1.35,
-                    ),
-                    EnemyTargetFocus::new(critical),
-                ));
             }
+            return;
         }
-        if runes.nova == NovaRune::Frost && nova_hits > 0 {
-            inputs.stats.frost_nova_hits = inputs.stats.frost_nova_hits.saturating_add(nova_hits);
+        animation.face_direction(facing);
+        let cost = fury.skill_cost(skill.cost) * talents.fury_cost_multiplier();
+        if !fury.spend(cost) {
+            inputs.input_buffer.clear(slot);
+            if pressed {
+                world.combat_events.write(CombatEvent {
+                    text: format!(
+                        "Need {cost:.0} {} for {}",
+                        resource.label(),
+                        skill.name.to_lowercase()
+                    ),
+                });
+            }
+            return;
         }
-        apply_combo_finisher(
-            &mut inputs.combo,
-            ComboFinisherPlayer {
-                fury: &mut fury,
-                health: &mut player_health,
-                barrier: &mut player_barrier,
-                equipment,
-                charm,
-            },
-            ComboFinisher::Nova,
-            nova_hits,
-            ComboFinisherFeedback {
-                combat_events: &mut inputs.combat_events,
-                screen_shake: &mut inputs.screen_shake,
-            },
+        inputs.input_buffer.clear(slot);
+        let cast = SkillCast { slot, rune };
+        world.combat_events.write(CombatEvent {
+            text: skill_cast_text(&skill.name, rune),
+        });
+        world.screen_shake.write(skill_cast_screen_shake(slot));
+        let cast_secs = if skill.hasted {
+            skill.cast_secs * talents.cooldown_multiplier()
+        } else {
+            skill.cast_secs
+        };
+        animation.trigger_attack(skill.motion, cast_secs);
+
+        let start = player_transform.translation;
+        let destination = clamp_dungeon_translation(
+            &inputs.dungeon_layout,
+            skill_destination(start, facing, cursor_ground, skill.movement, rune),
         );
-        if nova_hits > 0 {
-            inputs.combo.prime(ComboPrimer::Nova);
-            inputs.combat_events.write(CombatEvent {
-                text: "Combo Ready: Dash through Nova-marked enemies".to_string(),
+        if destination != start {
+            player_transform.translation = destination;
+            world.commands.write_message(skill_vfx::MovementVisual {
+                start,
+                end: destination,
+                rune,
             });
         }
-        apply_stormbrand_chains(
-            &mut inputs.commands,
-            &mut inputs.combat_events,
-            &vfx,
-            storm_chains,
-            &mut enemies,
-            &inputs.bestiary,
-        );
-        apply_boss_break_reward(
-            &mut fury,
-            &mut player_barrier,
-            boss_staggers,
-            &mut inputs.stats,
-            &mut inputs.combat_events,
-        );
-        apply_life_steal(&mut player_health, life_stolen, &mut inputs.combat_events);
-        apply_legendary_barrier(
-            &mut player_barrier,
-            barrier_gained,
-            &mut inputs.combat_events,
-        );
-        apply_reflected_damage(
-            &mut player_health,
-            &mut player_barrier,
-            reflected_damage,
-            total_armor(equipment, elixir),
-            evade,
-            &mut inputs.combat_events,
-        );
-        apply_nova_breakable_damage(
-            &mut inputs.commands,
-            player_transform.translation,
-            inputs.tuning.nova_radius,
-            (inputs.tuning.nova_damage + damage_bonus)
+        // A blink strikes where the hero stood; every other movement strikes on arrival.
+        let origin = if matches!(skill.movement, Movement::Blink(_)) {
+            start
+        } else {
+            destination
+        };
+        if rune == Rune::Cleanse {
+            world.commands.entity(player_entity).try_remove::<Burning>();
+        }
+        if skill.barrier > 0.0 {
+            let granted = player_barrier.grant(skill.barrier);
+            if granted > 0.0 {
+                world.combat_events.write(CombatEvent {
+                    text: format!("{} raised {granted:.0} barrier", skill.name),
+                });
+            }
+        }
+        let profile = StrikeProfile {
+            damage: (skill.damage + damage_bonus * skill.bonus_scale)
                 * total_multiplier
-                * nova_damage_multiplier(runes.nova),
-            &mut breakables,
-        );
-        let nova_base = cooldowns.nova_base;
+                * rune.damage_multiplier(),
+            impact_scale: skill.impact * talents.combat_impact_multiplier(growth),
+            crit_chance,
+            legendary_powers,
+            skill: Some(cast),
+            hit_stop: stalls_on_hit(skill.strike),
+            long_shot,
+            cast: ledger.begin(),
+            fury_bonus: 0.0,
+            barrier_reward: talents.skill_barrier_gain(growth),
+        };
+        let target = ground_target(origin, facing, cursor_ground, skill.strike);
+        if skill.on_contact {
+            world
+                .commands
+                .entity(player_entity)
+                .try_insert(queued_strike(
+                    cast_secs,
+                    facing,
+                    target,
+                    skill.strike,
+                    skill.motion,
+                    profile,
+                ));
+            // The basic attack waits for this swing like any other.
+            reset_scaled(&mut cooldowns.basic, cast_secs, 1.0);
+        } else {
+            world.release(
+                Hero {
+                    position: origin,
+                    health: &mut player_health,
+                    barrier: &mut player_barrier,
+                    fury: &mut fury,
+                    ledger: &mut ledger,
+                    equipment,
+                    charm,
+                    elixir,
+                    evade,
+                    surge,
+                },
+                resource,
+                Release {
+                    origin,
+                    facing,
+                    target,
+                    shape: skill.strike,
+                    profile,
+                },
+            );
+        }
+        let index = slot.index();
         reset_scaled(
-            &mut cooldowns.nova,
-            nova_base,
+            &mut cooldowns.slots[index],
+            skill.cooldown,
             talents.cooldown_multiplier(),
         );
     }
 }
 
-fn queued_basic_arc_attack(
-    facing: Vec3,
-    range: f32,
-    damage: f32,
-    crit_chance: f32,
-    legendary_powers: LegendaryPowerSet,
-) -> PendingPlayerArcAttack {
-    PendingPlayerArcAttack {
-        timer: Timer::from_seconds(basic_attack_impact_delay_secs(), TimerMode::Once),
-        facing,
-        range,
-        damage,
-        impact_scale: 1.0,
-        crit_chance,
-        legendary_powers,
-        skill: None,
+/// Unbowed passive: a wounded hero hits harder.
+fn unbowed_multiplier(passive: Passive, health: &Health) -> f32 {
+    match passive {
+        Passive::Unbowed {
+            health_fraction,
+            damage_multiplier,
+        } if health.max > 0.0 && health.current / health.max < health_fraction => damage_multiplier,
+        _ => 1.0,
     }
 }
 
-fn basic_attack_impact_delay_secs() -> f32 {
-    0.14
+fn long_shot_passive(passive: Passive) -> Option<(f32, f32)> {
+    match passive {
+        Passive::LongShot {
+            min_distance,
+            damage_multiplier,
+        } => Some((min_distance, damage_multiplier)),
+        _ => None,
+    }
 }
 
-fn resolve_pending_player_arc_attacks(
-    mut inputs: PendingAttackInputs,
-    mut players: PendingPlayerArcAttackQuery,
-    mut enemies: EnemyTargets,
-    mut breakables: BreakableTargets,
+fn long_shot_multiplier(long_shot: Option<(f32, f32)>, source: Vec3, target: Vec3) -> f32 {
+    match long_shot {
+        Some((min_distance, multiplier)) if flat_distance(source, target) >= min_distance => {
+            multiplier
+        }
+        _ => 1.0,
+    }
+}
+
+/// Blows thrown from the hero's own position freeze the swing on contact.
+fn stalls_on_hit(shape: StrikeShape) -> bool {
+    matches!(shape, StrikeShape::Arc { .. } | StrikeShape::Radial { .. })
+}
+
+/// Where a skill's movement puts the hero, before dungeon clamping.
+fn skill_destination(
+    origin: Vec3,
+    facing: Vec3,
+    cursor_ground: Option<Vec3>,
+    movement: Movement,
+    rune: Rune,
+) -> Vec3 {
+    let scale = rune.movement_multiplier();
+    match movement {
+        Movement::None => origin,
+        Movement::Toward(distance) => origin + facing * distance * scale,
+        Movement::Away(distance) => origin - facing * distance * scale,
+        Movement::Leap(max_distance) | Movement::Blink(max_distance) => {
+            let max_distance = max_distance * scale;
+            let wanted = cursor_ground
+                .map(|point| Vec3::new(point.x - origin.x, 0.0, point.z - origin.z))
+                .unwrap_or(facing * max_distance);
+            origin + wanted.clamp_length_max(max_distance)
+        }
+    }
+}
+
+/// The ground point a cursor-targeted strike lands on, kept within its cast range.
+fn ground_target(
+    origin: Vec3,
+    facing: Vec3,
+    cursor_ground: Option<Vec3>,
+    shape: StrikeShape,
+) -> Vec3 {
+    let StrikeShape::GroundBlast { cast_range, .. } = shape else {
+        return origin + facing;
+    };
+    let wanted = cursor_ground
+        .map(|point| Vec3::new(point.x - origin.x, 0.0, point.z - origin.z))
+        .unwrap_or(facing * cast_range * 0.6);
+    let target = origin + wanted.clamp_length_max(cast_range);
+    Vec3::new(target.x, 0.0, target.z)
+}
+
+fn grant_vigor_barrier(
+    commands: &mut Commands,
+    barrier: &mut Barrier,
+    position: Vec3,
+    reward: f32,
 ) {
-    let vfx = combat_vfx_assets(&inputs.assets);
+    let amount = barrier.grant(reward);
+    if amount > 0.0 {
+        commands.write_message(TalentProcFeedback {
+            position,
+            branch: TalentBranch::Vigor,
+            amount,
+        });
+    }
+}
+
+fn recoil_scale_for_enemy(enemy: &Enemy, impact: f32) -> f32 {
+    if is_boss_enemy(enemy) {
+        impact.min(0.15)
+    } else {
+        impact
+    }
+}
+
+/// A strike that resolves at the contact frame of a `cycle`-second animation.
+fn queued_strike(
+    cycle: f32,
+    facing: Vec3,
+    target: Vec3,
+    shape: StrikeShape,
+    motion: PlayerAttackMotion,
+    profile: StrikeProfile,
+) -> PendingPlayerStrike {
+    PendingPlayerStrike {
+        timer: Timer::from_seconds(cycle * attack_contact_fraction(motion), TimerMode::Once),
+        facing,
+        target,
+        shape,
+        motion,
+        profile,
+    }
+}
+
+fn resolve_pending_player_strikes(
+    time: Res<Time>,
+    catalog: Res<ClassCatalog>,
+    selected: Res<SelectedClass>,
+    mut world: StrikeWorld,
+    mut heroes: StrikeHeroQuery,
+) {
+    let resource = catalog.get(selected.0).resource.kind;
     for (
         player_entity,
         player_transform,
         mut player_health,
         mut player_barrier,
         mut fury,
+        mut ledger,
+        mut animation,
         equipment,
+        charm,
         elixir,
         evade,
         surge,
-        mut pending,
-    ) in &mut players
+        pending,
+    ) in &mut heroes
     {
-        pending.timer.tick(inputs.time.delta());
+        let Some(mut pending) = pending else {
+            continue;
+        };
+        pending.timer.tick(time.delta());
         if !pending.timer.is_finished() {
             continue;
         }
-
         let origin = player_transform.translation;
-        let attack = ArcAttack {
-            origin,
-            facing: pending.facing,
-            range: pending.range,
-            damage: pending.damage,
-            impact_scale: pending.impact_scale,
-            crit_chance: pending.crit_chance,
-            legendary_powers: pending.legendary_powers,
-            skill: pending.skill,
-        };
-        let outcome = apply_arc_damage(
-            &mut inputs.commands,
-            &mut AttackFeedback {
-                combat_events: &mut inputs.combat_events,
-                floating_text: &mut inputs.floating_text,
-                screen_shake: &mut inputs.screen_shake,
-                hit_stop: &mut inputs.hit_stop,
+        let outcome = world.release(
+            Hero {
+                position: origin,
+                health: &mut player_health,
+                barrier: &mut player_barrier,
+                fury: &mut fury,
+                ledger: &mut ledger,
+                equipment,
+                charm,
+                elixir,
+                evade,
+                surge,
             },
-            &vfx,
-            attack,
-            &mut enemies,
-            &inputs.bestiary,
-        );
-        apply_arc_breakable_damage(
-            &mut inputs.commands,
-            ArcAttack {
+            resource,
+            Release {
                 origin,
                 facing: pending.facing,
-                range: pending.range,
-                damage: pending.damage,
-                impact_scale: 0.85,
-                crit_chance: 0.0,
-                legendary_powers: LegendaryPowerSet::none(),
-                skill: None,
+                target: pending.target,
+                shape: pending.shape,
+                profile: pending.profile,
             },
-            &mut breakables,
         );
-        if outcome.hits > 0 {
-            let basic_gain = fury.basic_gain;
-            let gained = fury.gain(basic_gain * outcome.hits as f32 * surge_fury_multiplier(surge));
-            if gained > 0.0 {
-                inputs.combat_events.write(CombatEvent {
-                    text: format!("Generated {gained:.0} fury"),
-                });
-            }
+        if pending.shape.is_melee() && outcome.damaging_hits > 0 {
+            animation.confirm_melee_contact(pending.motion);
         }
-        apply_boss_break_reward(
-            &mut fury,
-            &mut player_barrier,
-            outcome.boss_staggers,
-            &mut inputs.stats,
-            &mut inputs.combat_events,
-        );
-        apply_life_steal(
-            &mut player_health,
-            outcome.life_stolen,
-            &mut inputs.combat_events,
-        );
-        apply_legendary_barrier(
-            &mut player_barrier,
-            outcome.barrier_gained,
-            &mut inputs.combat_events,
-        );
-        apply_reflected_damage(
-            &mut player_health,
-            &mut player_barrier,
-            outcome.reflected_damage,
-            total_armor(equipment, elixir),
-            evade,
-            &mut inputs.combat_events,
-        );
-        inputs
+        world
             .commands
             .entity(player_entity)
-            .remove::<PendingPlayerArcAttack>();
+            .remove::<PendingPlayerStrike>();
     }
 }
 
@@ -1390,15 +1377,17 @@ fn basic_attack_requested(
     intent: &BasicAttackIntent,
     target: Option<PrimaryAttackTarget>,
 ) -> bool {
-    let Some(target) = target else {
+    if mouse.pressed(MouseButton::Right) || mouse.just_pressed(MouseButton::Right) {
         return false;
-    };
-    let wants_attack = mouse.pressed(MouseButton::Left) || intent.target == Some(target.entity);
-    wants_attack && target.in_range && basic_attack_ready(cooldowns)
+    }
+    let held_attack = mouse.pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Left);
+    let wants_attack =
+        held_attack || target.is_some_and(|target| intent.target == Some(target.entity));
+    wants_attack && target.is_none_or(|target| target.in_range) && basic_attack_ready(cooldowns)
 }
 
 fn basic_attack_ready(cooldowns: &SkillCooldowns) -> bool {
-    cooldowns.basic.is_finished() || cooldowns.basic.remaining_secs() <= 0.05
+    cooldowns.basic.remaining_secs() <= f32::EPSILON
 }
 
 fn update_basic_attack_intent(
@@ -1407,6 +1396,10 @@ fn update_basic_attack_intent(
     cursor_ground: Option<Vec3>,
     cursor_target: Option<PrimaryAttackTarget>,
 ) {
+    if mouse.pressed(MouseButton::Right) || mouse.just_pressed(MouseButton::Right) {
+        intent.target = None;
+        return;
+    }
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
@@ -1540,47 +1533,27 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 
-fn dash_damage_multiplier(rune: DashRune) -> f32 {
+fn rune_effect_text(rune: Rune, affected: u32) -> Option<String> {
+    if affected == 0 {
+        return None;
+    }
     match rune {
-        DashRune::Cleanse => 1.0,
-        DashRune::Reap => 0.9,
+        Rune::Expose => Some(format!("Exposed {affected} enemies")),
+        Rune::Hemorrhage => Some(format!("Bleeding {affected} enemies")),
+        Rune::Frost => Some(format!("Chilled {affected} enemies")),
+        _ => None,
     }
 }
 
-fn nova_damage_multiplier(rune: NovaRune) -> f32 {
-    match rune {
-        NovaRune::Ember => 1.0,
-        NovaRune::Frost => 0.72,
-    }
+fn skill_cast_text(name: &str, rune: Rune) -> String {
+    format!("{} {name}", rune.label())
 }
 
-fn rupture_damage_multiplier(rune: RuptureRune) -> f32 {
-    match rune {
-        RuptureRune::Expose => 1.0,
-        RuptureRune::Hemorrhage => 0.82,
-    }
-}
-
-fn rupture_effect_text(rune: RuptureRune, affected: u32) -> String {
-    match rune {
-        RuptureRune::Expose => format!("Rupture exposed {affected} enemies"),
-        RuptureRune::Hemorrhage => format!("Rupture bleeding {affected} enemies"),
-    }
-}
-
-fn skill_cast_text(cast: SkillCast) -> String {
-    match cast {
-        SkillCast::Dash(rune) => format!("{} Dash", rune.label()),
-        SkillCast::Rupture(rune) => format!("{} Rupture", rune.label()),
-        SkillCast::Nova(rune) => format!("{} Nova", rune.label()),
-    }
-}
-
-fn skill_cast_screen_shake(cast: SkillCast) -> ScreenShakeEvent {
-    let (intensity, duration_secs) = match cast {
-        SkillCast::Dash(_) => (0.026, 0.10),
-        SkillCast::Rupture(_) => (0.036, 0.13),
-        SkillCast::Nova(_) => (0.046, 0.16),
+fn skill_cast_screen_shake(slot: SkillSlot) -> ScreenShakeEvent {
+    let (intensity, duration_secs) = match slot {
+        SkillSlot::Mobility => (0.026, 0.10),
+        SkillSlot::Finisher => (0.036, 0.13),
+        SkillSlot::Area => (0.046, 0.16),
     };
     ScreenShakeEvent::new(intensity, duration_secs)
 }
@@ -1602,37 +1575,18 @@ fn apply_critical_damage(base_damage: f32, critical: bool) -> f32 {
     }
 }
 
-fn legendary_power_skill_synergy(power: LegendaryPower, skill: Option<SkillCast>) -> bool {
-    let Some(skill) = skill else {
+/// Each legendary power resonates with two runes, whatever skill carries them.
+fn legendary_power_rune_synergy(power: LegendaryPower, rune: Option<Rune>) -> bool {
+    let Some(rune) = rune else {
         return false;
     };
     matches!(
-        (power, skill),
-        (LegendaryPower::Emberbrand, SkillCast::Nova(NovaRune::Ember))
-            | (
-                LegendaryPower::Emberbrand,
-                SkillCast::Rupture(RuptureRune::Hemorrhage)
-            )
-            | (LegendaryPower::Frostbrand, SkillCast::Nova(NovaRune::Frost))
-            | (
-                LegendaryPower::Frostbrand,
-                SkillCast::Rupture(RuptureRune::Expose)
-            )
-            | (LegendaryPower::Stormbrand, SkillCast::Dash(DashRune::Reap))
-            | (LegendaryPower::Stormbrand, SkillCast::Nova(NovaRune::Frost))
-            | (LegendaryPower::Soulreaver, SkillCast::Dash(DashRune::Reap))
-            | (
-                LegendaryPower::Soulreaver,
-                SkillCast::Rupture(RuptureRune::Hemorrhage)
-            )
-            | (
-                LegendaryPower::Aegisbrand,
-                SkillCast::Dash(DashRune::Cleanse)
-            )
-            | (
-                LegendaryPower::Aegisbrand,
-                SkillCast::Rupture(RuptureRune::Expose)
-            )
+        (power, rune),
+        (LegendaryPower::Emberbrand, Rune::Ember | Rune::Hemorrhage)
+            | (LegendaryPower::Frostbrand, Rune::Frost | Rune::Expose)
+            | (LegendaryPower::Stormbrand, Rune::Reap | Rune::Frost)
+            | (LegendaryPower::Soulreaver, Rune::Reap | Rune::Hemorrhage)
+            | (LegendaryPower::Aegisbrand, Rune::Cleanse | Rune::Expose)
     )
 }
 
@@ -1900,12 +1854,6 @@ fn hit_impact_tier_multiplier(tier: HitImpactTier) -> f32 {
     }
 }
 
-fn hit_impact_vfx_scale(profile: HitImpactProfile) -> f32 {
-    let critical_weight = if profile.critical { 1.14 } else { 1.0 };
-    (profile.impact_scale * hit_impact_tier_multiplier(profile.tier) * critical_weight)
-        .clamp(0.68, 2.35)
-}
-
 fn hit_impact_screen_shake_event(critical: bool, impact_scale: f32) -> ScreenShakeEvent {
     let impact_scale = impact_scale.clamp(0.5, 1.8);
     let base_intensity = if critical { 0.055 } else { 0.022 };
@@ -1924,8 +1872,8 @@ fn hit_impact_screen_shake_event_for_profile(profile: HitImpactProfile) -> Scree
 fn hit_impact_hit_stop_event(critical: bool, impact_scale: f32) -> HitStopEvent {
     let impact_scale = impact_scale.clamp(0.5, 1.8);
     let extra_weight = (impact_scale - 1.0).max(0.0);
-    let duration_secs = (if critical { 0.056 } else { 0.024 }) + extra_weight * 0.026;
-    let relative_speed = (if critical { 0.30 } else { 0.58 }) - extra_weight * 0.10;
+    let duration_secs = (if critical { 0.095 } else { 0.070 }) + extra_weight * 0.025;
+    let relative_speed = (if critical { 0.055 } else { 0.09 }) - extra_weight * 0.025;
     HitStopEvent::new(relative_speed, duration_secs)
 }
 
@@ -1949,7 +1897,7 @@ fn trigger_hit_impact_hit_stop(
 }
 
 fn boss_break_hit_stop_event() -> HitStopEvent {
-    HitStopEvent::new(0.20, 0.105)
+    HitStopEvent::new(0.04, 0.12)
 }
 
 fn trigger_boss_stagger(
@@ -2022,8 +1970,9 @@ fn boss_break_reward_text(boss_staggers: u32, fury_gained: f32, barrier_gained: 
 fn apply_combo_finisher(
     combo: &mut CombatComboState,
     player: ComboFinisherPlayer,
-    finisher: ComboFinisher,
+    finisher: SkillSlot,
     hits: u32,
+    resource: ResourceKind,
     feedback: ComboFinisherFeedback,
 ) {
     let Some(primer) = combo.active_primer() else {
@@ -2051,6 +2000,7 @@ fn apply_combo_finisher(
             healing_done,
             barrier_gained,
             bonus_label.as_deref(),
+            resource,
         ),
     });
     feedback.screen_shake.write(ScreenShakeEvent::new(
@@ -2060,12 +2010,13 @@ fn apply_combo_finisher(
     combo.clear();
 }
 
-fn combo_finisher_allowed(primer: ComboPrimer, finisher: ComboFinisher) -> bool {
+/// Finishers mark enemies for area or mobility skills; area skills mark them for mobility skills.
+fn combo_finisher_allowed(primer: SkillSlot, finisher: SkillSlot) -> bool {
     matches!(
         (primer, finisher),
-        (ComboPrimer::Rupture, ComboFinisher::Dash)
-            | (ComboPrimer::Rupture, ComboFinisher::Nova)
-            | (ComboPrimer::Nova, ComboFinisher::Dash)
+        (SkillSlot::Finisher, SkillSlot::Mobility)
+            | (SkillSlot::Finisher, SkillSlot::Area)
+            | (SkillSlot::Area, SkillSlot::Mobility)
     )
 }
 
@@ -2077,7 +2028,7 @@ fn combo_screen_shake(hits: u32) -> f32 {
     0.045 + hits.min(5) as f32 * 0.008
 }
 
-fn combo_chain_bonus(primer: ComboPrimer, finisher: ComboFinisher, hits: u32) -> ComboChainBonus {
+fn combo_chain_bonus(primer: SkillSlot, finisher: SkillSlot, hits: u32) -> ComboChainBonus {
     if !combo_finisher_allowed(primer, finisher) || hits == 0 {
         return ComboChainBonus::default();
     }
@@ -2085,25 +2036,25 @@ fn combo_chain_bonus(primer: ComboPrimer, finisher: ComboFinisher, hits: u32) ->
     let hits = hits.min(5) as f32;
     let multi_target_fury = if hits >= 3.0 { hits * 2.0 } else { 0.0 };
     match (primer, finisher) {
-        (ComboPrimer::Rupture, ComboFinisher::Dash) => ComboChainBonus {
+        (SkillSlot::Finisher, SkillSlot::Mobility) => ComboChainBonus {
             fury: multi_target_fury,
             barrier: 5.0 + hits * 3.0,
             shake: 0.015,
-            label: Some("Cull dash"),
+            label: Some("Cull"),
             ..default()
         },
-        (ComboPrimer::Rupture, ComboFinisher::Nova) => ComboChainBonus {
+        (SkillSlot::Finisher, SkillSlot::Area) => ComboChainBonus {
             fury: multi_target_fury,
             healing: 5.0 + hits * 3.0,
             shake: 0.02,
-            label: Some("Blood nova"),
+            label: Some("Bloodburst"),
             ..default()
         },
-        (ComboPrimer::Nova, ComboFinisher::Dash) => ComboChainBonus {
+        (SkillSlot::Area, SkillSlot::Mobility) => ComboChainBonus {
             fury: 2.0 + multi_target_fury,
             barrier: 6.0 + hits * 4.0,
             shake: 0.02,
-            label: Some("Frostbreak dash"),
+            label: Some("Breakthrough"),
             ..default()
         },
         _ => ComboChainBonus::default(),
@@ -2152,22 +2103,25 @@ fn combo_bonus_label(chain_label: Option<&str>, set_label: Option<&str>) -> Opti
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn combo_break_text(
-    primer: ComboPrimer,
-    finisher: ComboFinisher,
+    primer: SkillSlot,
+    finisher: SkillSlot,
     hits: u32,
     fury_gained: f32,
     healing_done: f32,
     barrier_gained: f32,
     set_label: Option<&str>,
+    resource: ResourceKind,
 ) -> String {
     let mut text = format!(
-        "Combo Break: {} into {} hit {} target{} +{:.0} fury",
-        combo_primer_label(primer),
-        combo_finisher_label(finisher),
+        "Combo Break: {} into {} hit {} target{} +{:.0} {}",
+        combo_slot_label(primer),
+        combo_slot_label(finisher),
         hits,
         if hits == 1 { "" } else { "s" },
-        fury_gained
+        fury_gained,
+        resource.label()
     );
     if healing_done > 0.0 {
         text.push_str(&format!(" +{healing_done:.0} health"));
@@ -2181,24 +2135,11 @@ fn combo_break_text(
     text
 }
 
-fn combo_primer_label(primer: ComboPrimer) -> &'static str {
-    match primer {
-        ComboPrimer::Rupture => "Rupture",
-        ComboPrimer::Nova => "Nova",
-    }
-}
-
-fn combo_finisher_label(finisher: ComboFinisher) -> &'static str {
-    match finisher {
-        ComboFinisher::Dash => "Dash",
-        ComboFinisher::Nova => "Nova",
-    }
-}
-
-fn combo_hud_finisher_label(primer: ComboPrimer) -> &'static str {
-    match primer {
-        ComboPrimer::Rupture => "Q/E",
-        ComboPrimer::Nova => "Q",
+fn combo_slot_label(slot: SkillSlot) -> &'static str {
+    match slot {
+        SkillSlot::Finisher => "finisher",
+        SkillSlot::Area => "area skill",
+        SkillSlot::Mobility => "mobility skill",
     }
 }
 
@@ -2212,69 +2153,34 @@ fn reset_scaled(timer: &mut Timer, base_seconds: f32, multiplier: f32) {
 fn combat_vfx_assets(assets: &GameAssets) -> CombatVfxAssets {
     CombatVfxAssets {
         slash_arc: assets.slash_arc.clone(),
-        hit_spark: assets.hit_spark.clone(),
-        bone_shatter: assets.bone_shatter.clone(),
-        bone_impact: assets.bone_impact.clone(),
-        blood_spray: assets.blood_spray.clone(),
-        execution_burst: assets.execution_burst.clone(),
-        arcane_impact: assets.arcane_impact.clone(),
         holy_impact: assets.holy_impact.clone(),
         ember_impact: assets.ember_impact.clone(),
         frost_impact: assets.frost_impact.clone(),
-        void_impact: assets.void_impact.clone(),
-        frenzy_impact: assets.frenzy_impact.clone(),
-        vampiric_siphon: assets.vampiric_siphon.clone(),
-        desecrator_burst: assets.desecrator_burst.clone(),
-        guard_clash: assets.guard_clash.clone(),
-        armor_break: assets.armor_break.clone(),
-        soul_ward_hit: assets.soul_ward_hit.clone(),
-        hit_bone_rune: assets.hit_bone_rune.clone(),
-        hit_bone_lock: assets.hit_bone_lock.clone(),
-        marrow_flash: assets.marrow_flash.clone(),
-        bone_fracture_echo: assets.bone_fracture_echo.clone(),
-        elite_affix_break: assets.elite_affix_break.clone(),
         shadow_burst: assets.shadow_burst.clone(),
-        headshot_burst: assets.headshot_burst.clone(),
-        crit_bone_crown: assets.crit_bone_crown.clone(),
-        crit_burst: assets.crit_burst.clone(),
         stagger_burst: assets.stagger_burst.clone(),
-        shadow_trail: assets.shadow_trail.clone(),
     }
 }
 
-fn spawn_slash_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    origin: Vec3,
-    facing: Vec3,
-    scale: f32,
-) {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let yaw = forward.x.atan2(forward.z);
-    spawn_combat_vfx(
-        commands,
-        assets.slash_arc.clone(),
-        Transform::from_translation(origin + forward * 1.05 + Vec3::Y * 0.42)
-            .with_rotation(Quat::from_rotation_y(yaw))
-            .with_scale(Vec3::splat(scale)),
-        0.24,
-    );
+/// The burst artwork a rune leaves on the ground; basic attacks and Ember share the ember flash.
+fn rune_burst_scene(assets: &CombatVfxAssets, rune: Option<Rune>) -> Handle<WorldAsset> {
+    match rune {
+        Some(Rune::Frost) => assets.frost_impact.clone(),
+        Some(Rune::Cleanse | Rune::Expose) => assets.holy_impact.clone(),
+        Some(Rune::Reap | Rune::Hemorrhage) => assets.shadow_burst.clone(),
+        Some(Rune::Ember) | None => assets.ember_impact.clone(),
+    }
 }
 
-fn spawn_nova_cast_vfx(
+fn spawn_burst_vfx(
     commands: &mut Commands,
     assets: &CombatVfxAssets,
     origin: Vec3,
-    rune: NovaRune,
+    rune: Option<Rune>,
     radius: f32,
 ) {
-    let scene = match rune {
-        NovaRune::Ember => assets.ember_impact.clone(),
-        NovaRune::Frost => assets.frost_impact.clone(),
-    };
     spawn_combat_vfx(
         commands,
-        scene,
+        rune_burst_scene(assets, rune),
         nova_cast_transform(origin, radius),
         nova_cast_lifetime(rune),
     );
@@ -2301,167 +2207,16 @@ fn nova_cast_scale(radius: f32) -> f32 {
     (radius / 2.75).clamp(1.10, 2.85)
 }
 
-fn nova_cast_lifetime(rune: NovaRune) -> f32 {
-    match rune {
-        NovaRune::Ember => 0.40,
-        NovaRune::Frost => 0.48,
+fn nova_cast_lifetime(rune: Option<Rune>) -> f32 {
+    if rune == Some(Rune::Frost) {
+        0.48
+    } else {
+        0.40
     }
 }
 
-fn nova_outer_ring_lifetime(rune: NovaRune) -> f32 {
+fn nova_outer_ring_lifetime(rune: Option<Rune>) -> f32 {
     nova_cast_lifetime(rune) + 0.10
-}
-
-fn spawn_dash_cast_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    start: Vec3,
-    end: Vec3,
-    facing: Vec3,
-    rune: DashRune,
-) {
-    for (progress, scale) in [(0.24, 0.74), (0.52, 0.96), (0.80, 1.14)] {
-        spawn_combat_vfx(
-            commands,
-            assets.shadow_trail.clone(),
-            dash_afterimage_transform(start, end, facing, progress, scale),
-            0.20 + progress * 0.12,
-        );
-    }
-    let scene = match rune {
-        DashRune::Cleanse => assets.holy_impact.clone(),
-        DashRune::Reap => assets.shadow_burst.clone(),
-    };
-    spawn_combat_vfx(
-        commands,
-        scene,
-        dash_arrival_transform(end, facing, rune),
-        dash_arrival_lifetime(rune),
-    );
-}
-
-fn dash_afterimage_transform(
-    start: Vec3,
-    end: Vec3,
-    facing: Vec3,
-    progress: f32,
-    scale: f32,
-) -> Transform {
-    let progress = progress.clamp(0.0, 1.0);
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let yaw = forward.x.atan2(forward.z);
-    Transform::from_translation(start.lerp(end, progress) - forward * 0.18 + Vec3::Y * 0.16)
-        .with_rotation(Quat::from_rotation_y(yaw))
-        .with_scale(Vec3::new(scale * 0.82, scale * 0.72, scale * 1.30))
-}
-
-fn dash_arrival_transform(end: Vec3, facing: Vec3, rune: DashRune) -> Transform {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let yaw = forward.x.atan2(forward.z);
-    let scale = match rune {
-        DashRune::Cleanse => 0.98,
-        DashRune::Reap => 1.16,
-    };
-    Transform::from_translation(end + forward * 0.48 + Vec3::Y * 0.22)
-        .with_rotation(Quat::from_rotation_y(yaw))
-        .with_scale(Vec3::splat(scale))
-}
-
-fn dash_arrival_lifetime(rune: DashRune) -> f32 {
-    match rune {
-        DashRune::Cleanse => 0.28,
-        DashRune::Reap => 0.34,
-    }
-}
-
-fn spawn_rupture_cast_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    origin: Vec3,
-    facing: Vec3,
-    range: f32,
-    rune: RuptureRune,
-) {
-    for side in [-1.0, 0.0, 1.0] {
-        spawn_combat_vfx(
-            commands,
-            assets.slash_arc.clone(),
-            rupture_cone_transform(origin, facing, range, side),
-            0.32,
-        );
-    }
-    let scene = match rune {
-        RuptureRune::Expose => assets.armor_break.clone(),
-        RuptureRune::Hemorrhage => assets.blood_spray.clone(),
-    };
-    spawn_combat_vfx(
-        commands,
-        scene,
-        rupture_tip_transform(origin, facing, range, rune),
-        rupture_tip_lifetime(rune),
-    );
-}
-
-fn rupture_cone_transform(origin: Vec3, facing: Vec3, range: f32, side: f32) -> Transform {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let right = Vec3::new(forward.z, 0.0, -forward.x);
-    let side = side.clamp(-1.0, 1.0);
-    let yaw = forward.x.atan2(forward.z) + side * 0.38;
-    let reach = range.max(0.5);
-    Transform::from_translation(
-        origin + forward * (reach * 0.56) + right * side * (reach * 0.28) + Vec3::Y * 0.30,
-    )
-    .with_rotation(Quat::from_rotation_y(yaw))
-    .with_scale(Vec3::new(1.08 + side.abs() * 0.18, 0.58, reach * 0.58))
-}
-
-fn rupture_tip_transform(origin: Vec3, facing: Vec3, range: f32, rune: RuptureRune) -> Transform {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let yaw = forward.x.atan2(forward.z);
-    let scale = match rune {
-        RuptureRune::Expose => 0.95,
-        RuptureRune::Hemorrhage => 1.08,
-    };
-    Transform::from_translation(origin + forward * range.max(0.5) + Vec3::Y * 0.24)
-        .with_rotation(Quat::from_rotation_y(yaw))
-        .with_scale(Vec3::splat(scale))
-}
-
-fn rupture_tip_lifetime(rune: RuptureRune) -> f32 {
-    match rune {
-        RuptureRune::Expose => 0.36,
-        RuptureRune::Hemorrhage => 0.42,
-    }
-}
-
-fn spawn_hit_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    target: Vec3,
-    enemy: &Enemy,
-    critical: bool,
-    scale: f32,
-) {
-    let hit_bone = select_hit_bone(enemy, critical);
-    let effect = select_hit_effect(enemy, hit_bone, critical);
-    let scene = hit_effect_scene(assets, effect);
-    spawn_combat_vfx(
-        commands,
-        scene,
-        hit_effect_transform(target, enemy, hit_bone, effect, scale),
-        hit_effect_lifetime(effect, critical),
-    );
-    let contact = HitContact {
-        target,
-        hit_bone,
-        effect,
-        critical,
-        scale,
-    };
-    spawn_hit_bone_lock_vfx(commands, assets, enemy, contact);
-    spawn_hit_bone_overlay_vfx(commands, assets, enemy, contact);
-    spawn_fracture_echo_vfx(commands, assets, enemy, contact);
-    spawn_affix_break_overlay_vfx(commands, assets, enemy, contact);
 }
 
 fn spawn_stagger_vfx(
@@ -2486,25 +2241,6 @@ fn spawn_stagger_vfx(
     );
 }
 
-fn spawn_shadow_trail_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    origin: Vec3,
-    facing: Vec3,
-    scale: f32,
-) {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let yaw = forward.x.atan2(forward.z);
-    spawn_combat_vfx(
-        commands,
-        assets.shadow_trail.clone(),
-        Transform::from_translation(origin - forward * 0.45 + Vec3::Y * 0.18)
-            .with_rotation(Quat::from_rotation_y(yaw))
-            .with_scale(Vec3::splat(scale)),
-        0.32,
-    );
-}
-
 fn select_hit_bone(enemy: &Enemy, critical: bool) -> HitBone {
     if critical {
         HitBone::Head
@@ -2523,385 +2259,6 @@ fn select_hit_bone(enemy: &Enemy, critical: bool) -> HitBone {
     }
 }
 
-fn select_hit_effect(enemy: &Enemy, hit_bone: HitBone, critical: bool) -> HitEffect {
-    if critical {
-        return if hit_bone == HitBone::Head {
-            HitEffect::Headshot
-        } else {
-            HitEffect::Critical
-        };
-    }
-    if enemy.affixes.contains(&EnemyAffix::Arcane) {
-        return HitEffect::Arcane;
-    }
-    if enemy.affixes.contains(&EnemyAffix::Molten) {
-        return HitEffect::Ember;
-    }
-    if enemy.affixes.contains(&EnemyAffix::Frenzied) {
-        return HitEffect::Frenzy;
-    }
-    let shielded = enemy.affixes.contains(&EnemyAffix::Shielded);
-    let reflective = enemy.affixes.contains(&EnemyAffix::Reflective);
-    if shielded && reflective {
-        return HitEffect::GuardClash;
-    }
-    if reflective {
-        return HitEffect::SoulWard;
-    }
-    if shielded {
-        return HitEffect::ArmorBreak;
-    }
-    if enemy
-        .affixes
-        .iter()
-        .any(|affix| matches!(affix, EnemyAffix::Frozen))
-    {
-        return HitEffect::Frost;
-    }
-    if enemy.affixes.contains(&EnemyAffix::Jailer) {
-        return HitEffect::Holy;
-    }
-    let vampiric = enemy.affixes.contains(&EnemyAffix::Vampiric);
-    let desecrator = enemy.affixes.contains(&EnemyAffix::Desecrator);
-    if vampiric && desecrator {
-        return HitEffect::Void;
-    }
-    if vampiric {
-        return HitEffect::Vampiric;
-    }
-    if desecrator {
-        return HitEffect::Desecrator;
-    }
-    if matches!(enemy.id.as_str(), "skeleton" | "nemesis") {
-        return if matches!(hit_bone, HitBone::Head | HitBone::Chest) {
-            HitEffect::BoneImpact
-        } else {
-            HitEffect::Bone
-        };
-    }
-    if is_boss_enemy(enemy) || enemy.id == "butcher" {
-        return if matches!(hit_bone, HitBone::Chest) {
-            HitEffect::Execution
-        } else {
-            HitEffect::Blood
-        };
-    }
-    if matches!(enemy.id.as_str(), "cultist" | "seal_warden") {
-        return HitEffect::Shadow;
-    }
-    HitEffect::Spark
-}
-
-fn hit_effect_scene(assets: &CombatVfxAssets, effect: HitEffect) -> Handle<WorldAsset> {
-    match effect {
-        HitEffect::Spark => assets.hit_spark.clone(),
-        HitEffect::Bone => assets.bone_shatter.clone(),
-        HitEffect::BoneImpact => assets.bone_impact.clone(),
-        HitEffect::Blood => assets.blood_spray.clone(),
-        HitEffect::Execution => assets.execution_burst.clone(),
-        HitEffect::Arcane => assets.arcane_impact.clone(),
-        HitEffect::Holy => assets.holy_impact.clone(),
-        HitEffect::Ember => assets.ember_impact.clone(),
-        HitEffect::Frost => assets.frost_impact.clone(),
-        HitEffect::Void => assets.void_impact.clone(),
-        HitEffect::Frenzy => assets.frenzy_impact.clone(),
-        HitEffect::Vampiric => assets.vampiric_siphon.clone(),
-        HitEffect::Desecrator => assets.desecrator_burst.clone(),
-        HitEffect::GuardClash => assets.guard_clash.clone(),
-        HitEffect::ArmorBreak => assets.armor_break.clone(),
-        HitEffect::SoulWard => assets.soul_ward_hit.clone(),
-        HitEffect::Shadow => assets.shadow_burst.clone(),
-        HitEffect::Headshot => assets.headshot_burst.clone(),
-        HitEffect::Critical => assets.crit_burst.clone(),
-    }
-}
-
-fn spawn_hit_bone_overlay_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    enemy: &Enemy,
-    contact: HitContact,
-) {
-    let overlay_scene = hit_bone_overlay_scene(
-        assets,
-        enemy,
-        contact.hit_bone,
-        contact.effect,
-        contact.critical,
-    );
-    spawn_combat_vfx(
-        commands,
-        overlay_scene,
-        hit_bone_overlay_transform(
-            contact.target,
-            enemy,
-            contact.hit_bone,
-            contact.effect,
-            contact.scale,
-        ),
-        hit_bone_overlay_lifetime(contact.hit_bone, contact.critical),
-    );
-}
-
-fn spawn_affix_break_overlay_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    enemy: &Enemy,
-    contact: HitContact,
-) {
-    if enemy.affixes.len() < 2 {
-        return;
-    }
-    spawn_combat_vfx(
-        commands,
-        assets.elite_affix_break.clone(),
-        hit_bone_overlay_transform(
-            contact.target,
-            enemy,
-            contact.hit_bone,
-            HitEffect::Critical,
-            contact.scale * 1.08,
-        ),
-        0.34,
-    );
-}
-
-fn spawn_hit_bone_lock_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    enemy: &Enemy,
-    contact: HitContact,
-) {
-    spawn_combat_vfx(
-        commands,
-        assets.hit_bone_lock.clone(),
-        hit_bone_lock_transform(
-            contact.target,
-            enemy,
-            contact.hit_bone,
-            contact.effect,
-            contact.scale,
-        ),
-        hit_bone_lock_lifetime(contact.hit_bone, contact.critical),
-    );
-}
-
-fn spawn_fracture_echo_vfx(
-    commands: &mut Commands,
-    assets: &CombatVfxAssets,
-    enemy: &Enemy,
-    contact: HitContact,
-) {
-    if !should_spawn_fracture_echo(enemy, contact.hit_bone, contact.effect, contact.critical) {
-        return;
-    }
-    let scene = if contact.critical && contact.hit_bone == HitBone::Head {
-        assets.crit_bone_crown.clone()
-    } else {
-        assets.bone_fracture_echo.clone()
-    };
-    spawn_combat_vfx(
-        commands,
-        scene,
-        fracture_echo_transform(
-            contact.target,
-            enemy,
-            contact.hit_bone,
-            contact.effect,
-            contact.scale,
-        ),
-        fracture_echo_lifetime(contact.critical),
-    );
-}
-
-fn hit_bone_overlay_scene(
-    assets: &CombatVfxAssets,
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    critical: bool,
-) -> Handle<WorldAsset> {
-    match select_hit_overlay(enemy, hit_bone, effect, critical) {
-        HitOverlay::Rune => assets.hit_bone_rune.clone(),
-        HitOverlay::Marrow => assets.marrow_flash.clone(),
-        HitOverlay::Critical => assets.crit_burst.clone(),
-    }
-}
-
-fn select_hit_overlay(
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    critical: bool,
-) -> HitOverlay {
-    if matches!(enemy.id.as_str(), "skeleton" | "nemesis")
-        && matches!(hit_bone, HitBone::Head | HitBone::Chest)
-    {
-        HitOverlay::Marrow
-    } else if critical || matches!(effect, HitEffect::Headshot | HitEffect::Critical) {
-        HitOverlay::Critical
-    } else {
-        HitOverlay::Rune
-    }
-}
-
-fn hit_bone_overlay_transform(
-    target: Vec3,
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    scale: f32,
-) -> Transform {
-    let offset = hit_bone_offset(hit_bone, enemy);
-    let lift = match hit_bone {
-        HitBone::Head => Vec3::new(0.0, 0.08, -0.01),
-        HitBone::Chest => Vec3::new(0.0, 0.04, 0.0),
-        HitBone::Weapon => Vec3::new(0.06, 0.02, -0.02),
-        HitBone::Left => Vec3::new(-0.04, 0.02, 0.0),
-        HitBone::Right => Vec3::new(0.04, 0.02, 0.0),
-    };
-    let overlay_scale = scale * hit_bone_scale(hit_bone) * 0.82;
-    Transform::from_translation(target + offset + lift)
-        .with_rotation(Quat::from_rotation_y(hit_bone_yaw(hit_bone, effect) + 0.22))
-        .with_scale(Vec3::splat(overlay_scale))
-}
-
-fn hit_bone_overlay_lifetime(hit_bone: HitBone, critical: bool) -> f32 {
-    match (hit_bone, critical) {
-        (HitBone::Head, true) => 0.44,
-        (_, true) => 0.38,
-        (HitBone::Weapon, false) => 0.30,
-        _ => 0.26,
-    }
-}
-
-fn hit_bone_lock_transform(
-    target: Vec3,
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    scale: f32,
-) -> Transform {
-    let offset = hit_bone_offset(hit_bone, enemy);
-    let lock_scale = scale * hit_bone_scale(hit_bone) * 0.64;
-    Transform::from_translation(target + offset + Vec3::new(0.0, 0.012, -0.018))
-        .with_rotation(Quat::from_rotation_y(hit_bone_yaw(hit_bone, effect) - 0.16))
-        .with_scale(Vec3::splat(lock_scale))
-}
-
-fn hit_bone_lock_lifetime(hit_bone: HitBone, critical: bool) -> f32 {
-    match (hit_bone, critical) {
-        (HitBone::Head, true) => 0.34,
-        (_, true) => 0.30,
-        (HitBone::Weapon, false) => 0.24,
-        _ => 0.20,
-    }
-}
-
-fn should_spawn_fracture_echo(
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    critical: bool,
-) -> bool {
-    critical
-        || matches!(hit_bone, HitBone::Head | HitBone::Chest)
-        || matches!(
-            effect,
-            HitEffect::BoneImpact
-                | HitEffect::Execution
-                | HitEffect::GuardClash
-                | HitEffect::ArmorBreak
-                | HitEffect::SoulWard
-        )
-        || enemy.affixes.len() >= 2
-}
-
-fn fracture_echo_transform(
-    target: Vec3,
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    scale: f32,
-) -> Transform {
-    let offset = hit_bone_offset(hit_bone, enemy);
-    let lift = if matches!(hit_bone, HitBone::Head) {
-        Vec3::new(0.0, 0.11, -0.025)
-    } else {
-        Vec3::new(0.0, 0.055, -0.015)
-    };
-    let echo_scale = scale * hit_bone_scale(hit_bone) * 0.98;
-    Transform::from_translation(target + offset + lift)
-        .with_rotation(Quat::from_rotation_y(hit_bone_yaw(hit_bone, effect) + 0.38))
-        .with_scale(Vec3::splat(echo_scale))
-}
-
-fn fracture_echo_lifetime(critical: bool) -> f32 {
-    if critical { 0.40 } else { 0.28 }
-}
-
-fn hit_effect_transform(
-    target: Vec3,
-    enemy: &Enemy,
-    hit_bone: HitBone,
-    effect: HitEffect,
-    scale: f32,
-) -> Transform {
-    let offset = hit_bone_offset(hit_bone, enemy);
-    let yaw = hit_bone_yaw(hit_bone, effect);
-    let effect_scale = scale * hit_bone_scale(hit_bone) * hit_effect_scale(effect);
-    Transform::from_translation(target + offset)
-        .with_rotation(Quat::from_rotation_y(yaw))
-        .with_scale(Vec3::splat(effect_scale))
-}
-
-fn hit_bone_yaw(hit_bone: HitBone, effect: HitEffect) -> f32 {
-    let base = match hit_bone {
-        HitBone::Head | HitBone::Chest => 0.0,
-        HitBone::Weapon | HitBone::Right => -0.45,
-        HitBone::Left => 0.45,
-    };
-    base + match effect {
-        HitEffect::GuardClash | HitEffect::ArmorBreak => 0.25,
-        HitEffect::SoulWard => -0.30,
-        HitEffect::Ember => -0.18,
-        HitEffect::Frost => 0.18,
-        HitEffect::Void | HitEffect::Shadow => 0.34,
-        HitEffect::Frenzy => -0.26,
-        HitEffect::Vampiric => 0.31,
-        HitEffect::Desecrator => -0.38,
-        HitEffect::Headshot => -0.12,
-        _ => 0.0,
-    }
-}
-
-fn hit_effect_scale(effect: HitEffect) -> f32 {
-    match effect {
-        HitEffect::Headshot | HitEffect::Critical => 1.22,
-        HitEffect::Execution | HitEffect::GuardClash | HitEffect::ArmorBreak => 1.12,
-        HitEffect::SoulWard => 1.16,
-        HitEffect::Ember | HitEffect::Frost | HitEffect::Void => 1.05,
-        HitEffect::Frenzy => 1.08,
-        HitEffect::Vampiric | HitEffect::Desecrator => 1.14,
-        HitEffect::Bone => 0.94,
-        _ => 1.0,
-    }
-}
-
-fn hit_effect_lifetime(effect: HitEffect, critical: bool) -> f32 {
-    match effect {
-        HitEffect::Headshot | HitEffect::Critical => 0.42,
-        HitEffect::Execution | HitEffect::Void => 0.36,
-        HitEffect::Frenzy => 0.28,
-        HitEffect::Vampiric | HitEffect::Desecrator => 0.36,
-        HitEffect::SoulWard => 0.34,
-        HitEffect::Ember | HitEffect::Frost | HitEffect::Arcane => 0.32,
-        HitEffect::GuardClash | HitEffect::ArmorBreak | HitEffect::BoneImpact => 0.30,
-        _ if critical => 0.38,
-        _ => 0.24,
-    }
-}
-
 fn hit_bone_world_position(target: Vec3, enemy: &Enemy, critical: bool) -> Vec3 {
     target + hit_bone_offset(select_hit_bone(enemy, critical), enemy)
 }
@@ -2914,15 +2271,6 @@ fn hit_bone_offset(hit_bone: HitBone, enemy: &Enemy) -> Vec3 {
         HitBone::Weapon => Vec3::new(0.72 * scale, 0.94 * scale, -0.16 * scale),
         HitBone::Left => Vec3::new(-0.46 * scale, 1.02 * scale, 0.0),
         HitBone::Right => Vec3::new(0.46 * scale, 1.02 * scale, 0.0),
-    }
-}
-
-fn hit_bone_scale(hit_bone: HitBone) -> f32 {
-    match hit_bone {
-        HitBone::Head => 1.18,
-        HitBone::Chest => 1.0,
-        HitBone::Weapon => 0.92,
-        HitBone::Left | HitBone::Right => 0.86,
     }
 }
 
@@ -2953,130 +2301,160 @@ fn spawn_combat_vfx(
     ));
 }
 
-fn apply_arc_damage(
+fn apply_strike(
     commands: &mut Commands,
     feedback: &mut AttackFeedback,
     vfx: &CombatVfxAssets,
-    attack: ArcAttack,
+    strike: Strike,
     enemies: &mut EnemyTargets,
     bestiary: &Bestiary,
 ) -> AttackOutcome {
-    let forward = Vec3::new(attack.facing.x, 0.0, attack.facing.z).normalize_or_zero();
+    let profile = strike.profile;
+    let rune = profile.skill.map(|cast| cast.rune);
+    let recoil_origin = strike.area.recoil_origin(strike.source);
+    let source_label = match rune {
+        None => "Strike".to_string(),
+        Some(rune) => format!("{} skill", rune.label()),
+    };
     let mut outcome = AttackOutcome::default();
     let mut storm_chains = Vec::new();
     for (entity, transform, enemy, mut health, ward, chilled, vulnerable, stagger, staggered) in
         enemies.iter_mut()
     {
-        if arc_target_hit(attack.origin, forward, transform.translation, attack.range) {
-            let critical = roll_critical(attack.crit_chance);
-            let damage = bestiary_adjusted_damage(attack.damage, enemy, bestiary);
-            let final_damage = apply_enemy_affix_damage(
-                apply_critical_damage(damage, critical),
-                enemy,
-                chilled,
-                vulnerable,
-                staggered,
-            );
-            let ward_result = apply_seal_warden_ward(
-                commands,
-                feedback.combat_events,
-                vfx,
-                WardHitContext {
-                    entity,
-                    target: transform.translation,
-                    enemy,
-                    incoming_damage: final_damage,
-                    ward,
-                },
-            );
-            let final_damage = ward_result.health_damage;
-            health.current -= final_damage;
-            let boss_break = trigger_boss_stagger(
-                commands,
-                feedback.combat_events,
-                vfx,
-                enemy,
-                BossStaggerTrigger {
-                    entity,
-                    target: transform.translation,
-                    damage: final_damage,
-                },
-                stagger,
-                staggered,
-            );
-            if boss_break {
-                outcome.boss_staggers += 1;
-                feedback.hit_stop.write(boss_break_hit_stop_event());
-            }
-            let impact_profile =
-                hit_impact_profile(enemy, critical, attack.impact_scale, boss_break);
-            if final_damage > 0.0 {
-                feedback.combat_events.write(CombatEvent {
-                    text: damage_text("Strike", final_damage, critical),
-                });
-            }
-            feedback.floating_text.write(FloatingCombatTextEvent {
-                text: floating_damage_text_for_ward_result(
-                    final_damage,
-                    ward_result,
-                    impact_profile,
-                ),
-                position: hit_bone_world_position(transform.translation, enemy, critical),
-                critical,
-            });
-            trigger_hit_impact_screen_shake(feedback.screen_shake, impact_profile);
-            trigger_hit_impact_hit_stop(feedback.hit_stop, impact_profile);
-            spawn_hit_vfx(
-                commands,
-                vfx,
-                transform.translation,
-                enemy,
-                critical,
-                hit_impact_vfx_scale(impact_profile),
-            );
-            commands.entity(entity).try_insert((
-                HitFlash {
-                    timer: Timer::from_seconds(0.18, TimerMode::Once),
-                },
-                hit_react_for_contact(
-                    critical,
-                    attack.origin,
-                    transform.translation,
-                    attack.impact_scale,
-                ),
-                EnemyTargetFocus::new(critical),
-            ));
-            let proc_trigger = LegendaryProcTrigger::from_attack(critical, &attack);
-            if let Some(burning) =
-                legendary_burning(attack.legendary_powers, proc_trigger, final_damage)
-            {
-                commands.entity(entity).try_insert(burning);
-                feedback.combat_events.write(CombatEvent {
-                    text: "Emberbrand ignited enemy".to_string(),
-                });
-            }
-            if let Some(chilled) = legendary_chilled(attack.legendary_powers, proc_trigger) {
-                commands.entity(entity).try_insert(chilled);
-                feedback.combat_events.write(CombatEvent {
-                    text: "Frostbrand chilled enemy".to_string(),
-                });
-            }
-            if let Some(damage) =
-                stormbrand_chain_damage(attack.legendary_powers, proc_trigger, final_damage)
-            {
-                storm_chains.push(StormChain {
-                    source: entity,
-                    origin: transform.translation,
-                    damage,
-                });
-            }
-            outcome.life_stolen +=
-                legendary_life_steal(attack.legendary_powers, proc_trigger, final_damage);
-            outcome.barrier_gained +=
-                legendary_barrier(attack.legendary_powers, proc_trigger, final_damage);
-            outcome.reflected_damage += reflective_damage(enemy, final_damage);
-            outcome.hits += 1;
+        if health.current <= 0.0 || !strike.area.contains(entity, transform.translation) {
+            continue;
         }
+        let critical = roll_critical(profile.crit_chance);
+        let reach_bonus =
+            long_shot_multiplier(profile.long_shot, strike.source, transform.translation);
+        let damage = bestiary_adjusted_damage(profile.damage * reach_bonus, enemy, bestiary);
+        let final_damage = apply_enemy_affix_damage(
+            apply_critical_damage(damage, critical),
+            enemy,
+            chilled,
+            vulnerable,
+            staggered,
+        );
+        let ward_result = apply_seal_warden_ward(
+            commands,
+            feedback.combat_events,
+            vfx,
+            WardHitContext {
+                entity,
+                target: transform.translation,
+                enemy,
+                incoming_damage: final_damage,
+                ward,
+            },
+        );
+        let final_damage = ward_result.health_damage;
+        health.current -= final_damage;
+        let boss_break = trigger_boss_stagger(
+            commands,
+            feedback.combat_events,
+            vfx,
+            enemy,
+            BossStaggerTrigger {
+                entity,
+                target: transform.translation,
+                damage: final_damage,
+            },
+            stagger,
+            staggered,
+        );
+        if boss_break {
+            outcome.boss_staggers += 1;
+            feedback.hit_stop.write(boss_break_hit_stop_event());
+        }
+        let impact_profile = hit_impact_profile(enemy, critical, profile.impact_scale, boss_break);
+        if final_damage > 0.0 {
+            feedback.combat_events.write(CombatEvent {
+                text: damage_text(&source_label, final_damage, critical),
+            });
+        }
+        feedback.floating_text.write(FloatingCombatTextEvent {
+            text: floating_damage_text_for_ward_result(final_damage, ward_result, impact_profile),
+            position: hit_bone_world_position(transform.translation, enemy, critical),
+            critical,
+        });
+        trigger_hit_impact_screen_shake(feedback.screen_shake, impact_profile);
+        if profile.hit_stop {
+            trigger_hit_impact_hit_stop(feedback.hit_stop, impact_profile);
+        }
+        if final_damage > 0.0 {
+            outcome.damaging_hits += 1;
+            commands.write_message(ContactFeedback {
+                target: entity,
+                position: hit_bone_world_position(transform.translation, enemy, critical),
+                source: strike.source,
+                skill: profile.skill,
+                strength: profile.impact_scale * if critical { 1.2 } else { 1.0 },
+            });
+        }
+        commands.entity(entity).try_insert((
+            hit_react_for_contact(
+                critical,
+                recoil_origin,
+                transform.translation,
+                recoil_scale_for_enemy(enemy, profile.impact_scale),
+            ),
+            EnemyTargetFocus::new(critical),
+        ));
+        if rune == Some(Rune::Frost) {
+            commands.entity(entity).try_insert(Chilled {
+                timer: Timer::from_seconds(2.8, TimerMode::Once),
+                slow_multiplier: 0.48,
+            });
+            outcome.rune_applied += 1;
+        }
+        let proc_trigger = LegendaryProcTrigger::from_cast(critical, profile.skill);
+        if let Some(burning) =
+            legendary_burning(profile.legendary_powers, proc_trigger, final_damage)
+        {
+            commands.entity(entity).try_insert(burning);
+            feedback.combat_events.write(CombatEvent {
+                text: "Emberbrand ignited enemy".to_string(),
+            });
+        }
+        if let Some(chilled) = legendary_chilled(profile.legendary_powers, proc_trigger) {
+            commands.entity(entity).try_insert(chilled);
+            feedback.combat_events.write(CombatEvent {
+                text: "Frostbrand chilled enemy".to_string(),
+            });
+        }
+        if let Some(damage) =
+            stormbrand_chain_damage(profile.legendary_powers, proc_trigger, final_damage)
+        {
+            storm_chains.push(StormChain {
+                source: entity,
+                origin: transform.translation,
+                damage,
+            });
+        }
+        outcome.life_stolen +=
+            legendary_life_steal(profile.legendary_powers, proc_trigger, final_damage);
+        outcome.barrier_gained +=
+            legendary_barrier(profile.legendary_powers, proc_trigger, final_damage);
+        outcome.reflected_damage += reflective_damage(enemy, final_damage);
+        match rune {
+            Some(Rune::Expose) => {
+                commands.entity(entity).try_insert(Vulnerable {
+                    timer: Timer::from_seconds(4.0, TimerMode::Once),
+                    damage_multiplier: 1.22,
+                });
+                outcome.rune_applied += 1;
+            }
+            Some(Rune::Hemorrhage) => {
+                commands.entity(entity).try_insert(Burning {
+                    dps: (bestiary_adjusted_damage(profile.damage, enemy, bestiary) * 0.20)
+                        .max(4.0),
+                    timer: Timer::from_seconds(3.5, TimerMode::Once),
+                });
+                outcome.rune_applied += 1;
+            }
+            _ => {}
+        }
+        outcome.hits += 1;
     }
     apply_stormbrand_chains(
         commands,
@@ -3162,13 +2540,9 @@ fn apply_stormbrand_chains(
         if let Some((entity, damage)) =
             first_stormbrand_chain_target(commands, combat_events, vfx, &chain, enemies, bestiary)
         {
-            commands.entity(entity).try_insert((
-                HitFlash {
-                    timer: Timer::from_seconds(0.18, TimerMode::Once),
-                },
-                hit_react_for_damage(false),
-                EnemyTargetFocus::new(false),
-            ));
+            commands
+                .entity(entity)
+                .try_insert((hit_react_for_damage(false), EnemyTargetFocus::new(false)));
             combat_events.write(CombatEvent {
                 text: format!("Stormbrand chained for {damage:.0}"),
             });
@@ -3254,79 +2628,10 @@ fn vulnerable_damage_multiplier(vulnerable: Option<&Vulnerable>) -> f32 {
         .max(1.0)
 }
 
-fn apply_rupture_vulnerable(
-    commands: &mut Commands,
-    origin: Vec3,
-    facing: Vec3,
-    range: f32,
-    enemies: &mut EnemyTargets,
-) -> u32 {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let mut applied = 0;
-    for (entity, transform, _, _, _, _, _, _, _) in enemies.iter_mut() {
-        if arc_target_hit(origin, forward, transform.translation, range) {
-            commands.entity(entity).try_insert(Vulnerable {
-                timer: Timer::from_seconds(4.0, TimerMode::Once),
-                damage_multiplier: 1.22,
-            });
-            applied += 1;
-        }
-    }
-    applied
-}
-
-fn apply_rupture_bleed(
-    commands: &mut Commands,
-    origin: Vec3,
-    facing: Vec3,
-    range: f32,
-    rupture_damage: f32,
-    enemies: &mut EnemyTargets,
-    bestiary: &Bestiary,
-) -> u32 {
-    let forward = Vec3::new(facing.x, 0.0, facing.z).normalize_or_zero();
-    let mut applied = 0;
-    for (entity, transform, enemy, _, _, _, _, _, _) in enemies.iter_mut() {
-        if arc_target_hit(origin, forward, transform.translation, range) {
-            commands.entity(entity).try_insert(Burning {
-                dps: (bestiary_adjusted_damage(rupture_damage, enemy, bestiary) * 0.20).max(4.0),
-                timer: Timer::from_seconds(3.5, TimerMode::Once),
-            });
-            applied += 1;
-        }
-    }
-    applied
-}
-
-fn apply_arc_breakable_damage(
-    commands: &mut Commands,
-    attack: ArcAttack,
-    breakables: &mut BreakableTargets,
-) {
-    let forward = Vec3::new(attack.facing.x, 0.0, attack.facing.z).normalize_or_zero();
+fn damage_breakables(area: HitArea, damage: f32, breakables: &mut BreakableTargets) {
     for (entity, transform, mut health) in breakables.iter_mut() {
-        if arc_target_hit(attack.origin, forward, transform.translation, attack.range) {
-            health.current -= attack.damage;
-            commands.entity(entity).try_insert(HitFlash {
-                timer: Timer::from_seconds(0.18, TimerMode::Once),
-            });
-        }
-    }
-}
-
-fn apply_nova_breakable_damage(
-    commands: &mut Commands,
-    origin: Vec3,
-    radius: f32,
-    damage: f32,
-    breakables: &mut BreakableTargets,
-) {
-    for (entity, transform, mut health) in breakables.iter_mut() {
-        if origin.distance(transform.translation) <= radius {
+        if area.contains(entity, transform.translation) {
             health.current -= damage;
-            commands.entity(entity).try_insert(HitFlash {
-                timer: Timer::from_seconds(0.18, TimerMode::Once),
-            });
         }
     }
 }
@@ -3409,9 +2714,6 @@ fn apply_conduit_lightning(
         let final_damage = ward_result.health_damage;
         health.current -= final_damage;
         commands.entity(entity).try_insert((
-            HitFlash {
-                timer: Timer::from_seconds(0.18, TimerMode::Once),
-            },
             hit_react_for_contact(false, origin, transform.translation, 0.72),
             EnemyTargetFocus::new(false),
         ));
@@ -3426,6 +2728,23 @@ fn apply_conduit_lightning(
         hits += 1;
     }
     hits
+}
+
+/// Whether a skill that refuses to swing at air would reach something alive.
+fn strike_has_target(
+    origin: Vec3,
+    forward: Vec3,
+    shape: StrikeShape,
+    targets: impl Iterator<Item = (Vec3, f32)>,
+) -> bool {
+    let reach = shape.reach();
+    targets.into_iter().any(|(position, health)| {
+        health > 0.0
+            && match shape {
+                StrikeShape::Arc { .. } => arc_target_hit(origin, forward, position, reach),
+                _ => flat_distance(origin, position) <= reach,
+            }
+    })
 }
 
 fn arc_target_hit(origin: Vec3, forward: Vec3, target: Vec3, range: f32) -> bool {
@@ -3459,19 +2778,6 @@ fn tick_vulnerable(
         vulnerable.timer.tick(time.delta());
         if vulnerable.timer.is_finished() {
             commands.entity(entity).try_remove::<Vulnerable>();
-        }
-    }
-}
-
-fn tick_hit_flash(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut HitFlash)>,
-) {
-    for (entity, mut flash) in &mut query {
-        flash.timer.tick(time.delta());
-        if flash.timer.is_finished() {
-            commands.entity(entity).try_remove::<HitFlash>();
         }
     }
 }
@@ -3550,6 +2856,135 @@ mod tests {
     }
 
     #[test]
+    fn vigor_shield_is_once_per_successful_cast_and_never_for_a_miss() {
+        fn awarded(hits: u32) -> f32 {
+            let mut world = World::new();
+            world.init_resource::<Messages<TalentProcFeedback>>();
+            let mut barrier = Barrier {
+                current: 0.0,
+                max: 50.0,
+            };
+            grant_vigor_barrier(&mut world.commands(), &mut barrier, Vec3::ZERO, 6.0, hits);
+            world.flush();
+            assert_eq!(
+                world.resource::<Messages<TalentProcFeedback>>().len(),
+                usize::from(hits > 0)
+            );
+            barrier.current
+        }
+        assert_eq!(awarded(0), 0.0);
+        assert_eq!(awarded(1), 6.0);
+        assert_eq!(awarded(5), 6.0);
+    }
+
+    #[test]
+    fn focus_scales_contact_and_complete_swing_together() {
+        for rank in [0, 1, 4, 8] {
+            let talents = Talents {
+                focus: rank,
+                ..default()
+            };
+            let cycle = 0.34 * talents.cooldown_multiplier();
+            let contact = attack_contact_delay(cycle);
+            assert!(
+                (contact / cycle
+                    - crate::player::attack_contact_fraction(PlayerAttackMotion::Basic))
+                .abs()
+                    < 0.0001
+            );
+            assert!(contact < cycle);
+        }
+        assert!(!basic_attack_ready(&test_skill_cooldowns(0.03)));
+    }
+
+    #[test]
+    fn ordinary_contact_has_weight_without_pushing_bosses_out_of_the_arena() {
+        let normal = test_enemy(vec![]);
+        let mut boss = test_enemy(vec![]);
+        boss.id = "keeper".to_owned();
+        assert_eq!(recoil_scale_for_enemy(&normal, 1.57), 1.57);
+        assert!(recoil_scale_for_enemy(&boss, 1.57) <= 0.15);
+        let light = hit_impact_hit_stop_event(false, 1.0);
+        let heavy = hit_impact_hit_stop_event(false, 1.57);
+        assert!(light.duration_secs >= 0.07);
+        assert!(heavy.duration_secs > light.duration_secs);
+        assert!(heavy.relative_speed < light.relative_speed);
+    }
+
+    #[test]
+    fn only_live_in_range_targets_emit_contact_and_hitstop() {
+        #[derive(SystemParam)]
+        struct TestFeedback<'w> {
+            combat_events: MessageWriter<'w, CombatEvent>,
+            floating_text: MessageWriter<'w, FloatingCombatTextEvent>,
+            screen_shake: MessageWriter<'w, ScreenShakeEvent>,
+            hit_stop: MessageWriter<'w, HitStopEvent>,
+        }
+        fn strike(mut commands: Commands, mut enemies: EnemyTargets, mut feedback: TestFeedback) {
+            apply_arc_damage(
+                &mut commands,
+                &mut AttackFeedback {
+                    combat_events: &mut feedback.combat_events,
+                    floating_text: &mut feedback.floating_text,
+                    screen_shake: &mut feedback.screen_shake,
+                    hit_stop: &mut feedback.hit_stop,
+                },
+                &CombatVfxAssets::default(),
+                ArcAttack {
+                    origin: Vec3::ZERO,
+                    facing: Vec3::Z,
+                    range: 2.2,
+                    damage: 10.0,
+                    impact_scale: 1.0,
+                    crit_chance: 0.0,
+                    legendary_powers: LegendaryPowerSet::none(),
+                    skill: None,
+                },
+                &mut enemies,
+                &Bestiary::default(),
+            );
+        }
+        let mut app = App::new();
+        app.add_message::<CombatEvent>()
+            .add_message::<FloatingCombatTextEvent>()
+            .add_message::<ScreenShakeEvent>()
+            .add_message::<HitStopEvent>()
+            .add_message::<ContactFeedback>()
+            .add_systems(Update, strike);
+        let live = app
+            .world_mut()
+            .spawn((
+                test_enemy(vec![]),
+                Transform::from_xyz(0.0, 0.0, 1.0),
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+        app.world_mut().spawn((
+            test_enemy(vec![]),
+            Transform::from_xyz(0.0, 0.0, 1.0),
+            Health {
+                current: 0.0,
+                max: 100.0,
+            },
+        ));
+        app.world_mut().spawn((
+            test_enemy(vec![]),
+            Transform::from_xyz(0.0, 0.0, 8.0),
+            Health {
+                current: 100.0,
+                max: 100.0,
+            },
+        ));
+        app.update();
+        assert_eq!(app.world().get::<Health>(live).unwrap().current, 90.0);
+        assert_eq!(app.world().resource::<Messages<ContactFeedback>>().len(), 1);
+        assert_eq!(app.world().resource::<Messages<HitStopEvent>>().len(), 1);
+    }
+
+    #[test]
     fn queued_basic_attack_resolves_inside_visible_weapon_swing() {
         let facing = Vec3::new(0.7, 0.0, 0.7).normalize();
         let pending = queued_basic_arc_attack(
@@ -3559,11 +2994,11 @@ mod tests {
             0.25,
             power_set(LegendaryPower::Stormbrand),
         );
-        let delay = basic_attack_impact_delay_secs();
+        let delay = attack_contact_delay(0.34);
         let progress = delay / 0.34;
 
         assert!((0.10..=0.18).contains(&delay));
-        assert!((0.08..=0.90).contains(&progress));
+        assert!((0.27..=0.53).contains(&progress));
         assert_eq!(pending.facing, facing);
         assert_eq!(pending.range, 2.4);
         assert_eq!(pending.damage, 18.0);
@@ -3619,6 +3054,7 @@ mod tests {
         ));
 
         mouse.release(MouseButton::Left);
+        mouse.clear_just_pressed(MouseButton::Left);
         assert!(!basic_attack_requested(
             &mouse,
             &ready,
@@ -3648,6 +3084,7 @@ mod tests {
         ));
 
         mouse.release(MouseButton::Left);
+        mouse.clear_just_pressed(MouseButton::Left);
         let reached = PrimaryAttackTarget {
             in_range: true,
             ..target
@@ -3662,6 +3099,35 @@ mod tests {
         mouse.press(MouseButton::Left);
         update_basic_attack_intent(&mut intent, &mouse, Some(Vec3::new(8.0, 0.0, 0.0)), None);
         assert_eq!(intent.target, None);
+        assert!(basic_attack_requested(
+            &mouse,
+            &test_skill_cooldowns(0.0),
+            &intent,
+            None
+        ));
+    }
+
+    #[test]
+    fn right_move_cancels_attack_intent_even_when_left_is_held() {
+        let target = PrimaryAttackTarget {
+            entity: Entity::from_raw_u32(7).unwrap(),
+            position: Vec3::X,
+            in_range: true,
+        };
+        let mut intent = BasicAttackIntent {
+            target: Some(target.entity),
+        };
+        let mut mouse = ButtonInput::default();
+        mouse.press(MouseButton::Left);
+        mouse.press(MouseButton::Right);
+        update_basic_attack_intent(&mut intent, &mouse, Some(Vec3::Z), Some(target));
+        assert_eq!(intent.target, None);
+        assert!(!basic_attack_requested(
+            &mouse,
+            &test_skill_cooldowns(0.0),
+            &intent,
+            Some(target)
+        ));
         assert!(!basic_attack_requested(
             &mouse,
             &test_skill_cooldowns(0.0),
@@ -3838,134 +3304,6 @@ mod tests {
             hit_bone_offset(HitBone::Head, &hollow_matron),
             hit_bone_offset(HitBone::Head, &keeper)
         );
-        assert!(hit_bone_scale(HitBone::Head) > hit_bone_scale(HitBone::Left));
-    }
-
-    #[test]
-    fn hit_effect_selection_uses_bone_and_affix_language() {
-        let mut skeleton = test_enemy(vec![]);
-        skeleton.id = "skeleton".to_string();
-        let mut keeper = test_enemy(vec![]);
-        keeper.id = "keeper".to_string();
-        let mut hollow_matron = test_enemy(vec![]);
-        hollow_matron.id = "hollow_matron".to_string();
-
-        assert_eq!(
-            select_hit_effect(&skeleton, HitBone::Head, false),
-            HitEffect::BoneImpact
-        );
-        assert_eq!(
-            select_hit_effect(&skeleton, HitBone::Left, false),
-            HitEffect::Bone
-        );
-        assert_eq!(
-            select_hit_effect(&test_enemy(vec![EnemyAffix::Arcane]), HitBone::Left, false),
-            HitEffect::Arcane
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Shielded]),
-                HitBone::Weapon,
-                false
-            ),
-            HitEffect::ArmorBreak
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Reflective]),
-                HitBone::Weapon,
-                false
-            ),
-            HitEffect::SoulWard
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Shielded, EnemyAffix::Reflective]),
-                HitBone::Weapon,
-                false
-            ),
-            HitEffect::GuardClash
-        );
-        assert_eq!(
-            select_hit_effect(&test_enemy(vec![EnemyAffix::Frozen]), HitBone::Left, false),
-            HitEffect::Frost
-        );
-        assert_eq!(
-            select_hit_effect(&test_enemy(vec![EnemyAffix::Jailer]), HitBone::Left, false),
-            HitEffect::Holy
-        );
-        assert_eq!(
-            select_hit_effect(&test_enemy(vec![EnemyAffix::Molten]), HitBone::Left, false),
-            HitEffect::Ember
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Frenzied]),
-                HitBone::Left,
-                false
-            ),
-            HitEffect::Frenzy
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Vampiric]),
-                HitBone::Left,
-                false
-            ),
-            HitEffect::Vampiric
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Desecrator]),
-                HitBone::Left,
-                false
-            ),
-            HitEffect::Desecrator
-        );
-        assert_eq!(
-            select_hit_effect(
-                &test_enemy(vec![EnemyAffix::Vampiric, EnemyAffix::Desecrator]),
-                HitBone::Left,
-                false
-            ),
-            HitEffect::Void
-        );
-        let mut cultist = test_enemy(vec![]);
-        cultist.id = "cultist".to_string();
-        let mut warden = test_enemy(vec![]);
-        warden.id = "seal_warden".to_string();
-        assert_eq!(
-            select_hit_effect(&cultist, HitBone::Right, false),
-            HitEffect::Shadow
-        );
-        assert_eq!(
-            select_hit_effect(&warden, HitBone::Chest, false),
-            HitEffect::Shadow
-        );
-        assert_eq!(
-            select_hit_effect(&keeper, HitBone::Chest, false),
-            HitEffect::Execution
-        );
-        assert_eq!(
-            select_hit_effect(&keeper, HitBone::Weapon, false),
-            HitEffect::Blood
-        );
-        assert_eq!(
-            select_hit_effect(&hollow_matron, HitBone::Chest, false),
-            HitEffect::Execution
-        );
-        assert_eq!(
-            select_hit_effect(&hollow_matron, HitBone::Weapon, false),
-            HitEffect::Blood
-        );
-        assert_eq!(
-            select_hit_effect(&keeper, HitBone::Chest, true),
-            HitEffect::Critical
-        );
-        assert_eq!(
-            select_hit_effect(&keeper, HitBone::Head, true),
-            HitEffect::Headshot
-        );
     }
 
     #[test]
@@ -3987,163 +3325,6 @@ mod tests {
         assert_eq!(
             hit_bone_world_position(target, &cultist, true),
             target + hit_bone_offset(HitBone::Head, &cultist)
-        );
-    }
-
-    #[test]
-    fn hit_effect_transform_scales_and_orients_contact_vfx() {
-        let guarded = test_enemy(vec![EnemyAffix::Shielded]);
-        let ember = test_enemy(vec![EnemyAffix::Molten]);
-        let target = Vec3::new(1.0, 0.0, -2.0);
-
-        let guard_transform = hit_effect_transform(
-            target,
-            &guarded,
-            HitBone::Weapon,
-            HitEffect::ArmorBreak,
-            1.0,
-        );
-        let ember_transform =
-            hit_effect_transform(target, &ember, HitBone::Chest, HitEffect::Ember, 1.0);
-        let weapon_spark =
-            hit_effect_transform(target, &guarded, HitBone::Weapon, HitEffect::Spark, 1.0);
-
-        assert_eq!(
-            guard_transform.translation,
-            target + hit_bone_offset(HitBone::Weapon, &guarded)
-        );
-        assert!(guard_transform.scale.x > weapon_spark.scale.x);
-        assert!(ember_transform.scale.x > weapon_spark.scale.x);
-        assert_ne!(guard_transform.rotation, ember_transform.rotation);
-        assert!(
-            hit_effect_lifetime(HitEffect::Ember, false)
-                > hit_effect_lifetime(HitEffect::Spark, false)
-        );
-        assert!(
-            hit_effect_lifetime(HitEffect::Headshot, true)
-                > hit_effect_lifetime(HitEffect::ArmorBreak, false)
-        );
-    }
-
-    #[test]
-    fn hit_bone_overlays_lift_and_scale_to_contact_points() {
-        let guarded = test_enemy(vec![EnemyAffix::Shielded]);
-        let target = Vec3::new(1.0, 0.0, -2.0);
-
-        let overlay = hit_bone_overlay_transform(
-            target,
-            &guarded,
-            HitBone::Weapon,
-            HitEffect::ArmorBreak,
-            1.0,
-        );
-
-        assert!(overlay.translation.y > hit_bone_offset(HitBone::Weapon, &guarded).y);
-        assert!(
-            overlay.scale.x
-                < hit_effect_transform(
-                    target,
-                    &guarded,
-                    HitBone::Weapon,
-                    HitEffect::ArmorBreak,
-                    1.0
-                )
-                .scale
-                .x
-        );
-        assert!(
-            hit_bone_overlay_lifetime(HitBone::Head, true)
-                > hit_bone_overlay_lifetime(HitBone::Chest, false)
-        );
-    }
-
-    #[test]
-    fn hit_bone_lock_tracks_contact_without_overpowering_main_effect() {
-        let guarded = test_enemy(vec![EnemyAffix::Shielded]);
-        let target = Vec3::new(1.0, 0.0, -2.0);
-
-        let lock = hit_bone_lock_transform(
-            target,
-            &guarded,
-            HitBone::Weapon,
-            HitEffect::ArmorBreak,
-            1.0,
-        );
-        let main = hit_effect_transform(
-            target,
-            &guarded,
-            HitBone::Weapon,
-            HitEffect::ArmorBreak,
-            1.0,
-        );
-
-        assert_eq!(
-            lock.translation,
-            target + hit_bone_offset(HitBone::Weapon, &guarded) + Vec3::new(0.0, 0.012, -0.018)
-        );
-        assert!(lock.scale.x < main.scale.x);
-        assert!(
-            hit_bone_lock_lifetime(HitBone::Head, true)
-                > hit_bone_lock_lifetime(HitBone::Left, false)
-        );
-    }
-
-    #[test]
-    fn fracture_echo_only_spawns_for_readable_heavy_contacts() {
-        let normal = test_enemy(vec![]);
-        let elite = test_enemy(vec![EnemyAffix::Shielded, EnemyAffix::Reflective]);
-        let target = Vec3::new(1.0, 0.0, -2.0);
-
-        assert!(!should_spawn_fracture_echo(
-            &normal,
-            HitBone::Left,
-            HitEffect::Spark,
-            false
-        ));
-        assert!(should_spawn_fracture_echo(
-            &normal,
-            HitBone::Chest,
-            HitEffect::Spark,
-            false
-        ));
-        assert!(should_spawn_fracture_echo(
-            &elite,
-            HitBone::Weapon,
-            HitEffect::GuardClash,
-            false
-        ));
-        assert!(should_spawn_fracture_echo(
-            &normal,
-            HitBone::Head,
-            HitEffect::Headshot,
-            true
-        ));
-
-        let head_echo =
-            fracture_echo_transform(target, &normal, HitBone::Head, HitEffect::Headshot, 1.0);
-        let chest_echo =
-            fracture_echo_transform(target, &normal, HitBone::Chest, HitEffect::Spark, 1.0);
-        assert!(head_echo.translation.y > chest_echo.translation.y);
-        assert!(fracture_echo_lifetime(true) > fracture_echo_lifetime(false));
-    }
-
-    #[test]
-    fn bone_enemies_use_marrow_overlay_on_vital_hit_bones() {
-        let mut skeleton = test_enemy(vec![]);
-        skeleton.id = "skeleton".to_string();
-        let normal = test_enemy(vec![]);
-
-        assert_eq!(
-            select_hit_overlay(&skeleton, HitBone::Head, HitEffect::BoneImpact, false),
-            HitOverlay::Marrow
-        );
-        assert_eq!(
-            select_hit_overlay(&normal, HitBone::Chest, HitEffect::Spark, false),
-            HitOverlay::Rune
-        );
-        assert_eq!(
-            select_hit_overlay(&normal, HitBone::Head, HitEffect::Headshot, true),
-            HitOverlay::Critical
         );
     }
 
@@ -4199,51 +3380,6 @@ mod tests {
         assert_eq!(ring.translation, Vec3::new(1.0, 0.10, -2.0));
         assert!(ring.scale.x > transform.scale.x);
         assert!(nova_outer_ring_lifetime(NovaRune::Frost) > nova_cast_lifetime(NovaRune::Frost));
-    }
-
-    #[test]
-    fn dash_cast_vfx_marks_path_and_rune_arrival() {
-        let start = Vec3::new(0.0, 0.0, 0.0);
-        let end = Vec3::new(0.0, 0.0, 4.0);
-        let facing = Vec3::Z;
-
-        let early = dash_afterimage_transform(start, end, facing, 0.24, 0.74);
-        let late = dash_afterimage_transform(start, end, facing, 0.80, 1.14);
-        assert!(late.translation.z > early.translation.z + 2.0);
-        assert!(late.scale.z > early.scale.z);
-        assert!(late.scale.z > late.scale.x);
-
-        let cleanse = dash_arrival_transform(end, facing, DashRune::Cleanse);
-        let reap = dash_arrival_transform(end, facing, DashRune::Reap);
-        assert_eq!(cleanse.translation, reap.translation);
-        assert!(reap.scale.x > cleanse.scale.x);
-        assert!(dash_arrival_lifetime(DashRune::Reap) > dash_arrival_lifetime(DashRune::Cleanse));
-    }
-
-    #[test]
-    fn rupture_cast_vfx_draws_wide_cone_and_tip_impact() {
-        let origin = Vec3::new(1.0, 0.0, 2.0);
-        let facing = Vec3::Z;
-        let range = 3.2;
-
-        let left = rupture_cone_transform(origin, facing, range, -1.0);
-        let center = rupture_cone_transform(origin, facing, range, 0.0);
-        let right = rupture_cone_transform(origin, facing, range, 1.0);
-        assert!(left.translation.x < center.translation.x);
-        assert!(right.translation.x > center.translation.x);
-        assert_eq!(left.translation.z, right.translation.z);
-        assert!(left.scale.x > center.scale.x);
-        assert!(center.scale.z > 1.7);
-
-        let expose = rupture_tip_transform(origin, facing, range, RuptureRune::Expose);
-        let bleed = rupture_tip_transform(origin, facing, range, RuptureRune::Hemorrhage);
-        assert!(expose.translation.z > center.translation.z);
-        assert_eq!(expose.translation, bleed.translation);
-        assert!(bleed.scale.x > expose.scale.x);
-        assert!(
-            rupture_tip_lifetime(RuptureRune::Hemorrhage)
-                > rupture_tip_lifetime(RuptureRune::Expose)
-        );
     }
 
     #[test]
@@ -4371,35 +3507,6 @@ mod tests {
     }
 
     #[test]
-    fn hit_impact_vfx_scale_makes_elites_bosses_and_breaks_visually_heavier() {
-        let normal = HitImpactProfile {
-            critical: false,
-            impact_scale: 1.0,
-            tier: HitImpactTier::Normal,
-        };
-        let elite = HitImpactProfile {
-            critical: false,
-            impact_scale: 1.0,
-            tier: HitImpactTier::Elite,
-        };
-        let boss_crit = HitImpactProfile {
-            critical: true,
-            impact_scale: 1.0,
-            tier: HitImpactTier::Boss,
-        };
-        let boss_break = HitImpactProfile {
-            critical: false,
-            impact_scale: 1.8,
-            tier: HitImpactTier::BossBreak,
-        };
-
-        assert_eq!(hit_impact_vfx_scale(normal), 1.0);
-        assert!(hit_impact_vfx_scale(elite) > hit_impact_vfx_scale(normal));
-        assert!(hit_impact_vfx_scale(boss_crit) > hit_impact_vfx_scale(elite));
-        assert_eq!(hit_impact_vfx_scale(boss_break), 2.35);
-    }
-
-    #[test]
     fn hit_impact_screen_shake_scales_by_skill_weight_and_critical() {
         let basic = hit_impact_screen_shake_event(false, 1.0);
         let rupture = hit_impact_screen_shake_event(false, 1.28);
@@ -4452,7 +3559,8 @@ mod tests {
         assert!(basic.duration_secs > 0.018);
         assert!(rupture.duration_secs > basic.duration_secs);
         assert!(nova.duration_secs > rupture.duration_secs);
-        assert!(critical.duration_secs > basic.duration_secs * 2.0);
+        assert!(critical.duration_secs > basic.duration_secs);
+        assert!(critical.duration_secs <= 0.12);
         assert!(critical.relative_speed < basic.relative_speed);
         assert!(elite_profile.duration_secs > basic.duration_secs);
         assert!(boss_profile.duration_secs > elite_profile.duration_secs);
@@ -4536,7 +3644,6 @@ mod tests {
 
         combo.prime(ComboPrimer::Rupture);
         assert_eq!(combo.active_primer(), Some(ComboPrimer::Rupture));
-        assert_eq!(combo.hud_hint(), Some("Rupture 3s -> Q/E".to_string()));
         assert!(combo_finisher_allowed(
             ComboPrimer::Rupture,
             ComboFinisher::Dash
@@ -4554,10 +3661,9 @@ mod tests {
             .timer
             .tick(std::time::Duration::from_secs_f32(COMBO_WINDOW_SECS + 0.1));
         assert_eq!(combo.active_primer(), None);
-        assert_eq!(combo.hud_hint(), None);
 
         combo.prime(ComboPrimer::Nova);
-        assert_eq!(combo.hud_hint(), Some("Nova 3s -> Q".to_string()));
+        assert_eq!(combo.active_primer(), Some(ComboPrimer::Nova));
     }
 
     #[test]
@@ -4986,6 +4092,23 @@ mod tests {
             reflective_damage(&test_enemy(vec![EnemyAffix::Reflective]), 400.0),
             18.0
         );
+    }
+
+    #[test]
+    fn rupture_does_not_authorize_a_cast_on_empty_dead_or_unreachable_targets() {
+        let target = |position, health| {
+            rupture_has_target(Vec3::ZERO, Vec3::Z, 3.1, [(position, health)].into_iter())
+        };
+        assert!(!rupture_has_target(
+            Vec3::ZERO,
+            Vec3::Z,
+            3.1,
+            std::iter::empty()
+        ));
+        assert!(!target(Vec3::Z * 2.0, 0.0));
+        assert!(!target(Vec3::Z * 4.0, 100.0));
+        assert!(!target(-Vec3::Z, 100.0));
+        assert!(target(Vec3::Z * 2.0, 100.0));
     }
 
     #[test]

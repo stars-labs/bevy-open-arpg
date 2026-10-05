@@ -4,11 +4,13 @@ mod boss;
 mod bounty;
 mod challenge;
 mod chapter;
+mod class;
 mod combat;
 mod companion;
 mod data;
 mod dungeon;
 mod enemy;
+mod enemy_death;
 mod feedback;
 mod journey;
 mod loot;
@@ -88,7 +90,7 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::render::settings::{
-    Backends, InstanceFlags, RenderCreation, WgpuFeatures, WgpuSettings, WgpuSettingsPriority,
+    Backends, InstanceFlags, RenderCreation, WgpuSettings, WgpuSettingsPriority,
 };
 use bevy::settings::{
     ReflectSettingsGroup, SaveSettingsDeferred, SaveSettingsSync, SettingsGroup, SettingsPlugin,
@@ -215,9 +217,9 @@ pub(crate) struct RunStats {
     breakables_smashed: u32,
     health_globes_collected: u32,
     surge_kills: u32,
-    reap_dash_hits: u32,
-    hemorrhage_rupture_hits: u32,
-    frost_nova_hits: u32,
+    reap_hits: u32,
+    hemorrhage_hits: u32,
+    frost_hits: u32,
     armory_loadouts_saved: u32,
     town_portal_returns: u32,
     pylon_kills: u32,
@@ -452,6 +454,8 @@ struct OpenWorldEnvironmentFollower {
 struct OpenArpgUserSettings {
     /// Stores whether generated combat audio should start enabled on the next run.
     audio_enabled: bool,
+    /// Stores the interface language selected in the settings panel.
+    language: String,
     /// Stores whether combat-area and player-radius debug gizmos should start visible.
     debug_visuals: bool,
     /// Stores whether Bevy Remote HTTP tooling should be enabled on startup.
@@ -466,6 +470,7 @@ impl Default for OpenArpgUserSettings {
     fn default() -> Self {
         Self {
             audio_enabled: true,
+            language: "zh-CN".to_string(),
             debug_visuals: false,
             remote_enabled: false,
             asset_mode: OpenArpgAssetMode::Unprocessed.label().to_string(),
@@ -478,6 +483,7 @@ impl OpenArpgUserSettings {
     fn from_config(config: OpenArpgRuntimeConfig) -> Self {
         Self {
             audio_enabled: config.audio_enabled,
+            language: "zh-CN".to_string(),
             debug_visuals: config.debug_visuals,
             remote_enabled: config.remote_enabled,
             asset_mode: config.asset_mode.label().to_string(),
@@ -849,6 +855,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
     ));
     app.add_plugins((
         EnemyPlugin,
+        enemy_death::EnemyDeathPlugin,
         BossAbilitiesPlugin,
         CombatPlugin,
         FeedbackPlugin,
@@ -1060,11 +1067,17 @@ fn validate_headless_smoke_result(app: &mut App, chapter: Option<ChapterId>) -> 
 }
 
 fn apply_loaded_user_settings(
+    mut language: ResMut<ui::localization::UiLanguage>,
     settings: Res<OpenArpgUserSettings>,
     locks: Res<OpenArpgPreferenceLocks>,
     mut audio: ResMut<AudioSettings>,
     mut debug: ResMut<DebugVisuals>,
 ) {
+    *language = if settings.language == "en" {
+        ui::localization::UiLanguage::English
+    } else {
+        ui::localization::UiLanguage::Chinese
+    };
     if !locks.audio_enabled {
         audio.enabled = settings.audio_enabled;
     }
@@ -1451,7 +1464,7 @@ fn cycle_debug_picking(keyboard: Res<ButtonInput<KeyCode>>, mut mode: ResMut<Deb
 #[cfg(not(target_arch = "wasm32"))]
 fn open_arpg_wgpu_settings(profile: Option<OpenArpgRenderProfile>) -> WgpuSettings {
     let mut settings = WgpuSettings {
-        features: WgpuFeatures::empty(),
+        // Preserve Bevy's texture format features required by HDR bloom.
         instance_flags: InstanceFlags::empty(),
         ..default()
     };
@@ -1461,8 +1474,6 @@ fn open_arpg_wgpu_settings(profile: Option<OpenArpgRenderProfile>) -> WgpuSettin
         if let Some(backends) = profile.backends {
             settings.backends = Some(backends);
         }
-    } else if std::env::var_os("WGPU_SETTINGS_PRIO").is_none() {
-        settings.priority = WgpuSettingsPriority::WebGPU;
     }
 
     settings
@@ -1727,7 +1738,7 @@ fn open_arpg_free_camera() -> FreeCamera {
         key_up: KeyCode::PageUp,
         key_down: KeyCode::PageDown,
         key_run: KeyCode::ShiftRight,
-        keyboard_key_toggle_cursor_grab: KeyCode::F8,
+        keyboard_key_toggle_cursor_grab: KeyCode::F10,
         mouse_key_cursor_grab: MouseButton::Right,
         walk_speed: 8.0,
         run_speed: 28.0,
@@ -1743,32 +1754,45 @@ fn gamepad_just_pressed(gamepads: &Query<&Gamepad>, buttons: &[GamepadButton]) -
 
 #[allow(clippy::too_many_arguments)]
 fn main_menu_input(
+    settings_panel: Res<ui::settings::SettingsPanelState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
+    menu_buttons: Query<(&Interaction, &ui::MenuAction), Changed<Interaction>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut stats: ResMut<RunStats>,
     mut difficulty: ResMut<DifficultySettings>,
     mut modifier: ResMut<ChapterModifier>,
     mut pending_load: ResMut<PendingLoadGame>,
     mut active_chapter: ResMut<ActiveChapter>,
+    mut selected_class: ResMut<class::SelectedClass>,
+    class_select: Res<ui::class_select::ClassSelectState>,
+    mut begin: MessageReader<ui::class_select::BeginDescent>,
     records: Res<ChapterRecords>,
 ) {
+    if settings_panel.open || class_select.open {
+        return;
+    }
+    let clicked = |action| {
+        menu_buttons
+            .iter()
+            .any(|(interaction, button)| *interaction == Interaction::Pressed && *button == action)
+    };
     if keyboard.just_pressed(KeyCode::Tab)
+        || clicked(ui::MenuAction::Difficulty)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::DPadRight])
     {
         difficulty.current = next_unlocked_difficulty(difficulty.current, &records);
     }
     if keyboard.just_pressed(KeyCode::F9)
+        || clicked(ui::MenuAction::Continue)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::Select])
     {
-        prepare_load_request(&mut pending_load, &mut active_chapter);
+        prepare_load_request(&mut pending_load, &mut active_chapter, &mut selected_class);
         next_state.set(GameState::InGame);
         return;
     }
-    if keyboard.just_pressed(KeyCode::Space)
-        || keyboard.just_pressed(KeyCode::Enter)
-        || gamepad_just_pressed(&gamepads, &[GamepadButton::South, GamepadButton::Start])
-    {
+    // "Begin" opens the class choice; the descent starts once a class is confirmed.
+    if begin.read().next().is_some() {
         active_chapter.0 = ChapterId::AshenReliquary;
         reset_run_stats_for_new_chapter(&mut stats);
         *modifier = modifier_for_run(difficulty.current, records.clears(difficulty.current));
@@ -1776,7 +1800,9 @@ fn main_menu_input(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn game_over_input(
+    buttons: Query<(&Interaction, &ui::DeathAction), Changed<Interaction>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -1785,7 +1811,15 @@ fn game_over_input(
     mut modifier: ResMut<ChapterModifier>,
     records: Res<ChapterRecords>,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyR)
+    if buttons.iter().any(|(interaction, action)| {
+        *interaction == Interaction::Pressed && *action == ui::DeathAction::MainMenu
+    }) {
+        next_state.set(GameState::MainMenu);
+        return;
+    }
+    if buttons.iter().any(|(interaction, action)| {
+        *interaction == Interaction::Pressed && *action == ui::DeathAction::Retry
+    }) || keyboard.just_pressed(KeyCode::KeyR)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::South, GamepadButton::Start])
     {
         reset_run_stats_for_new_chapter(&mut stats);
@@ -1883,10 +1917,14 @@ fn reset_run_stats_for_campaign_chapter(stats: &mut RunStats) {
 }
 
 fn toggle_pause(
+    settings_panel: Res<ui::settings::SettingsPanelState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut pause: ResMut<PauseState>,
 ) {
+    if settings_panel.open {
+        return;
+    }
     if keyboard.just_pressed(KeyCode::Escape)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::Start])
     {
@@ -1897,11 +1935,14 @@ fn toggle_pause(
 fn toggle_audio(
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
+    menu_buttons: Query<(&Interaction, &ui::MenuAction), Changed<Interaction>>,
     mut audio: ResMut<AudioSettings>,
     mut settings: ResMut<OpenArpgUserSettings>,
     mut commands: Commands,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyM)
+    if menu_buttons.iter().any(|(interaction, action)| {
+        *interaction == Interaction::Pressed && *action == ui::MenuAction::Audio
+    }) || keyboard.just_pressed(KeyCode::KeyM)
         || gamepad_just_pressed(&gamepads, &[GamepadButton::North])
     {
         audio.toggle();
@@ -2515,30 +2556,6 @@ pub(crate) fn valor_gold_reward(base_gold: u32, stats: &RunStats) -> u32 {
     ((base_gold as f32) * valor_reward_multiplier(stats)).round() as u32
 }
 
-pub(crate) fn massacre_summary(stats: &RunStats) -> String {
-    if stats.massacre_streak == 0 {
-        format!("Massacre: best {}", stats.best_massacre_streak)
-    } else {
-        format!(
-            "Massacre: {}x {:.0}s best {}",
-            stats.massacre_streak, stats.massacre_timer_secs, stats.best_massacre_streak
-        )
-    }
-}
-
-pub(crate) fn valor_summary(stats: &RunStats) -> String {
-    if stats.valor_stacks == 0 || stats.valor_timer_secs <= 0.0 {
-        "Valor: none".to_string()
-    } else {
-        format!(
-            "Valor: {}x {:.0}s +{:.0}% rewards",
-            stats.valor_stacks,
-            stats.valor_timer_secs,
-            (valor_reward_multiplier(stats) - 1.0) * 100.0
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2712,6 +2729,28 @@ mod tests {
     }
 
     #[test]
+    fn automatic_render_profile_preserves_bevy_device_priority() {
+        assert_eq!(
+            std::mem::discriminant(&open_arpg_wgpu_settings(None).priority),
+            std::mem::discriminant(&WgpuSettings::default().priority)
+        );
+    }
+
+    #[test]
+    fn render_profiles_preserve_bevy_required_texture_features() {
+        for profile in [
+            None,
+            Some(OpenArpgRenderProfile::Compatibility),
+            Some(OpenArpgRenderProfile::Functionality),
+            Some(OpenArpgRenderProfile::WebGl2),
+            Some(OpenArpgRenderProfile::Gl),
+        ] {
+            let settings = open_arpg_wgpu_settings(profile);
+            assert!(settings.features.contains(WgpuSettings::default().features));
+        }
+    }
+
+    #[test]
     fn render_profile_aliases_pick_expected_wgpu_priority() {
         assert_eq!(
             parse_open_arpg_render_profile(Some("compat")),
@@ -2828,11 +2867,11 @@ mod tests {
 
     #[test]
     fn reflected_settings_docs_and_helpers_are_available_for_tooling() {
-        assert_eq!(reflected_user_settings_doc_counts(), (5, 5));
+        assert_eq!(reflected_user_settings_doc_counts(), (6, 6));
         assert_eq!(reflected_tool_helper_count(), 4);
 
         let audit = bevy_runtime_feature_audit_summary();
-        assert!(audit.contains("reflect_docs=5/5 settings fields"));
+        assert!(audit.contains("reflect_docs=6/6 settings fields"));
         assert!(audit.contains("reflect_functions=4 helpers"));
         assert!(audit.contains("settings=on"));
         assert!(audit.contains("animation=gltf_animation+morph_animation"));
@@ -2966,7 +3005,7 @@ mod tests {
         assert!(summary.contains("assets=processor+gltf+ktx2+basis+webp+hdr+audio-codecs"));
         assert!(summary.contains("render=hdr+bloom+smaa+dof+fog+area-lights+pcss+contact-shadows"));
         assert!(summary.contains("platform=x11+wayland+accesskit+gamepad+clipboard+system-fonts"));
-        assert!(summary.contains("tools=settings+remote-opt-in+ui-debug+reflect_docs=5/5 settings fields+reflect_functions=4 helpers"));
+        assert!(summary.contains("tools=settings+remote-opt-in+ui-debug+reflect_docs=6/6 settings fields+reflect_functions=4 helpers"));
         assert!(summary.contains("omitted=http/https+solari+dlss+meshlet+hotpatching+zstd_c"));
         assert!(summary.contains("deferred=feathers+clipboard_image+pan_camera"));
         assert!(summary.contains(&format!(
@@ -3212,23 +3251,6 @@ mod tests {
     }
 
     #[test]
-    fn massacre_summary_handles_inactive_and_active_streaks() {
-        let inactive = RunStats {
-            best_massacre_streak: 6,
-            ..RunStats::default()
-        };
-        assert_eq!(massacre_summary(&inactive), "Massacre: best 6");
-
-        let active = RunStats {
-            massacre_streak: 4,
-            best_massacre_streak: 5,
-            massacre_timer_secs: 2.4,
-            ..RunStats::default()
-        };
-        assert_eq!(massacre_summary(&active), "Massacre: 4x 2s best 5");
-    }
-
-    #[test]
     fn valor_stacks_cap_and_scale_rewards() {
         let mut stats = RunStats::default();
 
@@ -3241,8 +3263,6 @@ mod tests {
         assert_eq!(stats.valor_timer_secs, 90.0);
         assert_eq!(valor_xp_reward(100, &stats), 140);
         assert_eq!(valor_gold_reward(50, &stats), 70);
-        assert!(valor_summary(&stats).contains("5x"));
-        assert!(valor_summary(&stats).contains("+40%"));
     }
 
     #[test]
@@ -3256,7 +3276,6 @@ mod tests {
         assert_eq!(valor_reward_multiplier(&stats), 1.0);
         assert_eq!(valor_xp_reward(100, &stats), 100);
         assert_eq!(valor_gold_reward(50, &stats), 50);
-        assert_eq!(valor_summary(&stats), "Valor: none");
     }
 
     #[test]
@@ -3321,7 +3340,7 @@ mod tests {
         assert!(
             diagnostic.contains("Feature audit: profiles=3d+ui+scene+picking+audio-all-formats")
         );
-        assert!(diagnostic.contains("reflect_docs=5/5 settings fields"));
+        assert!(diagnostic.contains("reflect_docs=6/6 settings fields"));
     }
 
     #[test]
@@ -3339,7 +3358,7 @@ mod tests {
         assert!(
             diagnostic.contains("Feature audit: profiles=3d+ui+scene+picking+audio-all-formats")
         );
-        assert!(diagnostic.contains("reflect_docs=5/5 settings fields"));
+        assert!(diagnostic.contains("reflect_docs=6/6 settings fields"));
         assert!(!diagnostic.contains("No DISPLAY or WAYLAND_DISPLAY"));
     }
 
@@ -3355,7 +3374,7 @@ mod tests {
         assert!(
             diagnostic.contains("Feature audit: profiles=3d+ui+scene+picking+audio-all-formats")
         );
-        assert!(diagnostic.contains("reflect_docs=5/5 settings fields"));
+        assert!(diagnostic.contains("reflect_docs=6/6 settings fields"));
     }
 
     #[test]

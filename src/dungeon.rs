@@ -407,7 +407,6 @@ fn spawn_dungeon(
             assets.hollow_road_albedo.clone(),
         ),
     };
-    let stone_detail = assets.stone_detail.clone();
     let (highland_color, road_color) = match chapter {
         ChapterId::AshenReliquary => (Color::srgb(0.88, 0.78, 0.68), Color::srgb(0.92, 0.80, 0.66)),
         ChapterId::HollowBastion => (Color::srgb(0.66, 0.84, 0.88), Color::srgb(0.76, 0.88, 0.92)),
@@ -475,27 +474,15 @@ fn spawn_dungeon(
         );
     }
 
-    // A sparse ring of energized monoliths marks the mountain pass. The seal
-    // reads as a landmark rather than another solid room wall.
-    let gate_mesh = meshes.add(Cone::new(0.65, 5.4));
-    let (gate_color, gate_emissive) = match chapter {
-        ChapterId::AshenReliquary => (Color::srgb(0.32, 0.10, 0.08), Color::srgb(0.9, 0.22, 0.08)),
-        ChapterId::HollowBastion => (Color::srgb(0.06, 0.20, 0.26), Color::srgb(0.05, 0.72, 0.90)),
+    // Carved seal pillars share the gate's lifetime and gameplay boundary.
+    let gate_emissive = match chapter {
+        ChapterId::AshenReliquary => Color::srgb(0.9, 0.22, 0.08),
+        ChapterId::HollowBastion => Color::srgb(0.05, 0.72, 0.90),
     };
-    let gate_mat = materials.add(StandardMaterial {
-        base_color: gate_color,
-        base_color_texture: Some(stone_detail),
-        uv_transform: Affine2::from_scale(Vec2::splat(2.0)),
-        emissive: gate_emissive.into(),
-        perceptual_roughness: 0.55,
-        ..default()
-    });
     for legacy_x in [-3.6, -1.8, 0.0, 1.8, 3.6] {
-        let position =
-            chapter_world_position(chapter, Vec3::new(legacy_x, 0.0, -9.0)) + Vec3::Y * 2.7;
+        let position = chapter_world_position(chapter, Vec3::new(legacy_x, 0.0, -9.0));
         commands.spawn((
-            Mesh3d(gate_mesh.clone()),
-            MeshMaterial3d(gate_mat.clone()),
+            WorldAssetRoot(assets.sanctum_gate.clone()),
             Transform::from_translation(position)
                 .with_rotation(Quat::from_rotation_z(legacy_x * 0.018)),
             DungeonEntity,
@@ -1322,7 +1309,10 @@ fn attach_objective_markers(
         return;
     }
 
-    let ring_mesh = meshes.add(Torus::new(0.72, 0.86));
+    let ring_mesh = meshes.add(Torus {
+        major_radius: 0.79,
+        minor_radius: 0.014,
+    });
     let ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(0.16, 0.74, 1.0, 0.42),
         emissive: Color::srgb(0.04, 0.28, 0.52).into(),

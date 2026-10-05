@@ -199,19 +199,6 @@ pub fn complete_obelisk_if_ready(
     obelisk.reward_claimed = true;
     true
 }
-
-pub fn obelisk_summary(obelisk: &BloodObelisk) -> String {
-    match obelisk.state {
-        ObeliskState::Dormant => "Obelisk: dormant".to_string(),
-        ObeliskState::Active => format!(
-            "Obelisk: {}/{} kills {:.0}s",
-            obelisk.kills, obelisk.target_kills, obelisk.remaining_secs
-        ),
-        ObeliskState::Completed => "Obelisk: completed".to_string(),
-        ObeliskState::Failed => "Obelisk: failed".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +268,5 @@ mod tests {
         tick_obelisk(&mut obelisk, OBELISK_DURATION_SECS + 0.1);
 
         assert_eq!(obelisk.state, ObeliskState::Failed);
-        assert!(obelisk_summary(&obelisk).contains("failed"));
     }
 }

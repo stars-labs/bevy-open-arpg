@@ -47,15 +47,6 @@ impl ChapterModifierKind {
         }
     }
 
-    pub fn summary(self) -> &'static str {
-        match self {
-            Self::AshenEchoes => "standard enemy rules and rewards",
-            Self::BloodTithe => "harder enemy hits, richer monster rewards",
-            Self::Emberstorm => "deadlier enemies and vents, highest rewards",
-            Self::TormentBrand => "brutal enemies, lethal vents, and torment-grade rewards",
-        }
-    }
-
     pub fn enemy_health_multiplier(self) -> f32 {
         match self {
             Self::AshenEchoes => 1.0,
@@ -111,16 +102,6 @@ impl OrdealAffix {
         }
     }
 
-    pub fn summary(self) -> &'static str {
-        match self {
-            Self::None => "no rotating secondary rule",
-            Self::AshenHunger => "enemies hit harder, rewards rise",
-            Self::GlassRelics => "enemies endure longer, rewards rise",
-            Self::TreasureFever => "bonus rewards without extra combat pressure",
-            Self::CinderVeins => "vents and hazards bite harder, rewards rise",
-        }
-    }
-
     pub fn enemy_health_multiplier(self) -> f32 {
         match self {
             Self::GlassRelics => 1.10,
@@ -159,14 +140,6 @@ impl ChapterModifier {
             self.kind.label().to_string()
         } else {
             format!("{} + {}", self.kind.label(), self.affix.label())
-        }
-    }
-
-    pub fn summary(self) -> String {
-        if self.affix == OrdealAffix::None {
-            self.kind.summary().to_string()
-        } else {
-            format!("{}; {}", self.kind.summary(), self.affix.summary())
         }
     }
 
@@ -253,11 +226,6 @@ mod tests {
             ChapterModifierKind::TormentBrand.enemy_damage_multiplier()
                 > ChapterModifierKind::Emberstorm.enemy_damage_multiplier()
         );
-        assert!(
-            ChapterModifierKind::TormentBrand
-                .summary()
-                .contains("torment")
-        );
     }
 
     #[test]
@@ -316,7 +284,6 @@ mod tests {
         };
 
         assert!(modifier.label().contains("Cinder Veins"));
-        assert!(modifier.summary().contains("hazards"));
         assert!(
             modifier.hazard_damage_multiplier()
                 > ChapterModifierKind::TormentBrand.hazard_damage_multiplier()

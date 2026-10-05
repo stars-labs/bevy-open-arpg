@@ -1,6 +1,6 @@
 # Blender Asset Pipeline
 
-`generate_assets.py` creates the first-pass `.glb` models and combat VFX used by the Bevy prototype.
+`generate_assets.py` dispatches the canonical character, prop, environment and restrained combat-effect generators. There is no primitive-model fallback.
 
 Run:
 
@@ -8,17 +8,10 @@ Run:
 nix develop -c blender --background --factory-startup \
   --python tools/blender/generate_assets.py
 nix develop -c blender --background --factory-startup \
-  --python tools/blender/generate_hollow_bastion.py
-nix develop -c blender --background --factory-startup \
-  --python tools/blender/generate_enemy_roster.py
-nix develop -c blender --background --factory-startup \
   --python tools/blender/postprocess_glb_materials.py
 ```
 
-`generate_enemy_roster.py` produces unique silhouettes for the Ashbone
-Vanguard, both chapter stalkers and marksmen, the treasure imp, wardens,
-nemesis, and Keeper, plus the Keeper and Hollow Matron boss-skill VFX. It is
-the reproducible fallback when Blender MCP is unavailable.
+`generate_reliquary_enemies.py` owns enemy characters; `generate_enemy_roster.py` owns the four Keeper/Matron skill effects. `generate_reliquary_effects.py` owns all contact, death, aura and motion effects. Health/fury phials, coin purses and broken armour remains come from `generate_reliquary_props.py`.
 
 ## Deterministic material post-processing
 
@@ -72,3 +65,19 @@ Asset rules:
   metadata hooks and contain no rendered geometry.
 - Combat VFX exports include `slash_arc.glb`, `hit_spark.glb`, `bone_shatter.glb`, `bone_impact.glb`, `blood_spray.glb`, `execution_burst.glb`, `arcane_impact.glb`, `holy_impact.glb`, `ember_impact.glb`, `frost_impact.glb`, `void_impact.glb`, `frenzy_impact.glb`, `vampiric_siphon.glb`, `desecrator_burst.glb`, `guard_clash.glb`, `armor_break.glb`, `soul_ward_hit.glb`, `hit_bone_rune.glb`, `hit_bone_lock.glb`, `marrow_flash.glb`, `bone_fracture_echo.glb`, `elite_affix_break.glb`, `shadow_burst.glb`, `headshot_burst.glb`, `crit_bone_crown.glb`, `crit_burst.glb`, `stagger_burst.glb`, `shadow_trail.glb`, and `loot_prism.glb` for Bevy hit feedback, dash trails, stagger windows, affix readability, hit-bone overlays, bone-point locks, fracture echoes, and high-value death rewards.
 - If Blender MCP is connected later, keep these output filenames stable and replace only the generator implementation.
+
+## Authored replacement models
+
+`generate_assets.py` routes character and prop generation to the dedicated
+`generate_hero.py`, `generate_reliquary_enemies.py` and
+`generate_reliquary_props.py` pipelines. `generate_reliquary_environment.py`
+produces weathered rocks, branching dead trees, crystal clusters, broken arches
+and carved sanctum gate pillars. `generate_reliquary_effects.py` replaces bulky
+auras and combat markers with ground inscriptions and curved ribbons. Use
+Blender 5.1 for the canonical material pass. Generated previews and verification
+reports live under `target/validation/`.
+
+The hero body contains no baked boots or sword: `hero_arm`, `hero_leg` and
+`hero_mantle` are authored components driven by the runtime animation. Enemies
+expose four named animated limb pivots. Contact markers remain non-rendering
+metadata; they must never become visible spheres or discs on character models.

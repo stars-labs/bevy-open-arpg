@@ -1,6 +1,34 @@
 # Changelog
 
+- Add three selectable hero classes with distinct basic attacks, passives, resources, models, six active skills each, rune loadouts, level unlocks, and native save persistence.
+
+- Add readable skill release silhouettes: directional heavy cuts, expanding shockwaves, tapered movement trails, and charged ground impacts, with rune palettes and real strike timing.
+
+- Fix HUD startup query conflicts for class resource liquids and skill icons; remove unused UI helpers and keep test-only combat constructors out of runtime builds.
+
+- Connected talent investment to combat: Wrath increases impact recoil, Vigor grants a shield once per successful skill cast, and Focus adds Fury on a successful strike. Paragon ranks award talent points and show their real rewards.
+- Aligned melee damage with weapon contact and attack speed; added a brief contact hold, drag and release, with bounded boss recoil and no stacked pause for multiple targets.
+- Added distinct animated contact art and material sounds for all six skill runes; removed redundant slash overlays and obsolete hit-flash code.
+
+- Added a Skills & Talents panel with clickable rune choices, their combat effects and current costs/cooldowns; talent ranks can be purchased with the mouse.
+- Level-ups now show actual rewards with a short visual/audio cue, restore life, and keep an actionable reminder until talent points are spent. Loading a save does not replay level-up rewards.
+
+- Refined inventory and talent panels with readable localized headings, unclipped item names, responsive scrolling and close buttons; added north-up map directions, a player-facing arrow and a live objective-bearing arrow.
+
+- Rebuilt the combat HUD around resource orbs and icons; removed diagnostic strips and distant loot comparisons, added a readable Chinese journal with scrolling and a close button, and moved secondary details into hover tips.
+
+- Corrected the sword grip rotation so the blade leads forward during melee contact; moved the short strike trail from the hilt to the blade.
+
+- Planted the normal sword swing: removed whole-body backward tilt, jump/stretch and blade enlargement; constrained the hand to arm reach.
+
+- Changed mouse controls to right-click movement and left-click attacks; Rupture uses R, with updated HUD hints and move-to-cancel targeting.
+
+- Replaced instant enemy disappearance with an inert falling corpse that settles and clears; removed solid death discs and normal-enemy death flashes.
+- Replaced restorative spheres and floating coin stacks with authored phials, coin purses and small broken-armour remains.
+- Rebuilt contact and boss effects without opaque cores or radial blocks; enemy projectiles and hazards use directional bolts and sparse ground inscriptions.
+
 ## [0.1.0] - 2026-07-24
+
 
 ### Added
 - Initial playable vertical slice with chapter system, enemy encounters, loot, run progression, UI, and combat feedback.
@@ -15,6 +43,21 @@
 - Addressed previous release metadata gaps and tightened `vX.Y.Z` tag validation for release automation.
 
 ## Unreleased
+- Moved language selection into a persistent Settings panel available from the title screen and pause menu; removed the F8 language shortcut.
+- Replaced the verbose defeat report with a framed results panel, concise advice, and clickable retry/menu actions.
+- Reduced basic attacks to one weapon-synchronized slash and one small contact spark, removing stacked trails and ground glyphs.
+- Added default Simplified Chinese UI with a bundled CJK font and an English language switch.
+- Reworked Rupture into a planted melee slash; reduced its base Fury cost to 20, raised starting Fury to 60, and stopped empty casts consuming Fury.
+- Corrected enemy focus rings and jailer circles, and replaced solid attack-warning lanes with hollow outlines.
+- Kept animated thighs anchored inside the hip sockets through walking and evasion; replaced body-obscuring hit spheres and block afterimages with brief directional sparks.
+- Replaced primitive character, enemy, interactable and wilderness stand-ins with authored textured models; animated the actual limbs and removed duplicate boots, proxy extremities and solid loot beams.
+- Anchored resource orbs and skills to a shared bottom HUD, replaced flattened resource fills with circular level masks, and shortened status cards to prevent text overlap.
+- Stopped ordinary walking from spawning dash-trail geometry and removed the reused dash-model footprints that looked like dropped matchsticks.
+- Simplified resource-orb and skill-card labels, corrected their artwork layering, and kept pause summaries behind inventory and talent panels.
+- Removed unused GLSL shader imports from native builds to avoid an upstream debug shader-validation panic on WGSL texture binding arrays.
+- Restyled interface typography with local Cinzel and Crimson Pro fonts, rebuilt the title screen around brass-and-ember controls with mouse interaction and contextual hints, and replaced font-glyph icons with image-backed navigation symbols.
+- Preserved Bevy's default GPU features and device priority so native startup supports HDR bloom and atmospheric scattering without texture validation errors.
+- Fixed native startup compilation after the rand 0.10 and rodio 0.22 upgrades by updating random-number imports and audio playback APIs and enabling Rodio playback.
 - Added a data-driven two-chapter narrative with 18 mainline scenes, ordered multi-character dialogue, pre-Boss, half-health, and post-fight exchanges, and a final victory resolution. The `J` journal now combines tasks, story history, and lore; loading clears transient dialogue state and restores recorded progress without stale lines. Mainline caches and altars are phase-gated so early exploration cannot consume an objective or scramble its story beats.
 - Added four repeat-sampled imagegen terrain textures for chapter-specific ground and roads under `assets/images/generated/world/`.
 - Post-processed all 18 core character and Boss GLBs with embedded bone, cloth, metal, or stone detail textures and back-face culling, plus a deterministic Blender 5.1 rebuild command and explicit double-sided VFX exceptions.

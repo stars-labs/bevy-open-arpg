@@ -698,23 +698,6 @@ impl ChapterChallenges {
         reward
     }
 }
-
-pub fn challenge_summary(challenges: &ChapterChallenges) -> String {
-    let completed = challenges
-        .challenges
-        .iter()
-        .filter(|challenge| challenge.completed)
-        .count();
-    let total = challenges.challenges.len();
-    let next = challenges
-        .challenges
-        .iter()
-        .find(|challenge| !challenge.completed)
-        .map(|challenge| format!("{}: {}", challenge.id.label(), challenge.id.description()))
-        .unwrap_or_else(|| "all challenges complete".to_string());
-    format!("Challenges {completed}/{total} - {next}")
-}
-
 pub struct ChallengePlugin;
 
 impl Plugin for ChallengePlugin {
@@ -1137,7 +1120,7 @@ fn surge_mastery_complete(stats: &RunStats) -> bool {
 }
 
 fn rune_weaver_complete(stats: &RunStats) -> bool {
-    stats.reap_dash_hits > 0 && stats.hemorrhage_rupture_hits > 0 && stats.frost_nova_hits > 0
+    stats.reap_hits > 0 && stats.hemorrhage_hits > 0 && stats.frost_hits > 0
 }
 
 fn armory_adept_complete(stats: &RunStats) -> bool {
@@ -2313,14 +2296,14 @@ mod tests {
     #[test]
     fn rune_weaver_requires_all_three_alternate_rune_hits() {
         let mut stats = RunStats {
-            reap_dash_hits: 1,
-            hemorrhage_rupture_hits: 1,
+            reap_hits: 1,
+            hemorrhage_hits: 1,
             ..default()
         };
 
         assert!(!rune_weaver_complete(&stats));
 
-        stats.frost_nova_hits = 1;
+        stats.frost_hits = 1;
         assert!(rune_weaver_complete(&stats));
     }
 
@@ -2682,9 +2665,13 @@ mod tests {
         assert_eq!(reward.ember_shards, 8);
         assert_eq!(reward.affix_essence, 10);
         assert_eq!(challenges.reward_essence, 10);
-        assert!(
-            challenge_summary(&challenges)
-                .contains(&format!("1/{}", ChapterChallenges::new().challenges.len()))
+        assert_eq!(
+            challenges
+                .challenges
+                .iter()
+                .filter(|challenge| challenge.completed)
+                .count(),
+            1
         );
     }
 
@@ -2719,9 +2706,13 @@ mod tests {
 
         assert!(massacre.completed);
         assert!(massacre.reward_claimed);
-        assert!(
-            challenge_summary(&challenges)
-                .contains(&format!("1/{}", ChapterChallenges::new().challenges.len()))
+        assert_eq!(
+            challenges
+                .challenges
+                .iter()
+                .filter(|challenge| challenge.completed)
+                .count(),
+            1
         );
         assert!(
             challenges

@@ -7,83 +7,110 @@ fn chapter_runtime_assets_exist() {
         "assets/data/enemies.ron",
         "assets/data/loot.ron",
         "assets/audio/ambient_theme.wav",
-        "assets/models/hero.glb",
-        "assets/models/skeleton.glb",
+        "assets/models/affix_arcane_aura.glb",
+        "assets/models/affix_blood_aura.glb",
+        "assets/models/affix_ember_aura.glb",
+        "assets/models/affix_frost_aura.glb",
+        "assets/models/affix_ward_aura.glb",
+        "assets/models/altar.glb",
+        "assets/models/arcane_impact.glb",
+        "assets/models/armor_break.glb",
         "assets/models/ashbone_guard.glb",
-        "assets/models/cultist.glb",
-        "assets/models/butcher.glb",
-        "assets/models/bone_stalker.glb",
         "assets/models/ashen_marksman.glb",
-        "assets/models/treasure_imp.glb",
-        "assets/models/seal_warden.glb",
-        "assets/models/keeper.glb",
-        "assets/models/nemesis.glb",
-        "assets/models/hollow_thrall.glb",
-        "assets/models/hollow_stalker.glb",
+        "assets/models/ashen_pylon.glb",
+        "assets/models/bell_warden.glb",
+        "assets/models/blood_obelisk.glb",
+        "assets/models/blood_spray.glb",
+        "assets/models/bone_fracture_echo.glb",
+        "assets/models/bone_impact.glb",
+        "assets/models/bone_shatter.glb",
+        "assets/models/bone_stalker.glb",
+        "assets/models/boss_summon_portal.glb",
+        "assets/models/breakable_coffer.glb",
+        "assets/models/breakable_urn.glb",
+        "assets/models/butcher.glb",
+        "assets/models/chest.glb",
         "assets/models/choir_acolyte.glb",
         "assets/models/choir_marksman.glb",
-        "assets/models/hollow_reaver.glb",
-        "assets/models/bell_warden.glb",
-        "assets/models/hollow_matron.glb",
-        "assets/models/sword.glb",
-        "assets/models/chest.glb",
-        "assets/models/altar.glb",
-        "assets/models/quartermaster.glb",
-        "assets/models/fortune_shrine.glb",
-        "assets/models/storm_shrine.glb",
-        "assets/models/healing_well.glb",
-        "assets/models/cursed_shrine.glb",
-        "assets/models/blood_obelisk.glb",
-        "assets/models/reliquary_vault.glb",
-        "assets/models/ember_rift_prop.glb",
-        "assets/models/ashen_pylon.glb",
-        "assets/models/lore_page.glb",
-        "assets/models/breakable_urn.glb",
-        "assets/models/breakable_coffer.glb",
-        "assets/models/slash_arc.glb",
-        "assets/models/hit_spark.glb",
-        "assets/models/bone_shatter.glb",
-        "assets/models/bone_impact.glb",
-        "assets/models/blood_spray.glb",
-        "assets/models/execution_burst.glb",
-        "assets/models/arcane_impact.glb",
-        "assets/models/holy_impact.glb",
-        "assets/models/ember_impact.glb",
-        "assets/models/frost_impact.glb",
-        "assets/models/void_impact.glb",
-        "assets/models/frenzy_impact.glb",
-        "assets/models/vampiric_siphon.glb",
-        "assets/models/desecrator_burst.glb",
-        "assets/models/guard_clash.glb",
-        "assets/models/armor_break.glb",
-        "assets/models/soul_ward_hit.glb",
-        "assets/models/hit_bone_rune.glb",
-        "assets/models/hit_bone_lock.glb",
-        "assets/models/marrow_flash.glb",
-        "assets/models/bone_fracture_echo.glb",
-        "assets/models/elite_affix_break.glb",
-        "assets/models/shadow_burst.glb",
-        "assets/models/headshot_burst.glb",
         "assets/models/crit_bone_crown.glb",
         "assets/models/crit_burst.glb",
-        "assets/models/stagger_burst.glb",
-        "assets/models/shadow_trail.glb",
-        "assets/models/loot_prism.glb",
-        "assets/models/objective_sigil.glb",
+        "assets/models/cultist.glb",
+        "assets/models/cursed_shrine.glb",
+        "assets/models/death_remains.glb",
+        "assets/models/desecrator_burst.glb",
+        "assets/models/elite_affix_break.glb",
+        "assets/models/ember_impact.glb",
+        "assets/models/ember_rift_prop.glb",
         "assets/models/ember_vent.glb",
-        "assets/models/soul_font.glb",
-        "assets/models/soul_fissure.glb",
-        "assets/models/boss_summon_portal.glb",
-        "assets/models/keeper_cleaver_wave.glb",
+        "assets/models/execution_burst.glb",
+        "assets/models/fortune_shrine.glb",
+        "assets/models/frenzy_impact.glb",
+        "assets/models/frost_impact.glb",
+        "assets/models/fury_pickup.glb",
+        "assets/models/guard_clash.glb",
+        "assets/models/headshot_burst.glb",
+        "assets/models/healing_well.glb",
+        "assets/models/health_pickup.glb",
+        "assets/models/hero.glb",
+        "assets/models/hero_arm.glb",
+        "assets/models/hero_leg.glb",
+        "assets/models/hero_mantle.glb",
+        "assets/models/hit_bone_lock.glb",
+        "assets/models/hit_bone_rune.glb",
+        "assets/models/hit_spark.glb",
+        "assets/models/contact_steel.glb",
+        "assets/models/contact_expose.glb",
+        "assets/models/contact_blood.glb",
+        "assets/models/contact_cleanse.glb",
+        "assets/models/contact_reap.glb",
+        "assets/models/contact_ember.glb",
+        "assets/models/contact_frost.glb",
+        "assets/models/proc_vigor.glb",
+        "assets/models/proc_focus.glb",
+        "assets/models/hollow_matron.glb",
+        "assets/models/hollow_reaver.glb",
+        "assets/models/hollow_stalker.glb",
+        "assets/models/hollow_thrall.glb",
+        "assets/models/holy_impact.glb",
+        "assets/models/keeper.glb",
         "assets/models/keeper_chain_cage.glb",
-        "assets/models/matron_soul_lance.glb",
+        "assets/models/keeper_cleaver_wave.glb",
+        "assets/models/loot_prism.glb",
+        "assets/models/lore_page.glb",
+        "assets/models/marrow_flash.glb",
         "assets/models/matron_crescendo.glb",
-        "assets/models/affix_ember_aura.glb",
-        "assets/models/affix_arcane_aura.glb",
-        "assets/models/affix_frost_aura.glb",
-        "assets/models/affix_blood_aura.glb",
-        "assets/models/affix_ward_aura.glb",
+        "assets/models/matron_soul_lance.glb",
+        "assets/models/nemesis.glb",
+        "assets/models/objective_sigil.glb",
+        "assets/models/quartermaster.glb",
+        "assets/models/reliquary_vault.glb",
+        "assets/models/sanctum_gate.glb",
+        "assets/models/scenery_crystal.glb",
+        "assets/models/scenery_dead_tree.glb",
+        "assets/models/scenery_rock.glb",
+        "assets/models/scenery_ruin.glb",
+        "assets/models/seal_warden.glb",
+        "assets/models/shadow_burst.glb",
+        "assets/models/shadow_trail.glb",
+        "assets/models/skeleton.glb",
+        "assets/models/slash_arc.glb",
+        "assets/models/soul_fissure.glb",
+        "assets/models/soul_font.glb",
+        "assets/models/soul_ward_hit.glb",
+        "assets/models/stagger_burst.glb",
+        "assets/models/storm_shrine.glb",
+        "assets/models/sword.glb",
+        "assets/models/treasure_imp.glb",
+        "assets/models/vampiric_siphon.glb",
+        "assets/models/void_impact.glb",
         "assets/audio/hit.wav",
+        "assets/audio/contact_steel.wav",
+        "assets/audio/contact_expose.wav",
+        "assets/audio/contact_blood.wav",
+        "assets/audio/contact_cleanse.wav",
+        "assets/audio/contact_reap.wav",
+        "assets/audio/contact_ember.wav",
+        "assets/audio/contact_frost.wav",
         "assets/audio/critical.wav",
         "assets/audio/loot.wav",
         "assets/audio/danger.wav",
@@ -96,9 +123,15 @@ fn chapter_runtime_assets_exist() {
         "assets/audio/utility.wav",
         "assets/audio/victory.wav",
         "assets/audio/defeat.wav",
-        "assets/fonts/FiraSans-Bold.ttf",
-        "assets/fonts/FiraSans-Regular.ttf",
-        "assets/fonts/FiraSans-License.txt",
+        "assets/data/zh_cn.tsv",
+        "assets/data/journal_zh_cn.tsv",
+        "assets/data/panels_zh_cn.tsv",
+        "assets/fonts/NotoSansSC.ttf",
+        "assets/fonts/NotoSansSC-OFL.txt",
+        "assets/fonts/Cinzel.ttf",
+        "assets/fonts/Cinzel-OFL.txt",
+        "assets/fonts/CrimsonPro.ttf",
+        "assets/fonts/CrimsonPro-OFL.txt",
         "assets/images/generated/bevy-open-arpg-concept.png",
         "assets/images/generated/ui/gear-icons-reliquary.png",
         "assets/images/generated/ui/main-menu-reliquary-v2.png",
@@ -107,6 +140,7 @@ fn chapter_runtime_assets_exist() {
         "assets/images/generated/ui/skill-icons-reliquary.png",
         "assets/images/generated/ui/slot-frame-reliquary.png",
         "assets/images/generated/ui/talent-sigils-reliquary.png",
+        "assets/images/generated/ui/utility-icons-reliquary.png",
         "assets/images/generated/world/ashen-ground-albedo.jpg",
         "assets/images/generated/world/ashen-road-albedo.jpg",
         "assets/images/generated/world/hollow-ground-albedo.jpg",
@@ -173,6 +207,11 @@ fn generated_ui_pngs_have_expected_ihdr() {
             "assets/images/generated/ui/resource-orb-frame-reliquary.png",
             627,
             627,
+        ),
+        (
+            "assets/images/generated/ui/utility-icons-reliquary.png",
+            1_024,
+            256,
         ),
     ] {
         let bytes = fs::read(path).unwrap();
@@ -368,19 +407,19 @@ fn boss_skill_models_keep_readable_effect_nodes() {
     for (path, marker) in [
         (
             "assets/models/keeper_cleaver_wave.glb",
-            "keeper cleaver wave core",
+            "keeper cleaver wave crescent",
         ),
         (
             "assets/models/keeper_chain_cage.glb",
-            "keeper chain cage ring",
+            "keeper interlocking chain cage",
         ),
         (
             "assets/models/matron_soul_lance.glb",
-            "matron soul lance core",
+            "matron tapered soul spear",
         ),
         (
             "assets/models/matron_crescendo.glb",
-            "matron crescendo crown",
+            "matron broken resonance wave",
         ),
     ] {
         let bytes = fs::read(path).unwrap();
@@ -451,68 +490,104 @@ fn keeper_cleaver_wave_stays_untextured_double_sided_vfx() {
 #[test]
 fn combat_vfx_models_keep_readable_effect_nodes() {
     for (path, marker) in [
-        ("assets/models/slash_arc.glb", "slash crescent core"),
-        ("assets/models/hit_spark.glb", "hit spark center"),
-        ("assets/models/bone_shatter.glb", "bone shatter core"),
-        ("assets/models/bone_impact.glb", "bone impact hit bone ring"),
-        ("assets/models/blood_spray.glb", "blood spray heart"),
-        ("assets/models/execution_burst.glb", "execution blood seal"),
-        ("assets/models/arcane_impact.glb", "arcane impact ring"),
-        ("assets/models/holy_impact.glb", "holy impact core"),
+        ("assets/models/slash_arc.glb", "forged slash crescent"),
+        (
+            "assets/models/hit_spark.glb",
+            "hit_spark tapered contact fragments",
+        ),
+        (
+            "assets/models/bone_shatter.glb",
+            "bone_shatter tapered contact fragments",
+        ),
+        (
+            "assets/models/bone_impact.glb",
+            "bone_impact tapered contact fragments",
+        ),
+        (
+            "assets/models/blood_spray.glb",
+            "blood_spray tapered contact fragments",
+        ),
+        (
+            "assets/models/execution_burst.glb",
+            "execution_burst tapered contact fragments",
+        ),
+        ("assets/models/arcane_impact.glb", "arcane impact sigil"),
+        (
+            "assets/models/holy_impact.glb",
+            "holy_impact tapered contact fragments",
+        ),
         (
             "assets/models/ember_impact.glb",
-            "ember impact scorched hit ring",
+            "ember_impact tapered contact fragments",
         ),
         (
             "assets/models/frost_impact.glb",
-            "frost impact fractured hit ring",
+            "frost_impact tapered contact fragments",
         ),
-        ("assets/models/void_impact.glb", "void impact siphon seal"),
+        (
+            "assets/models/void_impact.glb",
+            "void_impact tapered contact fragments",
+        ),
         (
             "assets/models/frenzy_impact.glb",
-            "frenzy impact torn hit ring",
+            "frenzy_impact tapered contact fragments",
         ),
         (
             "assets/models/vampiric_siphon.glb",
-            "vampiric siphon blood halo",
+            "vampiric_siphon tapered contact fragments",
         ),
         (
             "assets/models/desecrator_burst.glb",
-            "desecrator burst corrupted ground seal",
+            "desecrator_burst tapered contact fragments",
         ),
-        ("assets/models/guard_clash.glb", "guard clash hit bone disc"),
-        ("assets/models/armor_break.glb", "armor break cracked plate"),
+        (
+            "assets/models/guard_clash.glb",
+            "guard_clash tapered contact fragments",
+        ),
+        (
+            "assets/models/armor_break.glb",
+            "armor_break tapered contact fragments",
+        ),
         (
             "assets/models/soul_ward_hit.glb",
-            "soul ward reflected halo",
+            "soul_ward_hit tapered contact fragments",
         ),
+        ("assets/models/hit_bone_rune.glb", "bone hit runic arcs"),
+        ("assets/models/hit_bone_lock.glb", "bone lock brackets"),
         (
-            "assets/models/hit_bone_rune.glb",
-            "hit bone rune contact ring",
+            "assets/models/marrow_flash.glb",
+            "marrow_flash tapered contact fragments",
         ),
-        (
-            "assets/models/hit_bone_lock.glb",
-            "hit bone lock targeting ring",
-        ),
-        ("assets/models/marrow_flash.glb", "marrow flash core"),
         (
             "assets/models/bone_fracture_echo.glb",
-            "bone fracture echo cracked halo",
+            "fracture echo crescents",
         ),
         (
             "assets/models/elite_affix_break.glb",
-            "elite affix break outer seal",
+            "elite_affix_break tapered contact fragments",
         ),
-        ("assets/models/shadow_burst.glb", "shadow burst ember"),
+        (
+            "assets/models/shadow_burst.glb",
+            "shadow_burst tapered contact fragments",
+        ),
         (
             "assets/models/headshot_burst.glb",
-            "headshot hit bone crown",
+            "headshot_burst tapered contact fragments",
         ),
-        ("assets/models/crit_bone_crown.glb", "crit bone crown halo"),
-        ("assets/models/crit_burst.glb", "crit burst core"),
-        ("assets/models/stagger_burst.glb", "stagger shock ring"),
-        ("assets/models/shadow_trail.glb", "shadow dash trail"),
-        ("assets/models/loot_prism.glb", "loot prism beam"),
+        (
+            "assets/models/crit_bone_crown.glb",
+            "crit_bone_crown tapered contact fragments",
+        ),
+        (
+            "assets/models/crit_burst.glb",
+            "crit_burst tapered contact fragments",
+        ),
+        (
+            "assets/models/stagger_burst.glb",
+            "stagger_burst tapered contact fragments",
+        ),
+        ("assets/models/shadow_trail.glb", "tapered shadow ribbons"),
+        ("assets/models/loot_prism.glb", "loot_prism"),
     ] {
         let bytes = fs::read(path).unwrap();
         assert!(
@@ -527,23 +602,23 @@ fn elite_affix_aura_models_keep_readable_effect_nodes() {
     for (path, marker) in [
         (
             "assets/models/affix_ember_aura.glb",
-            "affix ember aura ground rune",
+            "ember ground inscriptions",
         ),
         (
             "assets/models/affix_arcane_aura.glb",
-            "affix arcane aura rotating sigil",
+            "arcane ground inscriptions",
         ),
         (
             "assets/models/affix_frost_aura.glb",
-            "affix frost aura control ring",
+            "frost ground inscriptions",
         ),
         (
             "assets/models/affix_blood_aura.glb",
-            "affix blood aura siphon ring",
+            "blood ground inscriptions",
         ),
         (
             "assets/models/affix_ward_aura.glb",
-            "affix ward aura shield ring",
+            "ward ground inscriptions",
         ),
     ] {
         let bytes = fs::read(path).unwrap();
@@ -586,4 +661,111 @@ fn glb_json(path: &str) -> String {
         "{path} JSON chunk exceeds its file length"
     );
     String::from_utf8(bytes[20..20 + json_length].to_vec()).unwrap()
+}
+
+#[test]
+fn hero_asset_owns_body_only_and_limbs_are_separate() {
+    let body = glb_json("assets/models/hero.glb");
+    for baked in ["left boot", "right boot", "sword blade", "sword hilt"] {
+        assert!(
+            !body.contains(baked),
+            "baked {baked} duplicates runtime animation"
+        );
+    }
+    for part in ["hero", "hero_arm", "hero_leg", "hero_mantle"] {
+        let json = glb_json(&format!("assets/models/{part}.glb"));
+        assert!(json.contains(&format!("\"hero_part\":\"{part}\"")));
+        assert!(json.contains("\"baseColorTexture\":"));
+    }
+}
+
+#[test]
+fn enemy_assets_expose_actual_articulated_limbs() {
+    for name in [
+        "skeleton",
+        "ashbone_guard",
+        "cultist",
+        "butcher",
+        "bone_stalker",
+        "ashen_marksman",
+        "treasure_imp",
+        "seal_warden",
+        "keeper",
+        "nemesis",
+        "hollow_thrall",
+        "hollow_stalker",
+        "choir_acolyte",
+        "choir_marksman",
+        "hollow_reaver",
+        "bell_warden",
+        "hollow_matron",
+    ] {
+        let json = glb_json(&format!("assets/models/{name}.glb"));
+        for limb in [
+            "enemy_left_leg",
+            "enemy_right_leg",
+            "enemy_left_arm",
+            "enemy_right_arm",
+        ] {
+            assert!(json.contains(limb), "{name} lacks animated {limb}");
+        }
+    }
+}
+
+#[test]
+fn combat_contacts_use_opaque_sparse_authored_models() {
+    for name in [
+        "contact_steel",
+        "contact_expose",
+        "contact_blood",
+        "contact_cleanse",
+        "contact_reap",
+        "contact_ember",
+        "contact_frost",
+        "proc_vigor",
+        "proc_focus",
+    ] {
+        let json = glb_json(&format!("assets/models/{name}.glb"));
+        assert!(json.contains(&format!("{name} sparse contact artwork")));
+        assert!(
+            !json.contains("BLEND"),
+            "{name} must not depend on transparent PBR"
+        );
+        assert!(!json.contains("MASK"), "{name} is authored opaque geometry");
+    }
+}
+
+#[test]
+fn contact_sounds_are_short_distinct_unclipped_pcm() {
+    let mut previous = Vec::new();
+    for name in [
+        "steel", "expose", "blood", "cleanse", "reap", "ember", "frost",
+    ] {
+        let bytes = fs::read(format!("assets/audio/contact_{name}.wav")).unwrap();
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            44_100
+        );
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 16);
+        let samples: Vec<_> = bytes[44..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+            .collect();
+        assert!(
+            samples.len() <= 44_100 / 3,
+            "{name} contact tail is too long"
+        );
+        assert!(samples.iter().any(|sample| sample.unsigned_abs() > 1_000));
+        assert!(samples.iter().all(|sample| sample.unsigned_abs() < 32_000));
+        assert!(
+            !previous.contains(&bytes),
+            "{name} duplicates another material sound"
+        );
+        previous.push(bytes);
+    }
 }

@@ -1,0 +1,142 @@
+# Claude Code 交接：Bevy Open ARPG
+
+更新时间：2026-10-05。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
+这是 Codex 历史工作的交接摘要。用户希望 Claude 接着实际开发；本次交接不新增玩法、不提交或部署。
+
+## 2026-10-05 技能释放表现补齐
+
+- 用户反馈职业改版后的技能没有可感知的特效。新设计与验收记录：`docs/SKILL_FEEDBACK.md`。
+- 新增 `src/combat/skill_vfx.rs` 与 `skill_vfx_art.rs`：实际释放帧的前向刀弧、真实半径冲击波/地裂、寒霜冰纹、收尖位移轨迹、跟随投射物的符文尾迹、落点蓄力与下降轨迹。失败输入不播放成功效果，命中接触和卡刀仍由真实伤害驱动。
+- 删除旧位移残影实现及对应废弃测试；技能爆发替换静态小碎屑。特效不投/接收阴影，避免重劈出现黑色实体。没有修改伤害、消耗、解锁或输入。
+- 18个主动技能与3个第二符文变体的真实窗口录制全部有伤害与特效释放，无panic；结果和录像：`target/validation/skill-vfx/`。新增3项几何集成测试通过，默认构建/Clippy通过。
+- 当前职业单元测试编译仍失败，最新检查为313处旧接口错误。完整Web构建通过（ID `7dee7723a94735dc`），浏览器实机未录制；详见本轮verification.md。
+- 录制同时暴露已有剧情文本和新增职业资源名称仍有中英混杂，后续UI本地化需要继续收敛；本轮未改UI文案。
+
+## 2026-10-05 启动修复与当前验证状态
+
+- 职业改版后的 `update_hud` 出现 B0001：`ResourceLiquid` 与其他 HUD 查询同时可变访问 `BackgroundColor`。已增加互斥过滤；技能图标与背包图标的 `ImageNode` 查询也已明确互斥。
+- 清理四类默认构建 dead-code 警告，保留测试使用的战斗构造器为 `cfg(test)`。新增 HUD 查询初始化回归测试，但该测试尚未执行成功。
+- 本轮默认构建、格式检查、默认二进制 Clippy、全功能生产代码检查、第二章 120 帧 headless smoke 已通过。真实窗口录制已进入游戏，截图：`target/validation/hud-startup-fix/window/gameplay.png`，日志未出现 B0001 或 panic。录制脚本已适配新增职业选择页。
+- **当前全量测试与 all-targets Clippy 未通过**：职业改版后遗留 317 处旧技能接口编译错误。旧的 841 项通过记录仅代表 9 月 30 日版本，不能用于证明当前版本。下一步迁移测试到新的职业/技能接口，不恢复废弃兼容 API。
+- 本輪证据目录：`target/validation/hud-startup-fix/`；本轮未运行完整 Web 发布构建。
+
+## 先读与工作边界
+
+1. 读 `AGENTS.md`、本文件、`docs/COMBAT_GROWTH.md`、`docs/UI_STYLE.md`、`docs/ASSET_AUDIT.md`。
+2. 查看当前 `git status`。当前约 170 条已修改/删除/新增路径，属于多轮累计开发，不是一个干净提交；不要 reset、覆盖、清理或丢弃这些成果。没有完成提交、PR 或部署。
+3. 默认中文是用户明确要求，覆盖 AGENTS 中通用的默认英文惯例。语言入口放设置，不能用 F8 切换。中文界面不能中英混杂。
+4. 自主推进，避免中途反复确认；“修复/完成”必须给测试或实机证据。没有验证的内容明确写出。按策划 → 战斗设计 → 美术 → 技术美术 → 验收推进。
+5. 模型/音效通过生成器修改并再生成，不手改生成的二进制。保留 native/wasm 门控和已审计 Bevy features。禁止同时跑原生编译与 Web release 构建，以免内存和 swap 打满。
+
+## 用户反馈与方向
+
+用户反复指出：UI 像调试面板；文字、图标缺少游戏风格；资源球与框错位；模型/死亡/拾取/鼠标敌人标记有占位球体和多边形；走路拖出火柴样特效、出现四条腿或腿脱离身体；挥刀后仰、刀柄朝前；右键消耗怒气异常；中文不完整；地图缺方向；升级和点天赋没有实际打击变化。
+
+明确操作：右键移动，左键攻击；裂地斩移到 R；中文默认，设置中切换语言。
+最新核心要求：点的技能必须反馈在打击上；命中后要短暂“卡刀”，再有阻力地“拖刀”恢复，使用动作游戏技巧。
+
+## 已实施的累计工作（不等于全部达到最终美术品质）
+
+- HUD 收敛为资源球、技能与功能图标，减少诊断文字；资源球嵌入装饰框；次级信息转为 hover/面板。
+- 默认中文、语言设置入口、技能/天赋页点击符文与升级按钮、升级奖励卡和未分配点提示。
+- 地图增加北向基准、玩家朝向箭头、目标方向；背包/天赋/日志面板有滚动和关闭入口。
+- 人物/敌人/拾取/死亡及场景资产已有替换与审计；修正重复腿、肢体绑定、剑握持方向、后仰和膨胀刀光。仍需全面实机复查占位与美术一致性。
+- 上述早期细节参考 CHANGELOG 和 `target/validation/` 各阶段证据，不要仅凭本摘要声称全游戏无缺陷。
+
+## 最近一轮：战斗成长与卡刀拖刀
+
+设计：`docs/COMBAT_GROWTH.md`。数值：`assets/data/player.ron` 的 `growth`。
+
+### 真实成长
+
+- 愤怒保留伤害增长，并增大真实命中冲击/敌人后坐。首领位移比例封顶 0.15。
+- 活力：R/Q/E 有效伤害命中给予护盾，每次施法一次；空挥、死亡目标、道具不奖励，多目标不倍增。阶数 0/1/4/8 的护盾为 0/6/9/13。
+- 专注：普攻有效命中额外回怒，每刀一次；动作、伤害延迟、冷却周期同步加快。相同新局配置下阶数 0/1/4/8 一刀得到 18/20/23/27 怒气，第一点可接当前耗怒 20 的裂地斩。
+- 修掉专注中间阶数重复冷却收益；巅峰等级继续给天赋点，使八阶可达；升级卡与经验条展示真实巅峰奖励。
+
+### 命中动作
+
+- 普攻在动作 44% 处结算，裂地斩在 58% 处结算；伤害周期随攻击速度缩放。
+- 确认近战命中后将动作保持在接触姿势，避免低帧率直接跳到收刀。
+- 短停约 70–120ms，用真实时间计时：前 38% 卡住，接着 34% 拖刀，再 28% 恢复。普通/重击/暴击/首领破甲分层；群攻取最长单次停顿，不累加。
+- 显式让命中停顿和玩家姿势更新在 `CombatSet::PlayerDamage` 后执行，使伤害当帧进入卡刀。
+- 敌人后坐对衰减冲量做积分，15/30/60/144 FPS 下总距离一致。
+- 最后修复：旧受击状态到期后的延迟清理可能删除同一帧新命中的状态。现在真正执行清理时再次检查当前状态是否到期。新增回归测试通过；最后这一项没有新的实机补录（见验证限制）。
+
+### 表现与音效
+
+- 六种符文各自有类型化的真实命中事件、接触模型和音效；每个目标一次接触保留一层主要效果。
+- 新增 9 个不透明 GLB：`contact_steel/expose/blood/cleanse/reap/ember/frost`、`proc_vigor/focus`；7 个 contact WAV。
+- 使用短碎钢、血滴、断环、回流、余烬、冰裂，不用巨大光球或柱体；效果通过运动与缩小消退。
+- 范围音效每帧取最强并限流。删除旧的冗余命中/刀光代码和无效 HitFlash。
+- 声音文件检查通过，尚未人工试听。
+
+## 关键代码位置
+
+| 文件 | 责任 |
+| --- | --- |
+| `src/player.rs` | 天赋计算、巅峰奖励、攻击接触比例、接触保持、动作更新 |
+| `src/combat.rs` | 延迟伤害、有效命中计数、一次施法护盾/每刀回怒、后坐权重、卡刀事件 |
+| `src/feedback.rs` | 卡刀/拖刀/恢复曲线、真实时间、声音桥接与限流 |
+| `src/enemy.rs` | 后坐积分、到期状态清理竞争修复与回归测试 |
+| `src/combat/presentation.rs` | 符文接触与天赋触发表现 |
+| `src/combat/review.rs` | native + dev_tools 显式 opt-in 的实机对比场景 |
+| `src/data.rs`、`assets/data/player.ron` | `CombatGrowthTuning` 与数值 |
+| `src/ui/skills.rs`、`src/ui/progression.rs` | 技能/天赋说明、实际升级反馈 |
+| `tools/blender/generate_combat_contacts.py` | 新接触模型生成；由主生成器调用 |
+| `tools/audio/generate_sfx.py` | 接触音效生成 |
+| `src/assets.rs`、`tests/asset_manifest.rs` | 资产加载与验证 |
+| `tools/ui/capture_combat_growth.py` | Xvfb + 真正键鼠输入、录像、逐帧遥测 |
+| `tools/ui/verify_combat_growth.py` | 对实测矩阵做断言，包含命中当帧姿势/停顿 |
+
+## 已验证的事实（2026-09-30，继续修改后要重新验证）
+
+证据入口：`target/validation/combat-growth/verification.md`。
+
+- format、`cargo check --locked --all-features`、全目标全 features Clippy `-D warnings` 通过。
+- 824 个单元测试 + 17 个素材检查 = 841 项，全部通过。
+- 第二章 120 帧 headless smoke 通过。日志仍有既有 ICU4X 日文分词模型警告，不要写成启动日志完全无警告。
+- Web release + wasm-bindgen + wasm-opt + 素材拷贝通过，build id `2abfd55957154681`；9 个新 GLB 与源素材逐字节一致。这证明构建，不代表浏览器完整人工验收。
+- 12 组天赋（0/1/4/8 阶三条路线）+ 6 组符文真实输入矩阵通过。实测后坐 0.340/0.439/0.479/0.534m；愤怒普攻伤害 22.00/23.76/29.04/39.69。
+- 命中当帧近战动作进度和低速、后续恢复速度与收刀已做逐帧断言。
+- 截图、视频与遥测在各 case 子目录；技能页的 desktop/narrow、升级反馈截图在 `target/validation/combat-growth/ui/`。
+- 录像无声。音频 PCM、时长、削波、差异检查通过，但未试听。
+- 最后的“到期清理不能抹掉新受击状态”修复通过回归测试后，补录因当时受限沙箱无法创建 X11 监听 socket 而失败。旧录像在该最后修复之前，不要当成最后版本补录。
+- `focus-8/game.log` 被失败补录覆盖；旧 `contact.mp4`、`telemetry.json`、`result.json` 仍保留。失败信息在 `capture-final.log` 和 `capture-final-xvfb-error.log`。
+- 当前（2026-10-02）环境显示权限已恢复，但还没有重新试过 Xvfb；这是优先补验项。
+
+## Claude 下一步优先顺序
+
+1. **补最终实机录制**：先确认开发环境与 Xvfb 可用，至少重跑 `focus:8`（普攻接裂地斩）和 `wrath:8`，验证第二次命中后坐完整、不向后倒、剑刃接触、卡刀不过长。再跑矩阵断言。
+2. **实际玩与试听**：60 FPS 附近检查连续攻击、多目标、空挥、技能接普攻、移动中攻击、首领破甲；试听命中声音和群攻音量。当前没有主观打击手感/音频最终验收。
+3. **继续全场景审计**：死亡/拾取/hover/精英特效等占位残留；UI 中英混杂、文本裁切、狭窄窗口和剧情浮条。已有实机图仍能看到开场剧情提示中英混杂，不要说中文已全部完成。
+4. **检查存档恢复的调参问题**：`src/save.rs` 仍保存/恢复 Fury 的 basic_gain 和各技能 cost，旧默认 rupture_cost 是 32，而当前 RON 是 20；本轮“第一点一刀接 R”在新局配置验证，没有在所有旧存档验证。不要盲目丢弃存档或重置用户进度。
+5. 按发现的问题做小范围修复，再跑相应测试、截图/录像；只有新增修改/故障才重复全量验证。之后按 AGENTS 完成必要检查与 Web 构建。没有用户要求，不提交、合并或部署。
+
+## 运行和验证
+
+先进入仓库与 Nix 开发环境：`direnv allow`（如果用户本来就使用 direnv）或 `nix develop`。当前会话如果找不到 pkg-config/ALSA/Xvfb，先修复工具路径，不要乱改 Cargo features。
+缓存的开发环境可供已确认有效时恢复：`.direnv/flake-profile-a5d5b61aa8a61b7d9d765e1daf971a9a578f1cfa.rc`，它是 Bash 脚本；路径可能变化，以实际文件为准。
+
+```bash
+cargo run
+cargo fmt --all -- --check
+cargo check --locked --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo run --locked --all-features -- --headless-smoke --smoke-chapter=2 --smoke-frames=120
+# 不和原生编译同时执行
+bash scripts/build_web.sh
+
+# 捕获前需编译 dev_tools 原生二进制，并有 Xvfb/xdotool/import/ffmpeg
+cargo build --locked --features dev_tools
+python3 tools/ui/capture_combat_growth.py --cases focus:8 wrath:8
+python3 tools/ui/verify_combat_growth.py
+```
+
+验证工具会显式设置 `BEVY_OPEN_ARPG_COMBAT_REVIEW`，常规运行不能设置它；场景仅用于验证，固定装备、500 血敌人、关闭暴击。`--no-audio` 为录制默认值。不要把这些固定测试数值留在正常玩法。
+最终补录启动失败的检测已补进 Python harness：Xvfb 未返回 display 时立即给出错误，不再用空 DISPLAY 启动游戏。
+
+## 给 Claude 的续作指令
+
+请先读 AGENTS.md 和本交接，保护未提交工作；从“补最终实机录制”开始继续战斗体验和全场景品质审计。用户希望默认中文、右键移动/左键攻击、命中卡刀拖刀、升级与技能有真实可感知变化。不要重复实现已完成的机制，不要只写方案；完成必要开发与验证后用中文汇报证据与限制。

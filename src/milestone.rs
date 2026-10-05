@@ -320,22 +320,6 @@ impl Milestones {
     }
 }
 
-pub fn milestone_summary(milestones: &Milestones) -> String {
-    if milestones.latest.is_empty() {
-        return format!(
-            "Milestones {}/{}",
-            milestones.unlocked.len(),
-            ALL_MILESTONES.len()
-        );
-    }
-    format!(
-        "Milestones {}/{}: {}",
-        milestones.unlocked.len(),
-        ALL_MILESTONES.len(),
-        milestones.latest
-    )
-}
-
 pub struct MilestonePlugin;
 
 impl Plugin for MilestonePlugin {
@@ -934,7 +918,7 @@ fn surge_mastery_complete(stats: &RunStats) -> bool {
 }
 
 fn rune_weaver_complete(stats: &RunStats) -> bool {
-    stats.reap_dash_hits > 0 && stats.hemorrhage_rupture_hits > 0 && stats.frost_nova_hits > 0
+    stats.reap_hits > 0 && stats.hemorrhage_hits > 0 && stats.frost_hits > 0
 }
 
 fn armory_adept_complete(stats: &RunStats) -> bool {
@@ -1080,7 +1064,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::VaultOpened));
 
         assert!(milestones.latest.contains("Resplendent Vault"));
-        assert!(milestone_summary(&milestones).contains("resplendent reliquary vault"));
+        assert!(milestones.latest.contains("resplendent reliquary vault"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::VaultOpened));
     }
 
@@ -1091,7 +1075,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::TreasureFiend));
 
         assert!(milestones.latest.contains("Treasure Fiend"));
-        assert!(milestone_summary(&milestones).contains("treasure imp"));
+        assert!(milestones.latest.contains("treasure imp"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::TreasureFiend));
     }
 
@@ -1102,7 +1086,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::HealingWell));
 
         assert!(milestones.latest.contains("Renewal Well"));
-        assert!(milestone_summary(&milestones).contains("renewal well"));
+        assert!(milestones.latest.contains("renewal well"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::HealingWell));
     }
 
@@ -1113,7 +1097,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AshenPylon));
 
         assert!(milestones.latest.contains("Ashen Pylon"));
-        assert!(milestone_summary(&milestones).contains("Overloaded"));
+        assert!(milestones.latest.contains("Overloaded"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AshenPylon));
     }
 
@@ -1124,7 +1108,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::CodexArchivist));
 
         assert!(milestones.latest.contains("Codex Archivist"));
-        assert!(milestone_summary(&milestones).contains("legendary codex power"));
+        assert!(milestones.latest.contains("legendary codex power"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::CodexArchivist));
     }
 
@@ -1135,7 +1119,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::CodexAdept));
 
         assert!(milestones.latest.contains("Codex Adept"));
-        assert!(milestone_summary(&milestones).contains("attuned codex power"));
+        assert!(milestones.latest.contains("attuned codex power"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::CodexAdept));
     }
 
@@ -1159,7 +1143,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SetResonance));
 
         assert!(milestones.latest.contains("Set Resonance"));
-        assert!(milestone_summary(&milestones).contains("themed weapon and charm"));
+        assert!(milestones.latest.contains("themed weapon and charm"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SetResonance));
     }
 
@@ -1170,7 +1154,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SetAdept));
 
         assert!(milestones.latest.contains("Set Adept"));
-        assert!(milestone_summary(&milestones).contains("themed set resonance"));
+        assert!(milestones.latest.contains("themed set resonance"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SetAdept));
     }
 
@@ -1194,7 +1178,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AncientWeapon));
 
         assert!(milestones.latest.contains("Ancient Weapon"));
-        assert!(milestone_summary(&milestones).contains("ancient weapon"));
+        assert!(milestones.latest.contains("ancient weapon"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AncientWeapon));
     }
 
@@ -1205,7 +1189,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AncientAugment));
 
         assert!(milestones.latest.contains("Ancient Augment"));
-        assert!(milestone_summary(&milestones).contains("ancient augment"));
+        assert!(milestones.latest.contains("ancient augment"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AncientAugment));
     }
 
@@ -1216,7 +1200,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::PrimalInfusion));
 
         assert!(milestones.latest.contains("Primal Infusion"));
-        assert!(milestone_summary(&milestones).contains("Primal-infused"));
+        assert!(milestones.latest.contains("Primal-infused"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::PrimalInfusion));
     }
 
@@ -1227,7 +1211,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::MasterGemcutter));
 
         assert!(milestones.latest.contains("Master Gemcutter"));
-        assert!(milestone_summary(&milestones).contains("rank 5 socketed gem"));
+        assert!(milestones.latest.contains("rank 5 socketed gem"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::MasterGemcutter));
     }
 
@@ -1238,7 +1222,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::GemResonance));
 
         assert!(milestones.latest.contains("Gem Resonance"));
-        assert!(milestone_summary(&milestones).contains("rank 3 resonant"));
+        assert!(milestones.latest.contains("rank 3 resonant"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::GemResonance));
     }
 
@@ -1302,7 +1286,11 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::GemAdept));
 
         assert!(milestones.latest.contains("Gem Adept"));
-        assert!(milestone_summary(&milestones).contains("ruby, emerald, amethyst, and topaz"));
+        assert!(
+            milestones
+                .latest
+                .contains("ruby, emerald, amethyst, and topaz")
+        );
         assert!(ALL_MILESTONES.contains(&MilestoneId::GemAdept));
     }
 
@@ -1330,7 +1318,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::BattleTrance));
 
         assert!(milestones.latest.contains("Battle Trance"));
-        assert!(milestone_summary(&milestones).contains("full Valor"));
+        assert!(milestones.latest.contains("full Valor"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::BattleTrance));
     }
 
@@ -1341,7 +1329,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::TreasureVault));
 
         assert!(milestones.latest.contains("Treasure Vault"));
-        assert!(milestone_summary(&milestones).contains("reliquary vault"));
+        assert!(milestones.latest.contains("reliquary vault"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::TreasureVault));
     }
 
@@ -1352,7 +1340,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::CarnageMaster));
 
         assert!(milestones.latest.contains("Carnage Master"));
-        assert!(milestone_summary(&milestones).contains("ten-kill massacre"));
+        assert!(milestones.latest.contains("ten-kill massacre"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::CarnageMaster));
     }
 
@@ -1390,7 +1378,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SurgeMastery));
 
         assert!(milestones.latest.contains("Surge Mastery"));
-        assert!(milestone_summary(&milestones).contains("Nephalem Surge"));
+        assert!(milestones.latest.contains("Nephalem Surge"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SurgeMastery));
     }
 
@@ -1414,21 +1402,21 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::RuneWeaver));
 
         assert!(milestones.latest.contains("Rune Weaver"));
-        assert!(milestone_summary(&milestones).contains("Reap"));
+        assert!(milestones.latest.contains("Reap"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::RuneWeaver));
     }
 
     #[test]
     fn rune_weaver_requires_all_three_alternate_rune_hits() {
         let mut stats = RunStats {
-            reap_dash_hits: 1,
-            frost_nova_hits: 1,
+            reap_hits: 1,
+            frost_hits: 1,
             ..default()
         };
 
         assert!(!rune_weaver_complete(&stats));
 
-        stats.hemorrhage_rupture_hits = 1;
+        stats.hemorrhage_hits = 1;
         assert!(rune_weaver_complete(&stats));
     }
 
@@ -1439,7 +1427,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::ArmoryAdept));
 
         assert!(milestones.latest.contains("Armory Adept"));
-        assert!(milestone_summary(&milestones).contains("three armory loadouts"));
+        assert!(milestones.latest.contains("three armory loadouts"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::ArmoryAdept));
     }
 
@@ -1463,7 +1451,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::PortalWayfarer));
 
         assert!(milestones.latest.contains("Portal Wayfarer"));
-        assert!(milestone_summary(&milestones).contains("town portal"));
+        assert!(milestones.latest.contains("town portal"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::PortalWayfarer));
     }
 
@@ -1484,7 +1472,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::GlorySeeker));
 
         assert!(milestones.latest.contains("Glory Seeker"));
-        assert!(milestone_summary(&milestones).contains("health globes"));
+        assert!(milestones.latest.contains("health globes"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::GlorySeeker));
     }
 
@@ -1508,7 +1496,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::PylonReaper));
 
         assert!(milestones.latest.contains("Pylon Reaper"));
-        assert!(milestone_summary(&milestones).contains("Ashen Pylon"));
+        assert!(milestones.latest.contains("Ashen Pylon"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::PylonReaper));
     }
 
@@ -1532,7 +1520,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::BossBreaker));
 
         assert!(milestones.latest.contains("Boss Breaker"));
-        assert!(milestone_summary(&milestones).contains("Malrec"));
+        assert!(milestones.latest.contains("Malrec"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::BossBreaker));
     }
 
@@ -1556,7 +1544,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SoulSigil));
 
         assert!(milestones.latest.contains("Malrec Soul Sigil"));
-        assert!(milestone_summary(&milestones).contains("Soul Sigil"));
+        assert!(milestones.latest.contains("Soul Sigil"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SoulSigil));
     }
 
@@ -1577,7 +1565,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::TrophyCache));
 
         assert!(milestones.latest.contains("Malrec Trophy Cache"));
-        assert!(milestone_summary(&milestones).contains("Trophy Cache"));
+        assert!(milestones.latest.contains("Trophy Cache"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::TrophyCache));
     }
 
@@ -1598,7 +1586,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::PrimalCache));
 
         assert!(milestones.latest.contains("Primal Ember Cache"));
-        assert!(milestone_summary(&milestones).contains("Primal Ember Cache"));
+        assert!(milestones.latest.contains("Primal Ember Cache"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::PrimalCache));
     }
 
@@ -1629,7 +1617,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::Breaker));
 
         assert!(milestones.latest.contains("Breaker"));
-        assert!(milestone_summary(&milestones).contains("reliquary urn"));
+        assert!(milestones.latest.contains("reliquary urn"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::Breaker));
     }
 
@@ -1653,7 +1641,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::ShrineResonance));
 
         assert!(milestones.latest.contains("Shrine Resonance"));
-        assert!(milestone_summary(&milestones).contains("overlapping blessings"));
+        assert!(milestones.latest.contains("overlapping blessings"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::ShrineResonance));
     }
 
@@ -1674,7 +1662,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::Shrinekeeper));
 
         assert!(milestones.latest.contains("Shrinekeeper"));
-        assert!(milestone_summary(&milestones).contains("every reliquary shrine"));
+        assert!(milestones.latest.contains("every reliquary shrine"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::Shrinekeeper));
     }
 
@@ -1698,7 +1686,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AffixHunter));
 
         assert!(milestones.latest.contains("Affix Hunter"));
-        assert!(milestone_summary(&milestones).contains("multi-affix elite"));
+        assert!(milestones.latest.contains("multi-affix elite"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AffixHunter));
     }
 
@@ -1722,7 +1710,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AffixCodex));
 
         assert!(milestones.latest.contains("Affix Codex"));
-        assert!(milestone_summary(&milestones).contains("six distinct elite affixes"));
+        assert!(milestones.latest.contains("six distinct elite affixes"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AffixCodex));
     }
 
@@ -1749,7 +1737,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SealWarden));
 
         assert!(milestones.latest.contains("Seal Warden"));
-        assert!(milestone_summary(&milestones).contains("inner sanctum"));
+        assert!(milestones.latest.contains("inner sanctum"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SealWarden));
     }
 
@@ -1770,7 +1758,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AshenThreat));
 
         assert!(milestones.latest.contains("Ashen Threat"));
-        assert!(milestone_summary(&milestones).contains("three Ashen Threat surges"));
+        assert!(milestones.latest.contains("three Ashen Threat surges"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AshenThreat));
     }
 
@@ -1794,7 +1782,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::ChampionPack));
 
         assert!(milestones.latest.contains("Champion Pack"));
-        assert!(milestone_summary(&milestones).contains("roaming champion pack"));
+        assert!(milestones.latest.contains("roaming champion pack"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::ChampionPack));
     }
 
@@ -1818,7 +1806,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::CursedPact));
 
         assert!(milestones.latest.contains("Cursed Pact"));
-        assert!(milestone_summary(&milestones).contains("cursed shrine ambusher"));
+        assert!(milestones.latest.contains("cursed shrine ambusher"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::CursedPact));
     }
 
@@ -1842,7 +1830,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::EmberParagon));
 
         assert!(milestones.latest.contains("Ember Paragon"));
-        assert!(milestone_summary(&milestones).contains("Ember Paragon rank"));
+        assert!(milestones.latest.contains("Ember Paragon rank"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::EmberParagon));
     }
 
@@ -1853,7 +1841,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::TalentAdept));
 
         assert!(milestones.latest.contains("Talent Adept"));
-        assert!(milestone_summary(&milestones).contains("Wrath"));
+        assert!(milestones.latest.contains("Wrath"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::TalentAdept));
     }
 
@@ -1879,7 +1867,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::QuartermasterPatron));
 
         assert!(milestones.latest.contains("Quartermaster Patron"));
-        assert!(milestone_summary(&milestones).contains("potion belt"));
+        assert!(milestones.latest.contains("potion belt"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::QuartermasterPatron));
     }
 
@@ -1890,7 +1878,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::Alchemist));
 
         assert!(milestones.latest.contains("Alchemist"));
-        assert!(milestone_summary(&milestones).contains("iron, wrath, and haste elixirs"));
+        assert!(milestones.latest.contains("iron, wrath, and haste elixirs"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::Alchemist));
     }
 
@@ -1901,7 +1889,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AshenAlchemy));
 
         assert!(milestones.latest.contains("Ashen Alchemy"));
-        assert!(milestone_summary(&milestones).contains("keystone transmutations"));
+        assert!(milestones.latest.contains("keystone transmutations"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AshenAlchemy));
     }
 
@@ -1926,7 +1914,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::LootCurator));
 
         assert!(milestones.latest.contains("Loot Curator"));
-        assert!(milestone_summary(&milestones).contains("loot filter"));
+        assert!(milestones.latest.contains("loot filter"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::LootCurator));
     }
 
@@ -1950,7 +1938,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::LastStand));
 
         assert!(milestones.latest.contains("Last Stand"));
-        assert!(milestone_summary(&milestones).contains("30% health"));
+        assert!(milestones.latest.contains("30% health"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::LastStand));
     }
 
@@ -1974,7 +1962,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SalvageCache));
 
         assert!(milestones.latest.contains("Salvage Cache"));
-        assert!(milestone_summary(&milestones).contains("quartermaster cache"));
+        assert!(milestones.latest.contains("quartermaster cache"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SalvageCache));
     }
 
@@ -1995,7 +1983,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::EmberRift));
 
         assert!(milestones.latest.contains("Ember Rift"));
-        assert!(milestone_summary(&milestones).contains("Ember Rift invasion"));
+        assert!(milestones.latest.contains("Ember Rift invasion"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::EmberRift));
     }
 
@@ -2006,7 +1994,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::Riftbreaker));
 
         assert!(milestones.latest.contains("Riftbreaker"));
-        assert!(milestone_summary(&milestones).contains("30 seconds"));
+        assert!(milestones.latest.contains("30 seconds"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::Riftbreaker));
     }
 
@@ -2030,7 +2018,11 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::ReliquarySeal));
 
         assert!(milestones.latest.contains("Reliquary Seal"));
-        assert!(milestone_summary(&milestones).contains("vault, blood obelisk, and Ember Rift"));
+        assert!(
+            milestones
+                .latest
+                .contains("vault, blood obelisk, and Ember Rift")
+        );
         assert!(ALL_MILESTONES.contains(&MilestoneId::ReliquarySeal));
     }
 
@@ -2053,7 +2045,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::AshenDuel));
 
         assert!(milestones.latest.contains("Ashen Duel"));
-        assert!(milestone_summary(&milestones).contains("before Ashen Enrage"));
+        assert!(milestones.latest.contains("before Ashen Enrage"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::AshenDuel));
     }
 
@@ -2084,7 +2076,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::SentinelVeteran));
 
         assert!(milestones.latest.contains("Sentinel Veteran"));
-        assert!(milestone_summary(&milestones).contains("Reliquary Sentinel"));
+        assert!(milestones.latest.contains("Reliquary Sentinel"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::SentinelVeteran));
     }
 
@@ -2110,7 +2102,7 @@ mod tests {
         assert!(milestones.unlock(MilestoneId::Boonbound));
 
         assert!(milestones.latest.contains("Boonbound"));
-        assert!(milestone_summary(&milestones).contains("Reliquary Boon"));
+        assert!(milestones.latest.contains("Reliquary Boon"));
         assert!(ALL_MILESTONES.contains(&MilestoneId::Boonbound));
     }
 
@@ -2182,6 +2174,6 @@ mod tests {
         milestones.restore(vec![MilestoneId::CacheOpened, MilestoneId::BossSlain]);
 
         assert_eq!(milestones.unlocked.len(), 2);
-        assert!(milestone_summary(&milestones).contains("Keeper Slain"));
+        assert!(milestones.latest.contains("Keeper Slain"));
     }
 }

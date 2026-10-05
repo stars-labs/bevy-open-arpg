@@ -239,23 +239,6 @@ fn bounty_reward_for_difficulty(difficulty: Difficulty) -> (u32, u32, u32) {
         Difficulty::Torment => (260, 9, 7),
     }
 }
-
-pub fn bounty_summary(bounty: &BountyProgress) -> String {
-    if bounty.reward_claimed {
-        return format!("Bounty complete: {}", bounty.title);
-    }
-    format!(
-        "Bounty: {} - {} {}/{} for {} gold + {} shards + {} essence",
-        bounty.title,
-        bounty.kind.objective_label(),
-        bounty.current.min(bounty.target),
-        bounty.target,
-        bounty.reward_gold,
-        bounty.reward_shards,
-        bounty.reward_essence
-    )
-}
-
 pub fn record_bounty_progress(bounty: &mut BountyProgress, amount: u32) -> bool {
     if bounty.completed || amount == 0 {
         return false;
@@ -450,16 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn bounty_summary_reports_claimed_state() {
-        let mut bounty = BountyProgress::default();
-        assert!(bounty_summary(&bounty).contains("8"));
-        assert!(bounty_summary(&bounty).contains("essence"));
-        bounty.completed = true;
-        bounty.reward_claimed = true;
-        assert!(bounty_summary(&bounty).contains("complete"));
-    }
-
-    #[test]
     fn bounty_config_scales_objective_by_difficulty() {
         let normal = bounty_for_difficulty(Difficulty::Normal);
         let nightmare = bounty_for_difficulty(Difficulty::Nightmare);
@@ -514,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn affixed_elite_bounty_scales_targets_and_summary_by_difficulty() {
+    fn affixed_elite_bounty_scales_targets_and_rewards_by_difficulty() {
         let normal = bounty_for_kind(Difficulty::Normal, BountyKind::SlayAffixedElites);
         let torment = bounty_for_kind(Difficulty::Torment, BountyKind::SlayAffixedElites);
 
@@ -523,7 +496,6 @@ mod tests {
         assert_eq!(normal.kind.objective_label(), "Slay affixed elites");
         assert!(torment.reward_gold > normal.reward_gold);
         assert!(torment.reward_essence > normal.reward_essence);
-        assert!(bounty_summary(&torment).contains("Slay affixed elites"));
     }
 
     #[test]

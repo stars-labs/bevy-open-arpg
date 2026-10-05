@@ -79,89 +79,9 @@ pub fn chapter_bestiary_complete(bestiary: &Bestiary) -> bool {
         .iter()
         .all(|enemy_id| bestiary.entries.contains_key(*enemy_id))
 }
-
-pub fn bestiary_summary(bestiary: &Bestiary) -> String {
-    if bestiary.entries.is_empty() {
-        return "Bestiary: no entries".to_string();
-    }
-    let entries = bestiary
-        .entries
-        .values()
-        .map(|entry| {
-            let bonus = bestiary_damage_bonus_for_kills(entry.kills);
-            if bonus <= 0.0 {
-                format!("{} x{}", entry.display_name, entry.kills)
-            } else {
-                format!(
-                    "{} x{} +{:.0}% dmg",
-                    entry.display_name,
-                    entry.kills,
-                    bonus * 100.0
-                )
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("Bestiary: {entries}")
-}
-
-pub fn bestiary_next_goal(bestiary: &Bestiary) -> String {
-    for enemy_id in CHAPTER_BESTIARY_ENEMY_IDS {
-        if !bestiary.entries.contains_key(enemy_id) {
-            return format!(
-                "Bestiary next: record {} | tip: {}",
-                chapter_enemy_display_name(enemy_id),
-                chapter_enemy_counterplay(enemy_id)
-            );
-        }
-    }
-
-    let mut next_goal = bestiary
-        .entries
-        .iter()
-        .filter_map(|(enemy_id, entry)| {
-            next_bestiary_kill_threshold(entry.kills).map(|(threshold, bonus)| {
-                (
-                    threshold - entry.kills,
-                    threshold,
-                    bonus,
-                    enemy_id.as_str(),
-                    entry,
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    next_goal.sort_by_key(|(remaining, threshold, _, _, entry)| {
-        (*remaining, *threshold, entry.display_name.clone())
-    });
-
-    if let Some((_, threshold, bonus, enemy_id, entry)) = next_goal.first() {
-        return format!(
-            "Bestiary next: {} {}/{} kills for +{:.0}% damage | tip: {}",
-            entry.display_name,
-            entry.kills,
-            threshold,
-            bonus * 100.0,
-            chapter_enemy_counterplay(enemy_id)
-        );
-    }
-
-    "Bestiary complete: all monster knowledge mastered".to_string()
-}
-
 pub fn bestiary_damage_multiplier(bestiary: &Bestiary, enemy_id: &str) -> f32 {
     1.0 + bestiary_damage_bonus_for_kills(bestiary.kills_for(enemy_id))
 }
-
-pub fn next_bestiary_kill_threshold(kills: u32) -> Option<(u32, f32)> {
-    match kills {
-        0..=2 => Some((3, 0.04)),
-        3..=7 => Some((8, 0.08)),
-        8..=14 => Some((15, 0.12)),
-        _ => None,
-    }
-}
-
 pub fn bestiary_damage_bonus_for_kills(kills: u32) -> f32 {
     match kills {
         15.. => 0.12,
@@ -204,37 +124,6 @@ fn claim_bestiary_trophy(entry: &mut BestiaryEntry) -> Option<BestiaryTrophyRewa
     }
     None
 }
-
-fn chapter_enemy_display_name(enemy_id: &str) -> &'static str {
-    match enemy_id {
-        "skeleton" => "Ashbone Guard",
-        "bone_stalker" => "Ashbone Stalker",
-        "cultist" => "Cinder Acolyte",
-        "seal_warden" => "Seal Warden Vhal",
-        "ashen_marksman" => "Ashen Reliquary Marksman",
-        "reliquary_brute" => "Reliquary Bonebreaker",
-        "treasure_imp" => "Treasure Fiend",
-        "keeper" => "Malrec, Keeper of Ash",
-        "nemesis" => "Nemesis Shade",
-        _ => "unknown foe",
-    }
-}
-
-pub fn chapter_enemy_counterplay(enemy_id: &str) -> &'static str {
-    match enemy_id {
-        "skeleton" => "flank shield guard",
-        "bone_stalker" => "kite rush, punish whiffs",
-        "cultist" => "dash through fire",
-        "seal_warden" => "break ward, sidestep runes",
-        "ashen_marksman" => "close gap, sidestep bolts",
-        "reliquary_brute" => "bait shockwave, punish slam",
-        "treasure_imp" => "burst before it escapes",
-        "keeper" => "break stagger, deny enrage",
-        "nemesis" => "kite affixes, save burst",
-        _ => "learn its attack",
-    }
-}
-
 pub struct BestiaryPlugin;
 
 impl Plugin for BestiaryPlugin {
@@ -282,7 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bestiary_records_and_summarizes_kills() {
+    fn bestiary_records_kills_and_latest_entry() {
         let mut bestiary = Bestiary::default();
 
         bestiary.record_kill("skeleton", "Ashbone Guard");
@@ -291,7 +180,6 @@ mod tests {
 
         assert_eq!(bestiary.entries["skeleton"].kills, 2);
         assert!(bestiary.latest.contains("Cinder Acolyte"));
-        assert!(bestiary_summary(&bestiary).contains("Ashbone Guard x2"));
     }
 
     #[test]
@@ -301,17 +189,12 @@ mod tests {
             bestiary.record_kill("skeleton", "Ashbone Guard");
         }
 
-        assert_eq!(next_bestiary_kill_threshold(2), Some((3, 0.04)));
-        assert_eq!(next_bestiary_kill_threshold(3), Some((8, 0.08)));
-        assert_eq!(next_bestiary_kill_threshold(8), Some((15, 0.12)));
-        assert_eq!(next_bestiary_kill_threshold(15), None);
         assert_eq!(bestiary_damage_bonus_for_kills(0), 0.0);
         assert_eq!(bestiary_damage_bonus_for_kills(3), 0.04);
         assert_eq!(bestiary_damage_bonus_for_kills(8), 0.08);
         assert_eq!(bestiary_damage_bonus_for_kills(15), 0.12);
         assert_eq!(bestiary_damage_multiplier(&bestiary, "skeleton"), 1.08);
         assert_eq!(bestiary_damage_multiplier(&bestiary, "cultist"), 1.0);
-        assert!(bestiary_summary(&bestiary).contains("+8% dmg"));
     }
 
     #[test]
@@ -374,69 +257,8 @@ mod tests {
         assert!(chapter_bestiary_complete(&bestiary));
         bestiary.entries.remove("reliquary_brute");
         assert!(!chapter_bestiary_complete(&bestiary));
-        bestiary.record_kill(
-            "reliquary_brute",
-            chapter_enemy_display_name("reliquary_brute"),
-        );
+        bestiary.record_kill("reliquary_brute", "Reliquary Bonebreaker");
         bestiary.entries.remove("nemesis");
         assert!(!chapter_bestiary_complete(&bestiary));
-    }
-
-    #[test]
-    fn chapter_enemy_counterplay_covers_every_chapter_role() {
-        for enemy_id in CHAPTER_BESTIARY_ENEMY_IDS {
-            let counterplay = chapter_enemy_counterplay(enemy_id);
-
-            assert!(!counterplay.is_empty());
-            assert_ne!(counterplay, "learn its attack");
-            assert!(
-                counterplay.len() <= 32,
-                "{enemy_id} counterplay should stay compact for HUD use"
-            );
-        }
-
-        assert!(chapter_enemy_counterplay("keeper").contains("stagger"));
-        assert!(chapter_enemy_counterplay("reliquary_brute").contains("shockwave"));
-        assert!(chapter_enemy_counterplay("ashen_marksman").contains("sidestep"));
-        assert_eq!(chapter_enemy_counterplay("unknown"), "learn its attack");
-    }
-
-    #[test]
-    fn bestiary_next_goal_guides_collection_then_mastery() {
-        let mut bestiary = Bestiary::default();
-
-        assert_eq!(
-            bestiary_next_goal(&bestiary),
-            "Bestiary next: record Ashbone Guard | tip: flank shield guard"
-        );
-
-        for enemy_id in CHAPTER_BESTIARY_ENEMY_IDS {
-            bestiary.record_kill(enemy_id, chapter_enemy_display_name(enemy_id));
-        }
-
-        assert_eq!(
-            bestiary_next_goal(&bestiary),
-            "Bestiary next: Ashbone Guard 1/3 kills for +4% damage | tip: flank shield guard"
-        );
-
-        for _ in 0..2 {
-            bestiary.record_kill("skeleton", "Ashbone Guard");
-        }
-
-        assert_eq!(
-            bestiary_next_goal(&bestiary),
-            "Bestiary next: Ashbone Stalker 1/3 kills for +4% damage | tip: kite rush, punish whiffs"
-        );
-
-        for enemy_id in CHAPTER_BESTIARY_ENEMY_IDS {
-            for _ in bestiary.kills_for(enemy_id)..15 {
-                bestiary.record_kill(enemy_id, chapter_enemy_display_name(enemy_id));
-            }
-        }
-
-        assert_eq!(
-            bestiary_next_goal(&bestiary),
-            "Bestiary complete: all monster knowledge mastered"
-        );
     }
 }
