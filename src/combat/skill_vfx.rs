@@ -193,6 +193,7 @@ fn show_releases(
         let weight = e.strength.clamp(0.8, 1.85);
         let base = e.origin + Vec3::Y * 0.09;
         match e.shape {
+            StrikeShape::Command { .. } => {}
             StrikeShape::Arc { range } => {
                 let scale = Vec3::new(range * 0.64, 1.0, range * 0.64);
                 spawn(

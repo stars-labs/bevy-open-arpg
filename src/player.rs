@@ -3,6 +3,7 @@ use crate::{
     assets::GameAssets,
     chapter::{ActiveChapter, ChapterPhase, ChapterProgress, InteractableKind, InteractableUsed},
     class::{ClassCatalog, HeroClass, Passive, SelectedClass, SkillLoadout, SkillSlot},
+    combat::summons::SummonTalents,
     companion::CompanionBond,
     data::CombatGrowthTuning,
     dungeon::chapter_world_layout,
@@ -163,6 +164,12 @@ pub struct Velocity(pub Vec3);
 struct ClickMoveTarget {
     position: Option<Vec3>,
     stop_radius: f32,
+}
+
+pub(crate) fn cancel_pointer_movement(world: &mut World) {
+    if let Some(mut target) = world.get_resource_mut::<ClickMoveTarget>() {
+        target.position = None;
+    }
 }
 
 const CLICK_MOVE_STOP_RADIUS: f32 = 0.22;
@@ -2324,7 +2331,7 @@ pub struct PlayerPlugin;
 /// One persistent hero per class for the session, indexed by `HeroClass::index`.
 #[derive(Resource, Default)]
 struct CampaignHeroCarryover {
-    heroes: [Option<CampaignHeroSnapshot>; 3],
+    heroes: [Option<CampaignHeroSnapshot>; 4],
 }
 
 #[derive(Clone)]
@@ -2337,6 +2344,7 @@ struct CampaignHeroSnapshot {
     level: PlayerLevel,
     paragon: EmberParagon,
     talents: Talents,
+    summon_talents: SummonTalents,
     codex: LegendaryCodex,
     charm: Charm,
     loadout: SkillLoadout,
@@ -2377,6 +2385,7 @@ type CampaignHeroBuildQuery<'w, 's> = Query<
         &'static ElixirBelt,
         &'static DeathWard,
         &'static CompanionBond,
+        &'static SummonTalents,
     ),
     With<Player>,
 >;
@@ -2409,6 +2418,7 @@ type RestoreCampaignHeroBuildQuery<'w, 's> = Query<
         &'static mut ElixirBelt,
         &'static mut DeathWard,
         &'static mut CompanionBond,
+        &'static mut SummonTalents,
     ),
     With<Player>,
 >;
@@ -2582,7 +2592,9 @@ fn capture_campaign_hero(
     else {
         return;
     };
-    let Ok((charm, runes, armory, potions, elixirs, death_ward, companion)) = build.single() else {
+    let Ok((charm, runes, armory, potions, elixirs, death_ward, companion, summon_talents)) =
+        build.single()
+    else {
         return;
     };
     carryover.heroes[selected.0.index()] = Some(CampaignHeroSnapshot {
@@ -2594,6 +2606,7 @@ fn capture_campaign_hero(
         level: level.clone(),
         paragon: paragon.clone(),
         talents: *talents,
+        summon_talents: *summon_talents,
         codex: codex.clone(),
         charm: charm.clone(),
         loadout: *runes,
@@ -2639,6 +2652,7 @@ fn restore_campaign_hero(
         mut elixirs,
         mut death_ward,
         mut companion,
+        mut summon_talents,
     )) = build.single_mut()
     else {
         return;
@@ -2654,6 +2668,7 @@ fn restore_campaign_hero(
     *level = hero.level.clone();
     *paragon = hero.paragon.clone();
     *talents = hero.talents;
+    *summon_talents = hero.summon_talents;
     *codex = hero.codex.clone();
     *charm = hero.charm.clone();
     *runes = hero.loadout;
@@ -2754,6 +2769,7 @@ fn spawn_player(
         .insert((
             ChapterBoon::default(),
             Talents::default(),
+            SummonTalents::default(),
             SkillLoadout::default(),
             PassiveClock::default(),
             crate::combat::CastLedger::default(),
@@ -3057,6 +3073,7 @@ type XpPlayerQuery<'w, 's> = Query<
     With<Player>,
 >;
 
+#[allow(clippy::too_many_arguments)]
 fn gain_xp(
     mut killed: MessageReader<EnemyKilled>,
     mut level_ups: MessageWriter<PlayerLevelUp>,
@@ -3065,6 +3082,8 @@ fn gain_xp(
     mut screen_shake: MessageWriter<ScreenShakeEvent>,
     mut stats: ResMut<RunStats>,
     mut player: XpPlayerQuery,
+    selected: Res<SelectedClass>,
+    summon_tree: Query<&SummonTalents, With<Player>>,
 ) {
     let Ok((
         mut level,
@@ -3100,9 +3119,15 @@ fn gain_xp(
                 screen_shake.write(ScreenShakeEvent::new(feedback.shake_intensity, 0.14));
             }
         }
+        let talent_capacity = (selected.0 == HeroClass::Soulbinder).then(|| {
+            summon_tree
+                .single()
+                .map_or(5, |tree| 5_u32.saturating_sub(tree.bone + tree.spirit))
+        });
         grant_player_xp(
             total_xp,
             XpProgression {
+                talent_capacity,
                 level: &mut level,
                 paragon: &mut paragon,
                 health: &mut health,
@@ -3147,6 +3172,7 @@ fn massacre_feedback_event(
 }
 
 struct XpProgression<'a, 'w, 'e> {
+    talent_capacity: Option<u32>,
     level: &'a mut PlayerLevel,
     paragon: &'a mut EmberParagon,
     health: &'a mut Health,
@@ -3167,15 +3193,23 @@ fn grant_player_xp(xp: u32, progression: XpProgression) {
         while progression.level.level < CHAPTER_LEVEL_CAP
             && progression.level.xp >= progression.level.next_level_xp
         {
-            progression.level_ups.write(advance_player_level(
+            let mut reward = advance_player_level(
                 progression.level,
                 progression.health,
                 progression.damage_bonus,
                 progression.talents,
-            ));
+            );
+            if let Some(capacity) = progression.talent_capacity
+                && progression.talents.points > capacity
+            {
+                progression.talents.points = capacity;
+                reward.points_gained = 0;
+            }
+            let points = reward.points_gained;
+            progression.level_ups.write(reward);
             progression.combat_events.write(CombatEvent {
                 text: format!(
-                    "Level {} reached; gained 1 talent point",
+                    "Level {} reached; gained {points} talent point",
                     progression.level.level
                 ),
             });
@@ -3220,6 +3254,7 @@ fn advance_player_level(
 
 fn grant_ember_paragon_xp(xp: u32, progression: XpProgression) {
     let XpProgression {
+        talent_capacity,
         level,
         paragon,
         health,
@@ -3243,7 +3278,12 @@ fn grant_ember_paragon_xp(xp: u32, progression: XpProgression) {
             equipment.crit_chance,
         );
         apply_ember_paragon_rank(paragon.rank, health, damage_bonus, equipment);
-        talents.points += 1;
+        let points_gained = if talent_capacity.is_none_or(|capacity| talents.points < capacity) {
+            1
+        } else {
+            0
+        };
+        talents.points += points_gained;
         level_ups.write(PlayerLevelUp {
             level: level.level,
             paragon_rank: paragon.rank,
@@ -3251,7 +3291,7 @@ fn grant_ember_paragon_xp(xp: u32, progression: XpProgression) {
             damage_gained: damage_bonus.0 - before.1,
             armor_gained: equipment.armor_bonus - before.2,
             crit_gained: equipment.crit_chance - before.3,
-            points_gained: 1,
+            points_gained,
             life_restored: false,
         });
         paragon.next_rank_xp = next_ember_paragon_xp(paragon.next_rank_xp);
@@ -3291,9 +3331,13 @@ pub(crate) enum TalentBranch {
 
 fn spend_talent_points(
     keyboard: Res<ButtonInput<KeyCode>>,
+    selected: Res<SelectedClass>,
     mut combat_events: MessageWriter<CombatEvent>,
     mut player: Query<(&mut Talents, &mut Health), With<Player>>,
 ) {
+    if selected.0 == HeroClass::Soulbinder {
+        return;
+    }
     let branch = if keyboard.just_pressed(KeyCode::Digit1) {
         TalentBranch::Wrath
     } else if keyboard.just_pressed(KeyCode::Digit2) {
@@ -4169,7 +4213,10 @@ fn movement_direction(
     }
 }
 
-fn clamp_player_translation(layout: &crate::dungeon::DungeonLayout, translation: Vec3) -> Vec3 {
+pub(crate) fn clamp_player_translation(
+    layout: &crate::dungeon::DungeonLayout,
+    translation: Vec3,
+) -> Vec3 {
     crate::dungeon::clamp_dungeon_translation(layout, translation)
 }
 
@@ -5946,6 +5993,43 @@ fn tick_burning(
     }
 }
 
+/// Shared anchored rig for summoned warriors.
+pub(crate) fn summon_limb_transform(
+    index: usize,
+    phase: f32,
+    moving: bool,
+    progress: f32,
+    heavy: bool,
+) -> Transform {
+    let motion = if heavy {
+        PlayerAttackMotion::Rupture
+    } else {
+        PlayerAttackMotion::Basic
+    };
+    let pose = player_limb_pose(
+        PLAYER_LIMBS[index],
+        if moving { 1.0 } else { 0.0 },
+        false,
+        phase,
+        motion,
+        progress,
+    );
+    Transform::from_translation(pose.translation)
+        .with_rotation(pose.rotation)
+        .with_scale(pose.scale)
+}
+pub(crate) fn summon_weapon_transform(progress: f32, heavy: bool) -> Transform {
+    let motion = if heavy {
+        PlayerAttackMotion::Rupture
+    } else {
+        PlayerAttackMotion::Basic
+    };
+    let pose = player_visual_pose(0.0, false, 0.0, 0.0, motion, progress);
+    Transform::from_translation(pose.weapon_translation)
+        .with_rotation(player_weapon_rotation(&pose))
+        .with_scale(pose.weapon_scale)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6015,10 +6099,9 @@ mod tests {
             damage_bonus: 8.0,
             crit_chance: 0.06,
         };
-        let runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
+        let runes = SkillLoadout {
+            alt: [false; 3],
+            rune_alt: [[true, false]; 3],
         };
         let armory = Armory {
             active_slot: 2,
@@ -6040,6 +6123,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(ActiveChapter(crate::chapter::ChapterId::HollowBastion))
+            .init_resource::<SelectedClass>()
             .init_resource::<CampaignHeroCarryover>()
             .add_schedule(Schedule::new(CaptureCampaignHeroTest))
             .add_schedule(Schedule::new(RestoreCampaignHeroTest))
@@ -6069,6 +6153,7 @@ mod tests {
                 codex.clone(),
                 charm.clone(),
                 runes,
+                crate::combat::summons::SummonTalents { bone: 1, spirit: 2 },
                 armory.clone(),
                 PotionBelt {
                     current: 1,
@@ -6131,7 +6216,8 @@ mod tests {
                 Talents::default(),
                 LegendaryCodex::default(),
                 Charm::default(),
-                SkillRunes::default(),
+                SkillLoadout::default(),
+                crate::combat::summons::SummonTalents::default(),
                 Armory::default(),
                 PotionBelt {
                     current: 2,
@@ -6185,7 +6271,13 @@ mod tests {
         assert_eq!(*world.get::<Talents>(target).unwrap(), talents);
         assert_eq!(world.get::<LegendaryCodex>(target).unwrap(), &codex);
         assert_eq!(world.get::<Charm>(target).unwrap(), &charm);
-        assert_eq!(*world.get::<SkillRunes>(target).unwrap(), runes);
+        assert_eq!(*world.get::<SkillLoadout>(target).unwrap(), runes);
+        assert_eq!(
+            *world
+                .get::<crate::combat::summons::SummonTalents>(target)
+                .unwrap(),
+            crate::combat::summons::SummonTalents { bone: 1, spirit: 2 }
+        );
         assert_eq!(world.get::<Armory>(target).unwrap(), &armory);
 
         let potions = world.get::<PotionBelt>(target).unwrap();
@@ -6255,9 +6347,8 @@ mod tests {
             current: 80.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
         let result = apply_ashen_pylon(&mut relic, &mut barrier, &mut fury);
@@ -6287,9 +6378,8 @@ mod tests {
             current: 12.0,
             max: 80.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
         let first = grant_reliquary_momentum(&mut stats, &mut relic, &mut fury, 1);
@@ -6326,9 +6416,8 @@ mod tests {
             current: 0.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
         apply_ashen_pylon(&mut relic, &mut barrier, &mut fury);
@@ -6734,10 +6823,9 @@ mod tests {
             crit_chance: 0.035,
         };
         let mut charm = saved_charm.clone();
-        let mut runes = SkillRunes {
-            dash: DashRune::Reap,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Hemorrhage,
+        let mut runes = SkillLoadout {
+            alt: [false; 3],
+            rune_alt: [[true, false]; 3],
         };
         let mut codex = LegendaryCodex::default();
         codex.unlock(LegendaryPower::Stormbrand);
@@ -6776,7 +6864,7 @@ mod tests {
             &mut swap_health,
         );
         charm = Charm::default();
-        runes = SkillRunes::default();
+        runes = SkillLoadout::default();
         codex.restore_attunement(LegendaryPower::Stormbrand);
         let mut health = Health {
             current: 80.0,
@@ -6791,7 +6879,7 @@ mod tests {
                 inventory: &mut inventory,
                 health: &mut health,
                 charm: &mut charm,
-                runes: &mut runes,
+                skills: &mut runes,
                 codex: &mut codex,
             },
         );
@@ -6799,9 +6887,7 @@ mod tests {
         assert_eq!(equipment.weapon_name, "Storm Brand");
         assert_eq!(damage_bonus.0, 13.0);
         assert_eq!(charm, saved_charm);
-        assert_eq!(runes.dash, DashRune::Reap);
-        assert_eq!(runes.nova, NovaRune::Frost);
-        assert_eq!(runes.rupture, RuptureRune::Hemorrhage);
+        assert_eq!(runes.rune_alt, [[true, false]; 3]);
         assert_eq!(codex.attuned, LegendaryPower::Aegisbrand);
         let mut armory = Armory::default();
         armory.save_active(loadout);
@@ -6825,9 +6911,10 @@ mod tests {
         let loadout = ArmoryLoadout {
             weapon,
             charm: Charm::default(),
-            dash_rune: DashRune::Cleanse,
-            nova_rune: NovaRune::Ember,
-            rupture_rune: RuptureRune::Expose,
+            skills: SkillLoadout {
+                alt: [false; 3],
+                rune_alt: [[false, false]; 3],
+            },
             codex_attunement: LegendaryPower::None,
         };
         let mut armory = Armory::default();
@@ -8036,9 +8123,8 @@ mod tests {
             current: 20.0,
             max: 50.0,
             basic_gain: 12.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         assert_eq!(fury.gain(40.0), 30.0);
         assert_eq!(fury.current, 50.0);
@@ -8197,9 +8283,8 @@ mod tests {
             current: 10.0,
             max: 60.0,
             basic_gain: 12.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
         assert_eq!(
@@ -8305,9 +8390,8 @@ mod tests {
             current: 20.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
         apply_chapter_boon(
@@ -8333,9 +8417,9 @@ mod tests {
         );
         assert_eq!(fury.max, 120.0);
         assert_eq!(fury.current, 40.0);
-        assert_eq!(fury.dash_cost, 20.0);
-        assert_eq!(fury.nova_cost, 37.0);
-        assert_eq!(fury.rupture_cost, 26.0);
+        assert!((fury.skill_cost(25.0) - 20.0).abs() < 0.001);
+        assert!((fury.skill_cost(45.0) - 36.0).abs() < 0.001);
+        assert!((fury.skill_cost(32.0) - 25.6).abs() < 0.001);
     }
 
     #[test]
@@ -8360,9 +8444,8 @@ mod tests {
             current: 20.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         let stats = RunStats {
             reliquary_momentum: 4,
@@ -8392,9 +8475,9 @@ mod tests {
         assert_eq!(fury.max, 146.0);
         assert_eq!(fury.current, 66.0);
         assert_eq!(fury.basic_gain, 28.0);
-        assert_eq!(fury.dash_cost, 13.0);
-        assert_eq!(fury.nova_cost, 25.0);
-        assert_eq!(fury.rupture_cost, 19.0);
+        assert!((fury.skill_cost(25.0) - 14.5).abs() < 0.001);
+        assert!((fury.skill_cost(45.0) - 26.1).abs() < 0.001);
+        assert!((fury.skill_cost(32.0) - 18.56).abs() < 0.001);
 
         let boon = ChapterBoon {
             choice: ChapterBoonChoice::ArcaneMomentum,
@@ -8426,9 +8509,8 @@ mod tests {
             current: 20.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         let stats = RunStats {
             best_massacre_streak: 8,
@@ -8538,21 +8620,20 @@ mod tests {
     }
 
     #[test]
-    fn skill_runes_cycle_and_summarize() {
-        let mut runes = SkillRunes::default();
-        assert_eq!(runes.dash, DashRune::Cleanse);
-        assert_eq!(runes.nova, NovaRune::Ember);
-        assert_eq!(runes.rupture, RuptureRune::Expose);
-
-        runes.dash = runes.dash.next();
-        runes.nova = runes.nova.next();
-        runes.rupture = runes.rupture.next();
-
-        assert_eq!(runes.dash, DashRune::Reap);
-        assert_eq!(runes.nova, NovaRune::Frost);
-        assert_eq!(runes.rupture, RuptureRune::Hemorrhage);
-        assert!(runes.summary().contains("Dash Reap"));
-        assert!(runes.summary().contains("Rupture Hemorrhage"));
+    fn skill_runes_cycle_for_each_equipped_skill_independently() {
+        let catalog = crate::class::test_catalog();
+        let class = catalog.get(crate::class::HeroClass::Warden);
+        let mut loadout = SkillLoadout::default();
+        for slot in SkillSlot::ALL {
+            let skill = class.skill(slot, false);
+            assert_eq!(loadout.rune(skill, slot, false), skill.rune(false));
+            loadout.toggle_rune(slot);
+            assert_eq!(loadout.rune(skill, slot, false), skill.rune(true));
+            loadout.alt[slot.index()] = true;
+            loadout.toggle_rune(slot);
+            assert!(loadout.rune_alt[slot.index()][0]);
+            assert!(loadout.rune_alt[slot.index()][1]);
+        }
     }
 
     #[test]
@@ -8723,7 +8804,7 @@ mod tests {
 
     #[test]
     fn combat_growth_starts_at_first_point_and_matches_mastery_ranks() {
-        let tuning: PlayerTuning =
+        let tuning: crate::data::PlayerTuning =
             ron::from_str(include_str!("../assets/data/player.ron")).unwrap();
         for (rank, impact, barrier, fury) in [
             (0, 1.0, 0.0, 0.0),
@@ -8763,6 +8844,65 @@ mod tests {
         };
         assert!(eight.fury_cost_multiplier() < seven.fury_cost_multiplier());
         assert_eq!(eight.cooldown_multiplier(), 0.55);
+    }
+
+    #[test]
+    fn capped_summon_talents_do_not_grant_unspendable_paragon_points() {
+        use bevy::ecs::system::SystemState;
+        for capacity in [0, 1] {
+            let mut world = World::new();
+            world.init_resource::<Messages<CombatEvent>>();
+            world.init_resource::<Messages<PlayerLevelUp>>();
+            let mut writers = SystemState::<(
+                MessageWriter<CombatEvent>,
+                MessageWriter<PlayerLevelUp>,
+            )>::new(&mut world);
+            let mut level = PlayerLevel {
+                level: CHAPTER_LEVEL_CAP,
+                xp: 0,
+                next_level_xp: 500,
+            };
+            let mut paragon = EmberParagon::default();
+            let mut health = Health {
+                current: 100.0,
+                max: 100.0,
+            };
+            let mut damage = DamageBonus(0.0);
+            let mut equipment = bare_equipment();
+            let mut talents = Talents::default();
+            let xp = paragon.next_rank_xp + next_ember_paragon_xp(paragon.next_rank_xp);
+            {
+                let (mut log, mut earned) = writers.get_mut(&mut world).unwrap();
+                grant_player_xp(
+                    xp,
+                    XpProgression {
+                        talent_capacity: Some(capacity),
+                        level: &mut level,
+                        paragon: &mut paragon,
+                        health: &mut health,
+                        damage_bonus: &mut damage,
+                        equipment: &mut equipment,
+                        talents: &mut talents,
+                        combat_events: &mut log,
+                        level_ups: &mut earned,
+                    },
+                );
+            }
+            let rewards: Vec<_> = world
+                .resource_mut::<Messages<PlayerLevelUp>>()
+                .drain()
+                .collect();
+            assert_eq!(paragon.rank, 2);
+            assert_eq!(talents.points, capacity);
+            assert_eq!(
+                rewards.iter().map(|r| r.points_gained).sum::<u32>(),
+                capacity
+            );
+            assert!(
+                damage.0 > 0.0 && health.max > 100.0,
+                "stat progression must survive talent cap"
+            );
+        }
     }
 
     #[test]
@@ -8808,6 +8948,7 @@ mod tests {
                     damage_bonus: &mut damage,
                     equipment: &mut equipment,
                     talents: &mut talents,
+                    talent_capacity: None,
                     combat_events: &mut log,
                     level_ups: &mut earned,
                 },
@@ -8882,6 +9023,7 @@ mod tests {
                     damage_bonus: &mut damage,
                     equipment: &mut equipment,
                     talents: &mut talents,
+                    talent_capacity: None,
                     combat_events: &mut log,
                     level_ups: &mut earned,
                 },
@@ -8935,6 +9077,7 @@ mod tests {
                     damage_bonus: &mut damage,
                     equipment: &mut equipment,
                     talents: &mut talents,
+                    talent_capacity: None,
                     combat_events: &mut log,
                     level_ups: &mut earned,
                 },
@@ -9118,43 +9261,4 @@ mod tests {
         assert!(summary.contains("Vigor 2/4"));
         assert!(summary.contains("Focus 8 [Flow+Tempest]"));
     }
-}
-
-/// Reuse the real limb rig in the explicit native summon experiment.
-#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-pub(crate) fn summon_limb_transform(
-    index: usize,
-    phase: f32,
-    moving: bool,
-    progress: f32,
-    heavy: bool,
-) -> Transform {
-    let motion = if heavy {
-        PlayerAttackMotion::Rupture
-    } else {
-        PlayerAttackMotion::Basic
-    };
-    let pose = player_limb_pose(
-        PLAYER_LIMBS[index],
-        if moving { 1.0 } else { 0.0 },
-        false,
-        phase,
-        motion,
-        progress,
-    );
-    Transform::from_translation(pose.translation)
-        .with_rotation(pose.rotation)
-        .with_scale(pose.scale)
-}
-#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-pub(crate) fn summon_weapon_transform(progress: f32, heavy: bool) -> Transform {
-    let motion = if heavy {
-        PlayerAttackMotion::Rupture
-    } else {
-        PlayerAttackMotion::Basic
-    };
-    let pose = player_visual_pose(0.0, false, 0.0, 0.0, motion, progress);
-    Transform::from_translation(pose.weapon_translation)
-        .with_rotation(player_weapon_rotation(&pose))
-        .with_scale(pose.weapon_scale)
 }

@@ -42,6 +42,20 @@ pub struct GameAssets {
     pub hero_embercaller_arm: Handle<WorldAsset>,
     pub hero_embercaller_leg: Handle<WorldAsset>,
     pub hero_embercaller_mantle: Handle<WorldAsset>,
+    pub hero_soulbinder: Handle<WorldAsset>,
+    pub hero_soulbinder_arm: Handle<WorldAsset>,
+    pub hero_soulbinder_leg: Handle<WorldAsset>,
+    pub hero_soulbinder_mantle: Handle<WorldAsset>,
+    pub soul_spirit: Handle<WorldAsset>,
+    pub soul_spirit_arm: Handle<WorldAsset>,
+    pub soul_spirit_leg: Handle<WorldAsset>,
+    pub soul_spirit_mantle: Handle<WorldAsset>,
+    pub bone_sentry: Handle<WorldAsset>,
+    pub bone_sentry_arm: Handle<WorldAsset>,
+    pub bone_sentry_leg: Handle<WorldAsset>,
+    pub bone_sentry_mantle: Handle<WorldAsset>,
+    pub soul_staff: Handle<WorldAsset>,
+    pub soul_blade: Handle<WorldAsset>,
     pub skeleton: Handle<WorldAsset>,
     pub ashbone_guard: Handle<WorldAsset>,
     pub cultist: Handle<WorldAsset>,
@@ -154,8 +168,9 @@ pub struct GameAssets {
     pub ui_skill_icons: Handle<Image>,
     /// Seven columns (basic, Q a/b, E a/b, R a/b) by one row per class.
     pub ui_class_skill_icons: Handle<Image>,
+    pub ui_soulbinder_skill_icons: Handle<Image>,
     /// Class-select portraits, indexed by `HeroClass::index`.
-    pub ui_class_portraits: [Handle<Image>; 3],
+    pub ui_class_portraits: [Handle<Image>; 4],
     pub ui_gear_icons: Handle<Image>,
     pub ui_talent_sigils: Handle<Image>,
     pub ui_utility_icons: Handle<Image>,
@@ -174,6 +189,25 @@ pub struct HeroParts {
 }
 
 impl GameAssets {
+    pub fn spirit_parts(&self) -> HeroParts {
+        HeroParts {
+            body: self.soul_spirit.clone(),
+            arm: self.soul_spirit_arm.clone(),
+            leg: self.soul_spirit_leg.clone(),
+            mantle: self.soul_spirit_mantle.clone(),
+            weapon: self.soul_blade.clone(),
+        }
+    }
+    pub fn bone_guard_parts(&self) -> HeroParts {
+        HeroParts {
+            body: self.bone_sentry.clone(),
+            arm: self.bone_sentry_arm.clone(),
+            leg: self.bone_sentry_leg.clone(),
+            mantle: self.bone_sentry_mantle.clone(),
+            weapon: self.soul_blade.clone(),
+        }
+    }
+
     pub fn hero_parts(&self, class: HeroClass) -> HeroParts {
         let (body, arm, leg, mantle, weapon) = match class {
             HeroClass::Warden => (
@@ -189,6 +223,13 @@ impl GameAssets {
                 &self.hero_stalker_leg,
                 &self.hero_stalker_mantle,
                 &self.bone_bow,
+            ),
+            HeroClass::Soulbinder => (
+                &self.hero_soulbinder,
+                &self.hero_soulbinder_arm,
+                &self.hero_soulbinder_leg,
+                &self.hero_soulbinder_mantle,
+                &self.soul_staff,
             ),
             HeroClass::Embercaller => (
                 &self.hero_embercaller,
@@ -290,6 +331,20 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         hero_embercaller_arm: asset_server.load("models/hero_embercaller_arm.glb#Scene0"),
         hero_embercaller_leg: asset_server.load("models/hero_embercaller_leg.glb#Scene0"),
         hero_embercaller_mantle: asset_server.load("models/hero_embercaller_mantle.glb#Scene0"),
+        hero_soulbinder: asset_server.load("models/hero_soulbinder.glb#Scene0"),
+        hero_soulbinder_arm: asset_server.load("models/hero_soulbinder_arm.glb#Scene0"),
+        hero_soulbinder_leg: asset_server.load("models/hero_soulbinder_leg.glb#Scene0"),
+        hero_soulbinder_mantle: asset_server.load("models/hero_soulbinder_mantle.glb#Scene0"),
+        soul_spirit: asset_server.load("models/soul_spirit.glb#Scene0"),
+        soul_spirit_arm: asset_server.load("models/soul_spirit_arm.glb#Scene0"),
+        soul_spirit_leg: asset_server.load("models/soul_spirit_leg.glb#Scene0"),
+        soul_spirit_mantle: asset_server.load("models/soul_spirit_mantle.glb#Scene0"),
+        bone_sentry: asset_server.load("models/bone_sentry.glb#Scene0"),
+        bone_sentry_arm: asset_server.load("models/bone_sentry_arm.glb#Scene0"),
+        bone_sentry_leg: asset_server.load("models/bone_sentry_leg.glb#Scene0"),
+        bone_sentry_mantle: asset_server.load("models/bone_sentry_mantle.glb#Scene0"),
+        soul_staff: asset_server.load("models/soul_staff.glb#Scene0"),
+        soul_blade: asset_server.load("models/soul_blade.glb#Scene0"),
         skeleton: asset_server.load("models/skeleton.glb#Scene0"),
         ashbone_guard: asset_server.load("models/ashbone_guard.glb#Scene0"),
         cultist: asset_server.load("models/cultist.glb#Scene0"),
@@ -415,10 +470,13 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         ui_skill_icons: asset_server.load("images/generated/ui/skill-icons-reliquary.png"),
         ui_class_skill_icons: asset_server
             .load("images/generated/ui/class-skill-icons-reliquary.png"),
+        ui_soulbinder_skill_icons: asset_server
+            .load("images/generated/ui/soulbinder-skill-icons.png"),
         ui_class_portraits: [
             asset_server.load("images/generated/ui/class-portrait-warden.png"),
             asset_server.load("images/generated/ui/class-portrait-stalker.png"),
             asset_server.load("images/generated/ui/class-portrait-embercaller.png"),
+            asset_server.load("images/generated/ui/class-portrait-soulbinder.png"),
         ],
         ui_gear_icons: asset_server.load("images/generated/ui/gear-icons-reliquary.png"),
         ui_talent_sigils: asset_server.load("images/generated/ui/talent-sigils-reliquary.png"),
@@ -495,6 +553,20 @@ fn finish_loading(
 
 fn collect_game_asset_handles(assets: &GameAssets) -> Vec<Handle<WorldAsset>> {
     vec![
+        assets.hero_soulbinder.clone(),
+        assets.hero_soulbinder_arm.clone(),
+        assets.hero_soulbinder_leg.clone(),
+        assets.hero_soulbinder_mantle.clone(),
+        assets.soul_spirit.clone(),
+        assets.soul_spirit_arm.clone(),
+        assets.soul_spirit_leg.clone(),
+        assets.soul_spirit_mantle.clone(),
+        assets.bone_sentry.clone(),
+        assets.bone_sentry_arm.clone(),
+        assets.bone_sentry_leg.clone(),
+        assets.bone_sentry_mantle.clone(),
+        assets.soul_staff.clone(),
+        assets.soul_blade.clone(),
         assets.hero.clone(),
         assets.hero_arm.clone(),
         assets.hero_leg.clone(),
@@ -622,6 +694,8 @@ fn collect_visual_asset_handles(assets: &GameAssets) -> Vec<UntypedHandle> {
         assets.ui_resource_orb_frame.clone().untyped(),
         assets.ui_skill_icons.clone().untyped(),
         assets.ui_class_skill_icons.clone().untyped(),
+        assets.ui_soulbinder_skill_icons.clone().untyped(),
+        assets.ui_class_portraits[3].clone().untyped(),
         assets.ui_class_portraits[0].clone().untyped(),
         assets.ui_class_portraits[1].clone().untyped(),
         assets.ui_class_portraits[2].clone().untyped(),

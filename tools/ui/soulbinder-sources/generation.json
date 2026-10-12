@@ -1,0 +1,20 @@
+{
+  "backend": "image_gen",
+  "date": "2026-10-05",
+  "source_size": [
+    1536,
+    1024
+  ],
+  "palette": "petrol jade, ivory, tarnished silver",
+  "portrait": "Masked funerary priest with horn crown, rib cuirass, jade bone staff, spectral knight behind",
+  "icons": [
+    "soul thread skull",
+    "recall hand",
+    "exchange silhouettes",
+    "spectral sword volley",
+    "two bone guards",
+    "crowned spirit",
+    "shattered reliquary"
+  ],
+  "extraction": "tools/ui/build_soulbinder_art.py"
+}

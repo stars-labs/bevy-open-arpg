@@ -5,6 +5,7 @@ import bpy
 
 for script in (
     "generate_hero.py",
+    "generate_soulbinder.py",
     "generate_reliquary_props.py",
     "generate_reliquary_enemies.py",
     "generate_reliquary_effects.py",

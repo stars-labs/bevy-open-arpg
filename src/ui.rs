@@ -5548,7 +5548,7 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 TextColor(Color::srgb(0.94, 0.86, 0.71)),
                 BorderColor::all(Color::srgba(0.56, 0.43, 0.25, 0.85)),
                 BackgroundColor(Color::srgba(0.025, 0.021, 0.018, 0.92)),
-                GlobalZIndex(31),
+                GlobalZIndex(60),
                 Visibility::Hidden,
                 PauseText,
             ));
@@ -8358,7 +8358,7 @@ fn build_rotation_summary(
     fury: &Fury,
     cooldowns: &SkillCooldowns,
     surge: &SurgeBuff,
-    runes: &SkillRunes,
+    runes: &SkillLoadout,
 ) -> String {
     if surge_seconds_remaining(surge) > 0.0 {
         return "Surge active: spend Fury and chain kills".to_string();
@@ -8366,25 +8366,74 @@ fn build_rotation_summary(
     if surge.charge >= surge.max_charge {
         return "Y Surge before elite/Boss burst".to_string();
     }
-    if fury.current < fury.rupture_cost.min(fury.dash_cost).min(fury.nova_cost) {
+    if fury.current < {
+        let class = crate::class::test_catalog();
+        let class = class.get(crate::class::HeroClass::Warden);
+        SkillSlot::ALL
+            .into_iter()
+            .map(|slot| fury.skill_cost(class.equipped(runes, slot).0.cost))
+            .fold(f32::INFINITY, f32::min)
+    } {
         return "LMB Strike to build Fury".to_string();
     }
-    if cooldowns.rupture.is_finished() && fury.current >= fury.rupture_cost {
-        return match runes.rupture {
-            RuptureRune::Expose => "R Expose starts combo; Q/E finish".to_string(),
-            RuptureRune::Hemorrhage => "R Bleed starts combo; Q/E finish".to_string(),
+    if cooldowns.slot(SkillSlot::Finisher).is_finished()
+        && fury.current
+            >= fury.skill_cost(
+                crate::class::test_catalog()
+                    .get(crate::class::HeroClass::Warden)
+                    .equipped(runes, SkillSlot::Finisher)
+                    .0
+                    .cost,
+            )
+    {
+        return match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Finisher)
+            .1
+        {
+            crate::class::Rune::Expose => "R Expose starts combo; Q/E finish".to_string(),
+            crate::class::Rune::Hemorrhage => "R Bleed starts combo; Q/E finish".to_string(),
+            _ => unreachable!("Warden rune pair"),
         };
     }
-    if cooldowns.nova.is_finished() && fury.current >= fury.nova_cost {
-        return match runes.nova {
-            NovaRune::Ember => "E Ember Nova finishes packs".to_string(),
-            NovaRune::Frost => "E Frost Nova controls and finishes".to_string(),
+    if cooldowns.slot(SkillSlot::Area).is_finished()
+        && fury.current
+            >= fury.skill_cost(
+                crate::class::test_catalog()
+                    .get(crate::class::HeroClass::Warden)
+                    .equipped(runes, SkillSlot::Area)
+                    .0
+                    .cost,
+            )
+    {
+        return match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Area)
+            .1
+        {
+            crate::class::Rune::Ember => "E Ember Nova finishes packs".to_string(),
+            crate::class::Rune::Frost => "E Frost Nova controls and finishes".to_string(),
+            _ => unreachable!("Warden rune pair"),
         };
     }
-    if cooldowns.dash.is_finished() && fury.current >= fury.dash_cost {
-        return match runes.dash {
-            DashRune::Cleanse => "Q Cleanse Dash finishes or escapes".to_string(),
-            DashRune::Reap => "Q Reap Dash finishes weakened enemies".to_string(),
+    if cooldowns.slot(SkillSlot::Mobility).is_finished()
+        && fury.current
+            >= fury.skill_cost(
+                crate::class::test_catalog()
+                    .get(crate::class::HeroClass::Warden)
+                    .equipped(runes, SkillSlot::Mobility)
+                    .0
+                    .cost,
+            )
+    {
+        return match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Mobility)
+            .1
+        {
+            crate::class::Rune::Cleanse => "Q Cleanse Dash finishes or escapes".to_string(),
+            crate::class::Rune::Reap => "Q Reap Dash finishes weakened enemies".to_string(),
+            _ => unreachable!("Warden rune pair"),
         };
     }
     "Hold position, Strike, wait for cooldowns".to_string()
@@ -9693,7 +9742,7 @@ fn fury_orb_text(
         "FURY\n{:.0} / {:.0}\n{}\n{}\n{}\n{}\n{}g {}s {}e",
         fury.current,
         fury.max,
-        fury_spend_line(fury),
+        "Q / E / R",
         fury_builder_line(fury),
         growth_orb_text(level, paragon),
         compact_label(readiness, 16),
@@ -9706,7 +9755,11 @@ fn fury_orb_text(
 fn fury_orb_compact_text(fury: &Fury, kind: crate::class::ResourceKind) -> String {
     format!(
         "{}\n{:.0} / {:.0}",
-        kind.label().to_uppercase(),
+        if kind == crate::class::ResourceKind::Soul {
+            "SOUL ENERGY".to_string()
+        } else {
+            kind.label().to_uppercase()
+        },
         fury.current,
         fury.max
     )
@@ -9718,6 +9771,7 @@ fn resource_liquid_color(kind: crate::class::ResourceKind) -> Color {
         crate::class::ResourceKind::Fury => Color::srgb(0.025, 0.21, 0.65),
         crate::class::ResourceKind::Malice => Color::srgb(0.02, 0.36, 0.26),
         crate::class::ResourceKind::Arcana => Color::srgb(0.30, 0.07, 0.60),
+        crate::class::ResourceKind::Soul => Color::srgb(0.04, 0.48, 0.46),
     }
 }
 
@@ -9741,14 +9795,25 @@ fn update_skill_icons(icons: &mut SkillSlotIconQuery, assets: &GameAssets, skill
             SkillSlotText::Finisher => 3,
             SkillSlotText::Surge | SkillSlotText::Evade => continue,
         };
+        let atlas_index = skills.icons[index];
+        let soulbinder = atlas_index >= 3 * CLASS_SKILL_ATLAS_COLUMNS;
+        let atlas = if soulbinder {
+            &assets.ui_soulbinder_skill_icons
+        } else {
+            &assets.ui_class_skill_icons
+        };
         let rect = atlas_rect(
             UI_SKILL_ICON_CELL,
             UI_SKILL_ICON_CELL,
             CLASS_SKILL_ATLAS_COLUMNS,
-            skills.icons[index],
+            if soulbinder {
+                atlas_index - 3 * CLASS_SKILL_ATLAS_COLUMNS
+            } else {
+                atlas_index
+            },
         );
-        if image.rect != Some(rect) || image.image != assets.ui_class_skill_icons {
-            image.image = assets.ui_class_skill_icons.clone();
+        if image.rect != Some(rect) || image.image != *atlas {
+            image.image = atlas.clone();
             image.rect = Some(rect);
         }
     }
@@ -10295,23 +10360,38 @@ fn cooldown_state_label(seconds: f32) -> String {
 #[cfg(test)]
 fn skill_slot_tactic(
     slot: SkillSlotText,
-    runes: &SkillRunes,
+    runes: &SkillLoadout,
     surge: &SurgeBuff,
     evade: &Evade,
 ) -> &'static str {
     match slot {
         SkillSlotText::Strike => "FURY BUILDER",
-        SkillSlotText::Finisher => match runes.rupture {
-            RuptureRune::Expose => "START VULN",
-            RuptureRune::Hemorrhage => "START BLEED",
+        SkillSlotText::Finisher => match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Finisher)
+            .1
+        {
+            crate::class::Rune::Expose => "START VULN",
+            crate::class::Rune::Hemorrhage => "START BLEED",
+            _ => unreachable!("Warden rune pair"),
         },
-        SkillSlotText::Mobility => match runes.dash {
-            DashRune::Cleanse => "FINISH CLEANSE",
-            DashRune::Reap => "FINISH REAP",
+        SkillSlotText::Mobility => match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Mobility)
+            .1
+        {
+            crate::class::Rune::Cleanse => "FINISH CLEANSE",
+            crate::class::Rune::Reap => "FINISH REAP",
+            _ => unreachable!("Warden rune pair"),
         },
-        SkillSlotText::Area => match runes.nova {
-            NovaRune::Ember => "FINISH BURN",
-            NovaRune::Frost => "FINISH FREEZE",
+        SkillSlotText::Area => match crate::class::test_catalog()
+            .get(crate::class::HeroClass::Warden)
+            .equipped(runes, SkillSlot::Area)
+            .1
+        {
+            crate::class::Rune::Ember => "FINISH BURN",
+            crate::class::Rune::Frost => "FINISH FREEZE",
+            _ => unreachable!("Warden rune pair"),
         },
         SkillSlotText::Surge => {
             if surge_seconds_remaining(surge) > 0.0 {
@@ -10428,6 +10508,17 @@ fn minimap_interactable_style(role: MinimapInteractableRole) -> (f32, Color) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_hud_skills() -> HudSkills {
+        HudSkills::new(
+            crate::class::test_catalog().get(crate::class::HeroClass::Warden),
+            &SkillLoadout::default(),
+            6,
+            &test_fury(100.0),
+            &Talents::default(),
+        )
+    }
+
     use std::time::Duration;
 
     #[test]
@@ -10509,21 +10600,19 @@ mod tests {
             current,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         }
     }
 
     fn test_cooldowns() -> SkillCooldowns {
         SkillCooldowns {
-            dash: test_timer(5.0, 1.2),
-            nova: test_timer(8.0, 0.0),
-            rupture: test_timer(3.8, 2.4),
+            slots: [
+                test_timer(5.0, 1.2),
+                test_timer(8.0, 0.0),
+                test_timer(3.8, 2.4),
+            ],
             basic: test_timer(0.34, 0.0),
-            dash_base: 5.0,
-            nova_base: 8.0,
-            rupture_base: 3.8,
             basic_base: 0.34,
         }
     }
@@ -11229,7 +11318,7 @@ mod tests {
         let resource = fury_orb_text(&fury, &level, &paragon, &stats, readiness);
         assert!(resource.contains("FURY"));
         assert!(resource.contains("64 / 100"));
-        assert!(resource.contains("SPEND R32 Q25 E45"));
+        assert!(resource.contains("Q / E / R"));
         assert!(resource.contains("BUILD LMB +18F"));
         assert!(resource.contains("LV 4"));
         assert!(resource.contains("XP 88/140"));
@@ -11262,6 +11351,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
         let wounded_life = resource_orb_frame_style(
             ResourceOrbFrame::Health,
@@ -11269,6 +11359,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
         let critical_life = resource_orb_frame_style(
             ResourceOrbFrame::Health,
@@ -11276,6 +11367,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
         let guarded_life = resource_orb_frame_style(
             ResourceOrbFrame::Health,
@@ -11283,6 +11375,7 @@ mod tests {
             &guarded,
             &full_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
 
         assert!(critical_life.border.to_srgba().red >= safe_life.border.to_srgba().red);
@@ -11295,6 +11388,7 @@ mod tests {
             &no_barrier,
             &starved_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
         let spend_resource = resource_orb_frame_style(
             ResourceOrbFrame::Fury,
@@ -11302,6 +11396,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &charging_surge,
+            &test_hud_skills(),
         );
         let ready_resource = resource_orb_frame_style(
             ResourceOrbFrame::Fury,
@@ -11309,6 +11404,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &ready_surge,
+            &test_hud_skills(),
         );
         let active_resource = resource_orb_frame_style(
             ResourceOrbFrame::Fury,
@@ -11316,6 +11412,7 @@ mod tests {
             &no_barrier,
             &full_fury,
             &active_surge,
+            &test_hud_skills(),
         );
 
         assert!(starved_resource.border.to_srgba().red > spend_resource.border.to_srgba().red);
@@ -11417,7 +11514,7 @@ mod tests {
 
         assert!(resource.contains("FURY"));
         assert!(resource.contains("82 / 100"));
-        assert!(resource.contains("SPEND R32 Q25 E45"));
+        assert!(resource.contains("Q / E / R"));
         assert!(resource.contains("BUILD LMB +18F"));
         assert!(resource.contains("PARA 3"));
         assert!(resource.contains("XP 42/210"));
@@ -11431,21 +11528,26 @@ mod tests {
             current: 12.0,
             max: 100.0,
             basic_gain: 21.0,
-            dash_cost: 24.0,
-            nova_cost: 42.0,
-            rupture_cost: 30.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
 
-        assert_eq!(fury_spend_line(&fury), "SPEND R30 Q24 E42");
+        let catalog = crate::class::test_catalog();
+        let class = catalog.get(crate::class::HeroClass::Warden);
+        for slot in SkillSlot::ALL {
+            assert_eq!(
+                fury.skill_cost(class.skill(slot, false).cost),
+                class.skill(slot, false).cost
+            );
+        }
         assert_eq!(fury_builder_line(&fury), "BUILD LMB +21F");
     }
 
     #[test]
     fn build_rotation_summary_prioritizes_builder_setup_and_control() {
-        let runes = SkillRunes {
-            dash: DashRune::Cleanse,
-            nova: NovaRune::Frost,
-            rupture: RuptureRune::Expose,
+        let runes = SkillLoadout {
+            alt: [false; 3],
+            rune_alt: [[false, false], [true, false], [false, false]],
         };
         let starved = test_fury(6.0);
         let ready = test_fury(90.0);
@@ -11463,9 +11565,8 @@ mod tests {
         );
 
         let mut ready_cooldowns = test_cooldowns();
-        ready_cooldowns
-            .rupture
-            .tick(ready_cooldowns.rupture.duration());
+        let timer = &mut ready_cooldowns.slots[SkillSlot::Finisher.index()];
+        timer.tick(timer.duration());
         assert_eq!(
             build_rotation_summary(&ready, &ready_cooldowns, &charging_surge, &runes),
             "R Expose starts combo; Q/E finish"
@@ -11541,11 +11642,25 @@ mod tests {
         let surge = test_surge(4, 0.0);
         let evade = test_evade(2.0, 0.0);
         assert_eq!(
-            skill_slot_summary(SkillSlotText::Strike, &fury, &cooldowns, &surge, &evade),
+            skill_slot_summary(
+                SkillSlotText::Strike,
+                &fury,
+                &cooldowns,
+                &surge,
+                &evade,
+                &test_hud_skills()
+            ),
             ""
         );
         assert_eq!(
-            skill_slot_summary(SkillSlotText::Finisher, &fury, &cooldowns, &surge, &evade),
+            skill_slot_summary(
+                SkillSlotText::Finisher,
+                &fury,
+                &cooldowns,
+                &surge,
+                &evade,
+                &test_hud_skills()
+            ),
             "2.4s"
         );
         assert_eq!(
@@ -11554,26 +11669,40 @@ mod tests {
                 &test_fury(8.0),
                 &cooldowns,
                 &surge,
-                &evade
+                &evade,
+                &test_hud_skills()
             ),
             "Unavailable"
         );
         assert_eq!(
-            skill_slot_summary(SkillSlotText::Surge, &fury, &cooldowns, &surge, &evade),
+            skill_slot_summary(
+                SkillSlotText::Surge,
+                &fury,
+                &cooldowns,
+                &surge,
+                &evade,
+                &test_hud_skills()
+            ),
             "CHARGE 4/9"
         );
         assert_eq!(
-            skill_slot_summary(SkillSlotText::Evade, &fury, &cooldowns, &surge, &evade),
+            skill_slot_summary(
+                SkillSlotText::Evade,
+                &fury,
+                &cooldowns,
+                &surge,
+                &evade,
+                &test_hud_skills()
+            ),
             "2.0s"
         );
     }
 
     #[test]
     fn skill_slot_tactics_track_burst_and_survival_windows() {
-        let runes = SkillRunes {
-            dash: DashRune::Cleanse,
-            nova: NovaRune::Ember,
-            rupture: RuptureRune::Expose,
+        let runes = SkillLoadout {
+            alt: [false; 3],
+            rune_alt: [[false, false], [false, false], [false, false]],
         };
         let charging_surge = test_surge(3, 0.0);
         let ready_surge = test_surge(9, 0.0);
@@ -11666,6 +11795,7 @@ mod tests {
             &cooldowns,
             &surge,
             &evade,
+            &test_hud_skills(),
             &idle_feedback,
         );
         let cast_feedback = SkillFeedbackState {
@@ -11681,6 +11811,7 @@ mod tests {
             &cooldowns,
             &surge,
             &evade,
+            &test_hud_skills(),
             &cast_feedback,
         );
         let blocked_feedback = SkillFeedbackState {
@@ -11696,6 +11827,7 @@ mod tests {
             &cooldowns,
             &surge,
             &evade,
+            &test_hud_skills(),
             &blocked_feedback,
         );
         let untouched_dash = skill_slot_frame_style(
@@ -11704,6 +11836,7 @@ mod tests {
             &cooldowns,
             &surge,
             &evade,
+            &test_hud_skills(),
             &cast_feedback,
         );
 
@@ -11717,7 +11850,8 @@ mod tests {
                 &cooldowns,
                 &surge,
                 &evade,
-                &idle_feedback,
+                &test_hud_skills(),
+                &idle_feedback
             )
         );
         assert!(color_luminance(cast.border) > color_luminance(base.border));
@@ -11741,6 +11875,7 @@ mod tests {
             &cooldowns,
             &ready_surge,
             &idle_evade,
+            &test_hud_skills(),
         );
         let cooling = skill_slot_lamp_style(
             SkillSlotText::Mobility,
@@ -11748,6 +11883,7 @@ mod tests {
             &cooldowns,
             &ready_surge,
             &idle_evade,
+            &test_hud_skills(),
         );
         let starved = skill_slot_lamp_style(
             SkillSlotText::Area,
@@ -11755,6 +11891,7 @@ mod tests {
             &cooldowns,
             &ready_surge,
             &idle_evade,
+            &test_hud_skills(),
         );
         let charging = skill_slot_lamp_style(
             SkillSlotText::Surge,
@@ -11762,6 +11899,7 @@ mod tests {
             &cooldowns,
             &charging_surge,
             &idle_evade,
+            &test_hud_skills(),
         );
         let active = skill_slot_lamp_style(
             SkillSlotText::Surge,
@@ -11769,6 +11907,7 @@ mod tests {
             &cooldowns,
             &active_surge,
             &idle_evade,
+            &test_hud_skills(),
         );
         let evading = skill_slot_lamp_style(
             SkillSlotText::Evade,
@@ -11776,6 +11915,7 @@ mod tests {
             &cooldowns,
             &ready_surge,
             &active_evade,
+            &test_hud_skills(),
         );
 
         assert_eq!(ready.state, SkillSlotLampState::Ready);

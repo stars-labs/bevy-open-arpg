@@ -6,6 +6,7 @@ use crate::{
     challenge::{ChallengeProgress, ChapterChallenges},
     chapter::{ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind},
     class::{ClassCatalog, HeroClass, SelectedClass, SkillLoadout},
+    combat::summons::SummonTalents,
     companion::{CompanionBond, CompanionStance},
     dungeon::{Breakable, Interactable, chapter_world_position},
     feedback::CombatEvent,
@@ -443,6 +444,7 @@ struct SavePlayer {
     class: HeroClass,
     #[serde(default)]
     loadout: SkillLoadout,
+    summon_talents: SummonTalents,
     equipment: SaveEquipment,
     #[serde(default)]
     charm: Charm,
@@ -644,6 +646,8 @@ type LoadPlayerStateQuery<'w, 's> = Query<
     With<Player>,
 >;
 
+type SaveSummonTalentsQuery<'w, 's> = Query<'w, 's, &'static SummonTalents, With<Player>>;
+type LoadSummonTalentsQuery<'w, 's> = Query<'w, 's, &'static mut SummonTalents, With<Player>>;
 type SaveRunesQuery<'w, 's> = Query<'w, 's, &'static SkillLoadout, With<Player>>;
 type LoadRunesQuery<'w, 's> = Query<'w, 's, &'static mut SkillLoadout, With<Player>>;
 type SaveCompanionQuery<'w, 's> = Query<'w, 's, &'static CompanionBond, With<Player>>;
@@ -722,6 +726,7 @@ struct LoadGameInputs<'w, 's> {
     player_core: LoadPlayerCoreQuery<'w, 's>,
     player_state: LoadPlayerStateQuery<'w, 's>,
     runes: LoadRunesQuery<'w, 's>,
+    summon_talents: LoadSummonTalentsQuery<'w, 's>,
     companion: LoadCompanionQuery<'w, 's>,
     armory: LoadArmoryQuery<'w, 's>,
     paragon: LoadParagonQuery<'w, 's>,
@@ -746,6 +751,7 @@ struct SaveGameInputs<'w, 's> {
     player_core: SavePlayerCoreQuery<'w, 's>,
     player_state: SavePlayerStateQuery<'w, 's>,
     runes: SaveRunesQuery<'w, 's>,
+    summon_talents: SaveSummonTalentsQuery<'w, 's>,
     companion: SaveCompanionQuery<'w, 's>,
     armory: SaveArmoryQuery<'w, 's>,
     paragon: SaveParagonQuery<'w, 's>,
@@ -806,6 +812,7 @@ fn save_game(keyboard: Res<ButtonInput<KeyCode>>, mut inputs: SaveGameInputs) {
         player_core: &inputs.player_core,
         player_state: &inputs.player_state,
         runes: &inputs.runes,
+        summon_talents: &inputs.summon_talents,
         companion: &inputs.companion,
         armory: &inputs.armory,
         paragon: &inputs.paragon,
@@ -894,6 +901,7 @@ fn load_game(
                 player_core: &mut inputs.player_core,
                 player_state: &mut inputs.player_state,
                 runes: &mut inputs.runes,
+                summon_talents: &mut inputs.summon_talents,
                 companion: &mut inputs.companion,
                 armory: &mut inputs.armory,
                 paragon: &mut inputs.paragon,
@@ -965,6 +973,7 @@ struct SnapshotInputs<'a, 'w, 's> {
     player_core: &'a SavePlayerCoreQuery<'w, 's>,
     player_state: &'a SavePlayerStateQuery<'w, 's>,
     runes: &'a SaveRunesQuery<'w, 's>,
+    summon_talents: &'a SaveSummonTalentsQuery<'w, 's>,
     companion: &'a SaveCompanionQuery<'w, 's>,
     armory: &'a SaveArmoryQuery<'w, 's>,
     paragon: &'a SaveParagonQuery<'w, 's>,
@@ -1184,6 +1193,10 @@ fn snapshot_from_world(inputs: SnapshotInputs) -> Result<SaveGame, String> {
             skill_cost_discount: fury.cost_discount,
             class: inputs.selected.0,
             loadout: *runes,
+            summon_talents: *inputs
+                .summon_talents
+                .single()
+                .map_err(|_| "expected one summon talent tree".to_string())?,
             equipment: SaveEquipment {
                 weapon_name: equipment.weapon_name.clone(),
                 quality: equipment.quality.clone(),
@@ -1319,6 +1332,7 @@ struct ApplyQueries<'a, 'w, 's> {
     player_core: &'a mut LoadPlayerCoreQuery<'w, 's>,
     player_state: &'a mut LoadPlayerStateQuery<'w, 's>,
     runes: &'a mut LoadRunesQuery<'w, 's>,
+    summon_talents: &'a mut LoadSummonTalentsQuery<'w, 's>,
     companion: &'a mut LoadCompanionQuery<'w, 's>,
     armory: &'a mut LoadArmoryQuery<'w, 's>,
     paragon: &'a mut LoadParagonQuery<'w, 's>,
@@ -1673,6 +1687,10 @@ fn apply_save(
     talents.vigor = save.player.talent_vigor;
     talents.focus = save.player.talent_focus;
     *runes = save.player.loadout;
+    *queries
+        .summon_talents
+        .single_mut()
+        .map_err(|_| "expected one summon talent tree".to_string())? = save.player.summon_talents;
     Ok(())
 }
 
@@ -2116,9 +2134,10 @@ mod tests {
                 fury_current: 64.0,
                 fury_max: 100.0,
                 fury_basic_gain: 22.0,
-                dash_cost: 20.0,
-                nova_cost: 37.0,
-                rupture_cost: 26.0,
+                fury_regen: 0.0,
+                skill_cost_discount: 0.0,
+                class: HeroClass::Soulbinder,
+                summon_talents: SummonTalents { bone: 1, spirit: 2 },
                 equipment: SaveEquipment {
                     weapon_name: "rare Moonforged Cleaver".to_string(),
                     quality: "rare".to_string(),
@@ -2177,9 +2196,10 @@ mod tests {
                         damage_bonus: 5.0,
                         crit_chance: 0.035,
                     },
-                    dash_rune: DashRune::Reap,
-                    nova_rune: NovaRune::Frost,
-                    rupture_rune: RuptureRune::Hemorrhage,
+                    skills: SkillLoadout {
+                        alt: [false; 3],
+                        rune_alt: [[true, false]; 3],
+                    },
                     codex_attunement: LegendaryPower::Frostbrand,
                 }),
                 armory_loadouts: vec![],
@@ -2227,9 +2247,10 @@ mod tests {
                 talent_wrath: 2,
                 talent_vigor: 1,
                 talent_focus: 3,
-                dash_rune: DashRune::Reap,
-                nova_rune: NovaRune::Frost,
-                rupture_rune: RuptureRune::Hemorrhage,
+                loadout: SkillLoadout {
+                    alt: [false; 3],
+                    rune_alt: [[true, false]; 3],
+                },
             },
         };
 
@@ -2281,7 +2302,7 @@ mod tests {
     }
 
     #[test]
-    fn old_saves_without_breakables_remain_valid() {
+    fn sparse_saves_default_optional_world_and_player_state() {
         let content = r#"(
             version: 1,
             stats: (
@@ -2289,6 +2310,7 @@ mod tests {
                 gold: 0,
             ),
             player: (
+                summon_talents: (bone: 0, spirit: 0),
                 position: (0.0, 0.0, 0.0),
                 health_current: 100.0,
                 health_max: 100.0,
@@ -2406,9 +2428,9 @@ mod tests {
         );
         assert_eq!(parsed.player.fury_max, default_fury_max());
         assert_eq!(parsed.player.fury_basic_gain, default_fury_basic_gain());
-        assert_eq!(parsed.player.dash_cost, default_dash_cost());
-        assert_eq!(parsed.player.nova_cost, default_nova_cost());
-        assert_eq!(parsed.player.rupture_cost, default_rupture_cost());
+        assert_eq!(parsed.player.skill_cost_discount, 0.0);
+        assert_eq!(parsed.player.class, HeroClass::Warden);
+        assert_eq!(parsed.player.loadout, SkillLoadout::default());
         assert_eq!(parsed.player.barrier_current, 0.0);
         assert_eq!(parsed.player.barrier_max, default_barrier_max());
         assert_eq!(parsed.player.paragon_rank, 0);
@@ -2457,7 +2479,7 @@ mod tests {
         assert_eq!(parsed.player.chapter_boon, ChapterBoonChoice::None);
         assert!(!parsed.player.chapter_boon_empowered);
         assert_eq!(parsed.player.chapter_boon_momentum_stacks, 0);
-        assert_eq!(parsed.player.rupture_rune, RuptureRune::Expose);
+        assert_eq!(parsed.player.loadout, SkillLoadout::default());
         assert!(parsed.player.armory_loadout.is_none());
     }
 
@@ -2482,9 +2504,10 @@ mod tests {
             fury_current: 0.0,
             fury_max: default_fury_max(),
             fury_basic_gain: default_fury_basic_gain(),
-            dash_cost: default_dash_cost(),
-            nova_cost: default_nova_cost(),
-            rupture_cost: default_rupture_cost(),
+            fury_regen: 0.0,
+            skill_cost_discount: 0.0,
+            class: HeroClass::Soulbinder,
+            summon_talents: SummonTalents { bone: 1, spirit: 2 },
             equipment: SaveEquipment {
                 weapon_name: "Initiate Blade".to_string(),
                 quality: "common".to_string(),
@@ -2545,9 +2568,10 @@ mod tests {
             talent_wrath: 0,
             talent_vigor: 0,
             talent_focus: 0,
-            dash_rune: DashRune::Cleanse,
-            nova_rune: NovaRune::Ember,
-            rupture_rune: RuptureRune::Expose,
+            loadout: SkillLoadout {
+                alt: [false; 3],
+                rune_alt: [[false, false]; 3],
+            },
         }
     }
 
@@ -2567,9 +2591,10 @@ mod tests {
                 slot: GearSlot::Weapon,
             },
             charm: Charm::default(),
-            dash_rune: DashRune::Cleanse,
-            nova_rune: NovaRune::Ember,
-            rupture_rune: RuptureRune::Expose,
+            skills: SkillLoadout {
+                alt: [false; 3],
+                rune_alt: [[false, false]; 3],
+            },
             codex_attunement: LegendaryPower::Emberbrand,
         };
         let legacy_player = save_player_with_armory(Some(legacy_loadout.clone()), vec![], 0);

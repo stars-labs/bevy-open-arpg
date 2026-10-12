@@ -8,6 +8,7 @@ use crate::{
         ActiveChapter, ChapterId, ChapterPhase, ChapterProgress, InteractableKind,
         InteractableUsed, SpawnBoss, SpawnSanctumWave,
     },
+    combat::summons::{Minion, SummonVitality},
     data::{EnemyAttackKind, EnemyCatalog, EnemyTuning},
     dungeon::{chapter_world_position, clamp_world_translation},
     feedback::{CombatEvent, FloatingCombatTextEvent, ScreenShakeEvent},
@@ -703,6 +704,39 @@ type ProjectilePlayerQuery<'w, 's> = Query<
     ),
     (With<Player>, Without<EnemyProjectile>),
 >;
+type MinionDamageQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Transform, &'static mut SummonVitality),
+    (
+        With<Minion>,
+        Without<Player>,
+        Without<Enemy>,
+        Without<EnemyProjectile>,
+    ),
+>;
+
+/// Prefer a nearby living guard without pulling enemies from beyond the hero's aggro range.
+fn minion_attack_target(
+    origin: Vec3,
+    owner: Vec3,
+    minions: &MinionDamageQuery,
+) -> Option<(Entity, Vec3)> {
+    let owner_distance = origin.distance(owner);
+    minions
+        .iter()
+        .filter(|(_, pose, vitality)| {
+            vitality.current > 0.0 && pose.translation.distance(owner) <= 10.0
+        })
+        .filter(|(_, pose, _)| pose.translation.distance(origin) + 0.35 < owner_distance)
+        .min_by(|(_, a, _), (_, b, _)| {
+            a.translation
+                .distance_squared(origin)
+                .total_cmp(&b.translation.distance_squared(origin))
+        })
+        .map(|(entity, pose, _)| (entity, pose.translation))
+}
+
 type EnemyAiQuery<'w, 's> = Query<
     'w,
     's,
@@ -2039,6 +2073,7 @@ fn enemy_ai(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut enemies: EnemyAiQuery,
     mut player: PlayerHealthQuery,
+    mut minions: MinionDamageQuery,
 ) {
     let Ok((
         player_entity,
@@ -2117,7 +2152,14 @@ fn enemy_ai(
             );
             continue;
         }
-        let to_player = player_transform.translation - transform.translation;
+        let pet_target = minion_attack_target(
+            transform.translation,
+            player_transform.translation,
+            &minions,
+        );
+        let target_position =
+            pet_target.map_or(player_transform.translation, |(_, position)| position);
+        let to_player = target_position - transform.translation;
         let flat_to_player = Vec3::new(to_player.x, 0.0, to_player.z);
         let distance = flat_to_player.length();
 
@@ -2177,7 +2219,7 @@ fn enemy_ai(
             }
         }
 
-        if distance > enemy.aggro_range {
+        if transform.translation.distance(player_transform.translation) > enemy.aggro_range {
             continue;
         }
 
@@ -2218,6 +2260,24 @@ fn enemy_ai(
                 EnemyAttackKind::Melee => {
                     let raw_damage = enemy.attack_damage
                         * signature_attack_damage_multiplier(role, signature_attack);
+                    if let Some((pet, position)) = pet_target {
+                        if let Ok((_, _, mut vitality)) = minions.get_mut(pet) {
+                            let taken = vitality.damage(raw_damage);
+                            spawn_player_damage_impact(
+                                &mut commands,
+                                &mut meshes,
+                                &mut materials,
+                                transform.translation,
+                                position,
+                                DamageTaken {
+                                    absorbed: 0.0,
+                                    health_damage: taken,
+                                },
+                            );
+                        }
+                        enemy.attack_timer.reset();
+                        continue;
+                    }
                     let damage = mitigated_damage(raw_damage, player_armor);
                     let taken = apply_player_damage_with_evade(
                         &mut player_health,
@@ -2277,7 +2337,19 @@ fn enemy_ai(
                 ),
                 EnemyAttackKind::Shockwave => {
                     let signature_bonus = if signature_attack { 1.10 } else { 0.0 };
-                    if distance <= enemy.attack_range + 0.85 + signature_bonus {
+                    let blast_radius = enemy.attack_range + 0.85 + signature_bonus;
+                    for (_, pose, mut vitality) in &mut minions {
+                        if vitality.current > 0.0
+                            && pose.translation.distance(transform.translation) <= blast_radius
+                        {
+                            vitality.damage(
+                                enemy.attack_damage
+                                    * signature_attack_damage_multiplier(role, signature_attack),
+                            );
+                        }
+                    }
+                    if player_transform.translation.distance(transform.translation) <= blast_radius
+                    {
                         let raw_damage = enemy.attack_damage
                             * signature_attack_damage_multiplier(role, signature_attack);
                         let damage = mitigated_damage(raw_damage, player_armor);
@@ -3886,6 +3958,16 @@ fn projectile_is_armed(projectile: &EnemyProjectile) -> bool {
     projectile.arm_timer.as_ref().is_none_or(Timer::is_finished)
 }
 
+/// Swept collision keeps fast bolts from stepping through a defending minion.
+fn projectile_segment_hits(start: Vec3, segment: Vec3, center: Vec3, radius: f32) -> bool {
+    let t = if segment.length_squared() > 0.0001 {
+        ((center - start).dot(segment) / segment.length_squared()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    center.distance(start + segment * t) <= radius.max(0.0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn move_enemy_projectiles(
     time: Res<Time>,
@@ -3897,6 +3979,7 @@ fn move_enemy_projectiles(
     mut screen_shake: MessageWriter<ScreenShakeEvent>,
     mut projectiles: Query<(Entity, &mut Transform, &mut EnemyProjectile), Without<Player>>,
     mut player: ProjectilePlayerQuery,
+    mut minions: MinionDamageQuery,
 ) {
     let Ok((
         player_entity,
@@ -3917,14 +4000,56 @@ fn move_enemy_projectiles(
         if let Some(arm_timer) = projectile.arm_timer.as_mut() {
             arm_timer.tick(time.delta());
         }
+        let previous = transform.translation;
         transform.translation += projectile.velocity * time.delta_secs();
-        if projectile_is_armed(&projectile)
-            && projectile.damage > 0.0
-            && transform
-                .translation
-                .distance(player_transform.translation + Vec3::Y * 0.8)
-                <= projectile.radius
-        {
+        let segment = transform.translation - previous;
+        let owner_center = player_transform.translation + Vec3::Y * 0.8;
+        let owner_hit = projectile_segment_hits(previous, segment, owner_center, projectile.radius);
+        if projectile_is_armed(&projectile) && projectile.damage > 0.0 {
+            let owner_distance = if owner_hit {
+                previous.distance_squared(owner_center)
+            } else {
+                f32::INFINITY
+            };
+            let first_pet = minions
+                .iter()
+                .filter(|(_, pose, vitality)| {
+                    vitality.current > 0.0
+                        && previous.distance_squared(pose.translation + Vec3::Y * 0.8)
+                            < owner_distance
+                        && projectile_segment_hits(
+                            previous,
+                            segment,
+                            pose.translation + Vec3::Y * 0.8,
+                            projectile.radius,
+                        )
+                })
+                .min_by(|(_, a, _), (_, b, _)| {
+                    previous
+                        .distance_squared(a.translation)
+                        .total_cmp(&previous.distance_squared(b.translation))
+                })
+                .map(|(entity, _, _)| entity);
+            if let Some(pet) = first_pet
+                && let Ok((_, pose, mut vitality)) = minions.get_mut(pet)
+            {
+                let taken = vitality.damage(projectile.damage);
+                spawn_player_damage_impact(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    previous,
+                    pose.translation,
+                    DamageTaken {
+                        absorbed: 0.0,
+                        health_damage: taken,
+                    },
+                );
+                commands.entity(entity).try_despawn();
+                continue;
+            }
+        }
+        if projectile_is_armed(&projectile) && projectile.damage > 0.0 && owner_hit {
             let damage = mitigated_damage(projectile.damage, player_armor);
             let taken =
                 apply_player_damage_with_evade(&mut player_health, &mut barrier, evade, damage);
@@ -5423,5 +5548,62 @@ mod tests {
         assert!(affixes.contains(&EnemyAffix::Frozen));
         assert!(affixes.contains(&EnemyAffix::Desecrator));
         assert!(affixes.contains(&EnemyAffix::Reflective));
+    }
+}
+
+#[cfg(test)]
+mod summon_target_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn nearby_living_guard_intercepts_but_dead_guard_does_not() {
+        let mut world = World::new();
+        let pet = world
+            .spawn((
+                Minion,
+                Transform::from_xyz(0.0, 0.0, 2.0),
+                SummonVitality {
+                    current: 20.0,
+                    max: 20.0,
+                    dead_secs: 0.0,
+                    guard_secs: 0.0,
+                    guard_multiplier: 0.45,
+                },
+            ))
+            .id();
+        let target = world
+            .run_system_once(|pets: MinionDamageQuery| {
+                minion_attack_target(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, &pets)
+            })
+            .unwrap();
+        assert_eq!(target.map(|(entity, _)| entity), Some(pet));
+        world.get_mut::<SummonVitality>(pet).unwrap().current = 0.0;
+        assert!(
+            world
+                .run_system_once(|pets: MinionDamageQuery| {
+                    minion_attack_target(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, &pets)
+                })
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn fast_projectile_hits_guard_between_frame_endpoints() {
+        let start = Vec3::new(-3.0, 0.8, 0.0);
+        assert!(projectile_segment_hits(
+            start,
+            Vec3::X * 6.0,
+            Vec3::Y * 0.8,
+            0.3
+        ));
+        assert!(!projectile_segment_hits(
+            start,
+            Vec3::X * 6.0,
+            Vec3::new(0.0, 0.8, 1.0),
+            0.3
+        ));
+        assert!(!projectile_segment_hits(start, Vec3::X, Vec3::Y * 0.8, 0.3));
     }
 }

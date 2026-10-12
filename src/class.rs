@@ -10,16 +10,23 @@ pub enum HeroClass {
     Warden,
     Stalker,
     Embercaller,
+    Soulbinder,
 }
 
 impl HeroClass {
-    pub const ALL: [Self; 3] = [Self::Warden, Self::Stalker, Self::Embercaller];
+    pub const ALL: [Self; 4] = [
+        Self::Warden,
+        Self::Stalker,
+        Self::Embercaller,
+        Self::Soulbinder,
+    ];
 
     pub fn index(self) -> usize {
         match self {
             Self::Warden => 0,
             Self::Stalker => 1,
             Self::Embercaller => 2,
+            Self::Soulbinder => 3,
         }
     }
 }
@@ -125,6 +132,7 @@ pub enum ResourceKind {
     Fury,
     Malice,
     Arcana,
+    Soul,
 }
 
 impl ResourceKind {
@@ -133,6 +141,7 @@ impl ResourceKind {
             Self::Fury => "fury",
             Self::Malice => "malice",
             Self::Arcana => "arcana",
+            Self::Soul => "soul",
         }
     }
 }
@@ -160,9 +169,22 @@ pub enum ProjectileArt {
     SunderWave,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummonCommand {
+    Recall,
+    Exchange,
+    Volley,
+    Bulwark,
+    Overdrive,
+    Sacrifice,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StrikeShape {
+    /// A paid order resolved by the class-owned spirit controller.
+    Command { command: SummonCommand },
     /// A frontal melee arc reaching `range` from the hero.
     Arc { range: f32 },
     /// Everything within `radius` of the hero.
@@ -195,6 +217,7 @@ impl StrikeShape {
             Self::Radial { radius } => radius,
             Self::Projectiles { range, .. } => range * 0.92,
             Self::GroundBlast { cast_range, .. } => cast_range,
+            Self::Command { .. } => 12.0,
         }
     }
 

@@ -92,14 +92,11 @@ pub struct CompanionPlugin;
 
 impl Plugin for CompanionPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-        if std::env::var("BEVY_OPEN_ARPG_SUMMON_REVIEW").is_ok() {
-            return;
-        }
         app.add_systems(OnEnter(GameState::InGame), spawn_companion)
             .add_systems(
                 Update,
                 (
+                    spawn_companion.before(companion_behavior),
                     cycle_companion_stance,
                     activate_sentinel_command,
                     companion_behavior,
@@ -356,8 +353,19 @@ fn spawn_sentinel_command_vfx(
 fn spawn_companion(
     mut commands: Commands,
     assets: Res<GameAssets>,
+    selected: Res<crate::class::SelectedClass>,
     player: Query<&Transform, With<Player>>,
+    existing: Query<Entity, With<CompanionEntity>>,
 ) {
+    if selected.0 == crate::class::HeroClass::Soulbinder {
+        for entity in &existing {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+    if !existing.is_empty() {
+        return;
+    }
     let Ok(player_transform) = player.single() else {
         return;
     };

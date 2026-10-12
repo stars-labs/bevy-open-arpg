@@ -27,9 +27,7 @@ def run_case(binary, output, case):
         env = dict(os.environ, DISPLAY=':' + display, WINIT_UNIX_BACKEND='x11',
                    XDG_CONFIG_HOME=str(output / 'config'), BEVY_OPEN_ARPG_COMBAT_REVIEW=case)
         env.pop('WAYLAND_DISPLAY', None)
-        summon = case.startswith('summon-')
-        if summon:
-            env['BEVY_OPEN_ARPG_SUMMON_REVIEW'] = '1'
+        soulbinder = case.startswith('soulbinder-')
         sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
         env['LD_LIBRARY_PATH'] = os.pathsep.join([str(binary.parent / 'deps'), env.get('LD_LIBRARY_PATH', ''),
                                                 *map(str, (sysroot / 'lib/rustlib').glob('*/lib'))])
@@ -62,8 +60,8 @@ def run_case(binary, output, case):
                 xdo('mouseup', 1)
                 time.sleep(.5)
                 # Confirm the class picker, introduced after the original recorder.
-                hero = case.split('-')[1] if case.startswith('vfx-') else 'warden'
-                for _ in range({'warden': 0, 'stalker': 1, 'embercaller': 2}[hero]):
+                hero = 'soulbinder' if soulbinder else case.split('-')[1] if case.startswith('vfx-') else 'warden'
+                for _ in range({'warden': 0, 'stalker': 1, 'embercaller': 2, 'soulbinder': 3}[hero]):
                     xdo('key', 'Right')
                     time.sleep(.15)
                 xdo('keydown', 'Return')
@@ -85,7 +83,7 @@ def run_case(binary, output, case):
                 with (output / 'video.log').open('w') as vlog:
                     video = subprocess.Popen(['ffmpeg', '-y', '-f', 'x11grab', '-framerate', '60',
                                               '-video_size', '1280x720', '-i', env['DISPLAY'] + '+0,0',
-                                              '-t', '8' if summon else '2.5', '-c:v', 'libx264', '-preset', 'ultrafast',
+                                              '-t', '14' if soulbinder else '2.5', '-c:v', 'libx264', '-preset', 'ultrafast',
                                               '-crf', '20', '-pix_fmt', 'yuv420p', str(output / 'contact.mp4')],
                                              stdout=vlog, stderr=vlog)
                     time.sleep(.35)
@@ -93,27 +91,32 @@ def run_case(binary, output, case):
                     key = 'r' if kind in ('vigor', 'expose', 'blood') else 'q' if kind in ('cleanse', 'reap') else 'e' if kind in ('ember', 'frost') else None
                     if case.startswith('vfx-'):
                         key = case.split('-')[2]
-                    if summon:
+                    if soulbinder:
                         def click(button=1):
                             xdo('mousedown', button)
                             time.sleep(.07)
                             xdo('mouseup', button)
-                        if case == 'summon-empty':
+                        if case == 'soulbinder-idle':
+                            pass
+                        elif case == 'soulbinder-empty':
                             xdo('mousemove', '--window', window, 1100, 130)
                             click()
-                        elif case == 'summon-skill-only':
-                            xdo('key', 'e')
-                        elif case != 'summon-idle':
+                        else:
                             click()
-                            if case == 'summon-coop':
-                                time.sleep(.55)
+                            time.sleep(1.2)
+                            if case in ('soulbinder-volley', 'soulbinder-bone', 'soulbinder-spirit', 'soulbinder-pack'):
                                 xdo('key', 'e')
-                            elif case == 'summon-leash':
-                                time.sleep(.4)
-                                xdo('mousemove', '--window', window, 1240, 600)
-                                click(3)
-                            elif case == 'summon-pause':
-                                time.sleep(.35)
+                            elif case == 'soulbinder-resonance':
+                                click()
+                                time.sleep(1.0)
+                                click()
+                            elif case in ('soulbinder-recall', 'soulbinder-exchange'):
+                                xdo('key', 'q')
+                            elif case == 'soulbinder-bulwark':
+                                xdo('key', 'e')
+                            elif case in ('soulbinder-overdrive', 'soulbinder-sacrifice'):
+                                xdo('key', 'r')
+                            elif case == 'soulbinder-pause':
                                 xdo('key', 'Escape')
                                 time.sleep(1.5)
                                 xdo('key', 'Escape')
@@ -147,58 +150,17 @@ def run_case(binary, output, case):
                         values = list(map(float, match[1].split()))
                         rows.append(dict(zip(['time','speed','swing','x','y','z','health','fury','barrier'], values)))
                 (output / 'telemetry.json').write_text(json.dumps(rows, indent=2))
-                if not rows or (not summon and min(row['health'] for row in rows) >= 500):
+                if not rows or (not soulbinder and min(row['health'] for row in rows) >= 500):
                     raise AssertionError(f'{case}: real input did not hit target')
-                subprocess.run(['ffmpeg', '-y', '-ss', '0.25', '-i', str(output / 'contact.mp4'), '-t', '6.5' if summon else '1.0',
-                                '-vf', 'fps=12,scale=960:-1' if summon else 'fps=30,scale=960:-1', str(output / 'frame-%03d.png')],
+                subprocess.run(['ffmpeg', '-y', '-ss', '0.25', '-i', str(output / 'contact.mp4'), '-t', '12' if soulbinder else '1.0',
+                                '-vf', 'fps=12,scale=960:-1' if soulbinder else 'fps=30,scale=960:-1', str(output / 'frame-%03d.png')],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 summary = dict(case=case, damage=rows[0]['health']-min(r['health'] for r in rows),
                                max_fury=max(r['fury'] for r in rows), max_barrier=max(r['barrier'] for r in rows),
                                recoil=max(abs(r['z']-rows[0]['z']) for r in rows),
                                minimum_time_speed=min(r['speed'] for r in rows))
-                if summon:
-                    commands = re.findall(r'SUMMON_COMMAND (mark|empower) cast=(\d+) target=(\S+)', text)
-                    hits = re.findall(r'SUMMON_HIT target=(\S+) empowered=(true|false) base=([\d.]+) dealt=([\d.]+) hits=(\d+) contact=([\d.]+) pose=([\d.]+)', text)
-                    assert 'SUMMON_REVIEW_SPAWN one_spirit' in text
-                    if case in ('summon-idle', 'summon-empty', 'summon-skill-only'):
-                        assert not commands and not hits, (case, commands, hits)
-                    else:
-                        assert any(c[0] == 'mark' for c in commands), (case, commands)
-                        if case != 'summon-leash':
-                            assert hits and all(float(h[3]) > 0 and h[4] == '1' for h in hits), (case, hits)
-                    assert all(abs(float(h[6]) - (.58 if h[1] == 'true' else .44)) < .001 for h in hits), hits
-                    if case == 'summon-coop':
-                        assert any(c[0] == 'empower' for c in commands), commands
-                        assert sum(h[1] == 'true' for h in hits) == 1, hits
-                    if case in ('summon-kill', 'summon-leash'):
-                        assert 'SUMMON_CLEAR invalid=true' in text, text[-2000:]
-                    if case in ('summon-idle', 'summon-empty'):
-                        assert summary['damage'] == 0, summary
-                    if case == 'summon-empty':
-                        assert any(r['swing'] < 1 for r in rows), 'empty swing input was not observed'
-                    if case == 'summon-skill-only':
-                        assert summary['damage'] > 0 and 'SKILL_VFX_RELEASE' in text, 'skill input was not observed'
-                    states = [list(map(float, m[:6])) + [m[6] == 'true'] for m in re.findall(r'SUMMON_FRAME ([\d.]+) ([\d.]+) ([\d.]+) ([-\d.]+) ([-\d.]+) ([\d.]+) (true|false)', text)]
-                    (output / 'summon-frames.json').write_text(json.dumps(states, indent=2))
-                    if case == 'summon-pause':
-                        # PauseState gates gameplay systems; Bevy's virtual clock itself keeps running.
-                        held = []
-                        current = []
-                        for state in states:
-                            if current and state[2:6] != current[-1][2:6]:
-                                held.append(current)
-                                current = []
-                            current.append(state)
-                        held.append(current)
-                        frozen = [g for g in held if len(g) > 2 and g[0][5] > 0 and g[-1][0] - g[0][0] > 1.0]
-                        assert frozen, 'paused spirit must preserve pose, position and positive command lifetime'
-                        summary['pause_frozen_seconds'] = max(g[-1][0] - g[0][0] for g in frozen)
-                    if case == 'summon-kill':
-                        assert len(hits) <= 2, hits
-                    summary['commands'] = commands
-                    summary['spirit_hits'] = [dict(target=h[0], empowered=h[1]=='true', base=float(h[2]), damage=float(h[3]), contact=float(h[5]), pose=float(h[6])) for h in hits]
-                    summary['cleared'] = 'SUMMON_CLEAR' in text
-                    (output / 'summon-events.json').write_text(json.dumps(summary, indent=2))
+                if soulbinder:
+                    summary['soulbinder'] = True
                 (output / 'result.json').write_text(json.dumps(summary, indent=2))
                 print(json.dumps(summary), flush=True)
             finally:

@@ -1,4 +1,4 @@
-//! Rules shared by the playable single-spirit experiment and its contract tests.
+//! Mark lifetime, contact timing and leash rules used by the shipping Soulbinder.
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -48,12 +48,8 @@ impl Bond {
             self.empowered = false;
         }
     }
-    pub fn consume(&mut self) -> f32 {
-        if std::mem::take(&mut self.empowered) {
-            25.0
-        } else {
-            9.0
-        }
+    pub fn take_empowered(&mut self) -> bool {
+        std::mem::take(&mut self.empowered)
     }
 }
 

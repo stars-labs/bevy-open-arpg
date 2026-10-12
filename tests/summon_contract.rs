@@ -1,4 +1,4 @@
-//! Exercise the same command state and contact timing used by the native prototype.
+//! Exercise the same command state and contact timing used by the shipping controller.
 #[path = "../src/combat/summon_logic.rs"]
 mod logic;
 use bevy::prelude::*;
@@ -25,8 +25,8 @@ fn coordinated_strike_requires_the_marked_target_and_consumes_once() {
     assert!(bond.observe(2, a, false));
     assert!(!bond.observe(3, b, true));
     assert!(bond.observe(4, a, true));
-    assert_eq!(bond.consume(), 25.0);
-    assert_eq!(bond.consume(), 9.0);
+    assert!(bond.take_empowered());
+    assert!(!bond.take_empowered());
 }
 #[test]
 fn scattered_hits_of_one_cast_never_switch_targets_or_rearm() {
@@ -37,7 +37,7 @@ fn scattered_hits_of_one_cast_never_switch_targets_or_rearm() {
     assert!(!bond.observe(11, b, false));
     assert_eq!(bond.target, Some(a));
     assert!(bond.observe(12, a, true));
-    assert_eq!(bond.consume(), 25.0);
+    assert!(bond.take_empowered());
     assert!(!bond.observe(12, a, true));
     assert!(!bond.empowered);
 }

@@ -1780,9 +1780,8 @@ mod tests {
             current: 90.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         let fortune = FortuneBuff {
             timer: Timer::from_seconds(0.0, TimerMode::Once),
@@ -2227,9 +2226,8 @@ mod tests {
             current: 0.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         let mut fortune = FortuneBuff {
             timer: Timer::from_seconds(10.0, TimerMode::Once),
@@ -2274,9 +2272,8 @@ mod tests {
             current: 0.0,
             max: 100.0,
             basic_gain: 18.0,
-            dash_cost: 25.0,
-            nova_cost: 45.0,
-            rupture_cost: 32.0,
+            regen_per_sec: 0.0,
+            cost_discount: 0.0,
         };
         let fortune = FortuneBuff {
             timer: Timer::from_seconds(0.0, TimerMode::Once),

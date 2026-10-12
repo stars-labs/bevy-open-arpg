@@ -4,10 +4,8 @@ mod ranged;
 mod review;
 mod skill_vfx;
 mod skill_vfx_art;
-#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
 mod summon_logic;
-#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-mod summon_review;
+pub(crate) mod summons;
 
 use crate::{
     GameState, RunStats,
@@ -604,6 +602,17 @@ impl StrikeWorld<'_, '_> {
             });
         }
         match shape {
+            StrikeShape::Command { command } => {
+                if let Some(skill) = profile.skill {
+                    self.commands.write_message(summons::SummonOrder {
+                        command,
+                        rune: skill.rune,
+                        damage: profile.damage,
+                        impact: profile.impact_scale,
+                    });
+                }
+                AttackOutcome::default()
+            }
             StrikeShape::Arc { range } => self.land(
                 hero,
                 resource,
@@ -821,8 +830,8 @@ impl Plugin for CombatPlugin {
         #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
         {
             review::install(app);
-            summon_review::install(app);
         }
+        summons::install(app);
         app.add_plugins((
             presentation::CombatPresentationPlugin,
             skill_vfx::SkillVfxPlugin,
@@ -880,6 +889,8 @@ fn player_attacks(
     mut world: StrikeWorld,
     mut player_core: CombatPlayerCoreQuery,
     player_stats: CombatPlayerStatsQuery,
+    summon_status: Res<summons::SummonStatus>,
+    minions: Query<&summons::SummonVitality, With<summons::Minion>>,
 ) {
     let Ok((
         player_entity,
@@ -1075,6 +1086,33 @@ fn player_attacks(
                 });
             }
             return;
+        }
+        if let StrikeShape::Command { command } = skill.strike {
+            let living = minions.iter().filter(|pet| pet.current > 0.0).count();
+            let marked = summon_status.marked.is_some_and(|target| {
+                world
+                    .enemies
+                    .get(target)
+                    .is_ok_and(|(_, pose, _, health, ..)| {
+                        health.current > 0.0
+                            && flat_distance(player_transform.translation, pose.translation)
+                                <= skill.strike.reach()
+                    })
+            });
+            if !summons::can_command(command, living, marked) {
+                inputs.input_buffer.clear(slot);
+                if pressed {
+                    world.combat_events.write(CombatEvent {
+                        text: if living == 0 {
+                            "契灵正在重聚，请稍候"
+                        } else {
+                            "先用普攻标记目标，再指挥齐击"
+                        }
+                        .to_string(),
+                    });
+                }
+                continue;
+            }
         }
         animation.face_direction(facing);
         let cost = fury.skill_cost(skill.cost) * talents.fury_cost_multiplier();
@@ -2820,6 +2858,24 @@ fn despawn_combat_vfx(
 mod tests {
     use super::*;
     use crate::data::EnemyAttackKind;
+    fn basic_profile(
+        damage: f32,
+        crit_chance: f32,
+        legendary_powers: LegendaryPowerSet,
+    ) -> StrikeProfile {
+        StrikeProfile {
+            damage,
+            impact_scale: 1.0,
+            crit_chance,
+            legendary_powers,
+            skill: None,
+            hit_stop: true,
+            long_shot: None,
+            cast: 1,
+            fury_bonus: 0.0,
+            barrier_reward: 0.0,
+        }
+    }
 
     fn power_set(power: LegendaryPower) -> LegendaryPowerSet {
         LegendaryPowerSet::new(power, LegendaryPower::None)
@@ -2852,13 +2908,8 @@ mod tests {
             (0.34_f32 - basic_remaining_secs).clamp(0.0, 0.34),
         ));
         SkillCooldowns {
-            dash: Timer::from_seconds(1.0, TimerMode::Once),
-            nova: Timer::from_seconds(1.0, TimerMode::Once),
-            rupture: Timer::from_seconds(1.0, TimerMode::Once),
+            slots: std::array::from_fn(|_| Timer::from_seconds(1.0, TimerMode::Once)),
             basic,
-            dash_base: 1.0,
-            nova_base: 1.0,
-            rupture_base: 1.0,
             basic_base: 0.34,
         }
     }
@@ -2872,7 +2923,9 @@ mod tests {
                 current: 0.0,
                 max: 50.0,
             };
-            grant_vigor_barrier(&mut world.commands(), &mut barrier, Vec3::ZERO, 6.0, hits);
+            if hits > 0 {
+                grant_vigor_barrier(&mut world.commands(), &mut barrier, Vec3::ZERO, 6.0);
+            }
             world.flush();
             assert_eq!(
                 world.resource::<Messages<TalentProcFeedback>>().len(),
@@ -2893,7 +2946,7 @@ mod tests {
                 ..default()
             };
             let cycle = 0.34 * talents.cooldown_multiplier();
-            let contact = attack_contact_delay(cycle);
+            let contact = cycle * attack_contact_fraction(PlayerAttackMotion::Basic);
             assert!(
                 (contact / cycle
                     - crate::player::attack_contact_fraction(PlayerAttackMotion::Basic))
@@ -2929,7 +2982,7 @@ mod tests {
             hit_stop: MessageWriter<'w, HitStopEvent>,
         }
         fn strike(mut commands: Commands, mut enemies: EnemyTargets, mut feedback: TestFeedback) {
-            apply_arc_damage(
+            apply_strike(
                 &mut commands,
                 &mut AttackFeedback {
                     combat_events: &mut feedback.combat_events,
@@ -2938,15 +2991,14 @@ mod tests {
                     hit_stop: &mut feedback.hit_stop,
                 },
                 &CombatVfxAssets::default(),
-                ArcAttack {
-                    origin: Vec3::ZERO,
-                    facing: Vec3::Z,
-                    range: 2.2,
-                    damage: 10.0,
-                    impact_scale: 1.0,
-                    crit_chance: 0.0,
-                    legendary_powers: LegendaryPowerSet::none(),
-                    skill: None,
+                Strike {
+                    area: HitArea::Arc {
+                        origin: Vec3::ZERO,
+                        forward: Vec3::Z,
+                        range: 2.2,
+                    },
+                    source: Vec3::ZERO,
+                    profile: basic_profile(10.0, 0.0, LegendaryPowerSet::none()),
                 },
                 &mut enemies,
                 &Bestiary::default(),
@@ -2995,24 +3047,26 @@ mod tests {
     #[test]
     fn queued_basic_attack_resolves_inside_visible_weapon_swing() {
         let facing = Vec3::new(0.7, 0.0, 0.7).normalize();
-        let pending = queued_basic_arc_attack(
+        let pending = queued_strike(
+            0.34,
             facing,
-            2.4,
-            18.0,
-            0.25,
-            power_set(LegendaryPower::Stormbrand),
+            facing * 2.4,
+            StrikeShape::Arc { range: 2.4 },
+            PlayerAttackMotion::Basic,
+            basic_profile(18.0, 0.25, power_set(LegendaryPower::Stormbrand)),
         );
-        let delay = attack_contact_delay(0.34);
+        let delay = 0.34 * attack_contact_fraction(PlayerAttackMotion::Basic);
         let progress = delay / 0.34;
 
         assert!((0.10..=0.18).contains(&delay));
         assert!((0.27..=0.53).contains(&progress));
         assert_eq!(pending.facing, facing);
-        assert_eq!(pending.range, 2.4);
-        assert_eq!(pending.damage, 18.0);
-        assert_eq!(pending.crit_chance, 0.25);
+        assert_eq!(pending.shape, StrikeShape::Arc { range: 2.4 });
+        assert_eq!(pending.profile.damage, 18.0);
+        assert_eq!(pending.profile.crit_chance, 0.25);
         assert!(
             pending
+                .profile
                 .legendary_powers
                 .contains(LegendaryPower::Stormbrand)
         );
@@ -3224,51 +3278,52 @@ mod tests {
     fn skill_input_buffer_preserves_recent_skill_presses_briefly() {
         let mut buffer = SkillInputBuffer::default();
 
-        buffer.capture(true, false, true);
-        assert!(buffer.dash_requested());
-        assert!(!buffer.rupture_requested());
-        assert!(buffer.nova_requested());
+        buffer.capture(SkillSlot::Mobility);
+        buffer.capture(SkillSlot::Area);
+        assert!(buffer.requested(SkillSlot::Mobility));
+        assert!(!buffer.requested(SkillSlot::Finisher));
+        assert!(buffer.requested(SkillSlot::Area));
 
         buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.5);
-        assert!(buffer.dash_requested());
-        assert!(buffer.nova_requested());
+        assert!(buffer.requested(SkillSlot::Mobility));
+        assert!(buffer.requested(SkillSlot::Area));
 
-        buffer.clear_dash();
-        assert!(!buffer.dash_requested());
-        assert!(buffer.nova_requested());
+        buffer.clear(SkillSlot::Mobility);
+        assert!(!buffer.requested(SkillSlot::Mobility));
+        assert!(buffer.requested(SkillSlot::Area));
 
         buffer.tick(SKILL_INPUT_BUFFER_SECS);
-        assert!(!buffer.nova_requested());
+        assert!(!buffer.requested(SkillSlot::Area));
     }
 
     #[test]
     fn skill_input_buffer_refreshes_and_clears_each_skill_independently() {
         let mut buffer = SkillInputBuffer::default();
 
-        buffer.capture(false, true, false);
+        buffer.capture(SkillSlot::Finisher);
         buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.75);
-        assert!(buffer.rupture_requested());
+        assert!(buffer.requested(SkillSlot::Finisher));
 
-        buffer.capture(false, true, false);
+        buffer.capture(SkillSlot::Finisher);
         buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.75);
-        assert!(buffer.rupture_requested());
+        assert!(buffer.requested(SkillSlot::Finisher));
 
-        buffer.clear_rupture();
-        assert!(!buffer.rupture_requested());
+        buffer.clear(SkillSlot::Finisher);
+        assert!(!buffer.requested(SkillSlot::Finisher));
 
-        buffer.capture(true, false, false);
+        buffer.capture(SkillSlot::Mobility);
         buffer.tick(SKILL_INPUT_BUFFER_SECS + 0.01);
-        assert!(!buffer.dash_requested());
+        assert!(!buffer.requested(SkillSlot::Mobility));
     }
 
     #[test]
     fn rune_damage_multipliers_match_tradeoffs() {
-        assert_eq!(dash_damage_multiplier(DashRune::Cleanse), 1.0);
-        assert!(dash_damage_multiplier(DashRune::Reap) < 1.0);
-        assert_eq!(nova_damage_multiplier(NovaRune::Ember), 1.0);
-        assert!(nova_damage_multiplier(NovaRune::Frost) < 1.0);
-        assert_eq!(rupture_damage_multiplier(RuptureRune::Expose), 1.0);
-        assert!(rupture_damage_multiplier(RuptureRune::Hemorrhage) < 1.0);
+        assert_eq!(Rune::Cleanse.damage_multiplier(), 1.0);
+        assert!(Rune::Reap.damage_multiplier() < 1.0);
+        assert_eq!(Rune::Ember.damage_multiplier(), 1.0);
+        assert!(Rune::Frost.damage_multiplier() < 1.0);
+        assert_eq!(Rune::Expose.damage_multiplier(), 1.0);
+        assert!(Rune::Hemorrhage.damage_multiplier() < 1.0);
     }
 
     #[test]
@@ -3337,38 +3392,21 @@ mod tests {
     }
 
     #[test]
-    fn rupture_runes_report_distinct_effects() {
-        assert_eq!(
-            rupture_effect_text(RuptureRune::Expose, 2),
-            "Rupture exposed 2 enemies"
-        );
-        assert_eq!(
-            rupture_effect_text(RuptureRune::Hemorrhage, 2),
-            "Rupture bleeding 2 enemies"
-        );
-    }
-
-    #[test]
     fn skill_cast_feedback_names_runes_and_scales_impact() {
         assert_eq!(
-            skill_cast_text(SkillCast::Dash(DashRune::Reap)),
-            "Reap Dash"
+            skill_cast_text("Heavy Cut", Rune::Hemorrhage),
+            "Hemorrhage Heavy Cut"
         );
         assert_eq!(
-            skill_cast_text(SkillCast::Rupture(RuptureRune::Hemorrhage)),
-            "Hemorrhage Rupture"
+            skill_cast_text("Frost Nova", Rune::Frost),
+            "Frost Frost Nova"
         );
-        assert_eq!(
-            skill_cast_text(SkillCast::Nova(NovaRune::Frost)),
-            "Frost Nova"
-        );
-
-        let dash = skill_cast_screen_shake(SkillCast::Dash(DashRune::Cleanse));
-        let rupture = skill_cast_screen_shake(SkillCast::Rupture(RuptureRune::Expose));
-        let nova = skill_cast_screen_shake(SkillCast::Nova(NovaRune::Ember));
-        assert!(dash.intensity < rupture.intensity);
-        assert!(rupture.intensity < nova.intensity);
-        assert!(dash.duration_secs < nova.duration_secs);
+        let mobility = skill_cast_screen_shake(SkillSlot::Mobility);
+        let finisher = skill_cast_screen_shake(SkillSlot::Finisher);
+        let area = skill_cast_screen_shake(SkillSlot::Area);
+        assert!(mobility.intensity < finisher.intensity);
+        assert!(finisher.intensity < area.intensity);
+        assert!(mobility.duration_secs < area.duration_secs);
     }
 
     #[test]
@@ -3378,7 +3416,7 @@ mod tests {
         assert!(large > small);
         assert_eq!(nova_cast_scale(0.0), 1.10);
         assert_eq!(nova_cast_scale(99.0), 2.85);
-        assert!(nova_cast_lifetime(NovaRune::Frost) > nova_cast_lifetime(NovaRune::Ember));
+        assert!(nova_cast_lifetime(Some(Rune::Frost)) > nova_cast_lifetime(Some(Rune::Ember)));
 
         let transform = nova_cast_transform(Vec3::new(1.0, 0.0, -2.0), 5.5);
         assert_eq!(transform.translation, Vec3::new(1.0, 0.18, -2.0));
@@ -3387,7 +3425,9 @@ mod tests {
         let ring = nova_outer_ring_transform(Vec3::new(1.0, 0.0, -2.0), 5.5);
         assert_eq!(ring.translation, Vec3::new(1.0, 0.10, -2.0));
         assert!(ring.scale.x > transform.scale.x);
-        assert!(nova_outer_ring_lifetime(NovaRune::Frost) > nova_cast_lifetime(NovaRune::Frost));
+        assert!(
+            nova_outer_ring_lifetime(Some(Rune::Frost)) > nova_cast_lifetime(Some(Rune::Frost))
+        );
     }
 
     #[test]
@@ -3650,28 +3690,22 @@ mod tests {
         let mut combo = CombatComboState::default();
         assert_eq!(combo.active_primer(), None);
 
-        combo.prime(ComboPrimer::Rupture);
-        assert_eq!(combo.active_primer(), Some(ComboPrimer::Rupture));
+        combo.prime(SkillSlot::Finisher);
+        assert_eq!(combo.active_primer(), Some(SkillSlot::Finisher));
         assert!(combo_finisher_allowed(
-            ComboPrimer::Rupture,
-            ComboFinisher::Dash
+            SkillSlot::Finisher,
+            SkillSlot::Mobility
         ));
-        assert!(combo_finisher_allowed(
-            ComboPrimer::Rupture,
-            ComboFinisher::Nova
-        ));
-        assert!(!combo_finisher_allowed(
-            ComboPrimer::Nova,
-            ComboFinisher::Nova
-        ));
+        assert!(combo_finisher_allowed(SkillSlot::Finisher, SkillSlot::Area));
+        assert!(!combo_finisher_allowed(SkillSlot::Area, SkillSlot::Area));
 
         combo
             .timer
             .tick(std::time::Duration::from_secs_f32(COMBO_WINDOW_SECS + 0.1));
         assert_eq!(combo.active_primer(), None);
 
-        combo.prime(ComboPrimer::Nova);
-        assert_eq!(combo.active_primer(), Some(ComboPrimer::Nova));
+        combo.prime(SkillSlot::Area);
+        assert_eq!(combo.active_primer(), Some(SkillSlot::Area));
     }
 
     #[test]
@@ -3680,39 +3714,40 @@ mod tests {
         assert_eq!(combo_fury_reward(9), 23.0);
         assert!(combo_screen_shake(4) > combo_screen_shake(1));
 
-        let label = combo_bonus_label(Some("Blood nova"), Some("Storm surge")).unwrap();
+        let label = combo_bonus_label(Some("Bloodburst"), Some("Storm surge")).unwrap();
         let text = combo_break_text(
-            ComboPrimer::Rupture,
-            ComboFinisher::Nova,
+            SkillSlot::Finisher,
+            SkillSlot::Area,
             3,
             17.0,
             14.0,
             0.0,
             Some(&label),
+            ResourceKind::Fury,
         );
         assert!(text.contains("Combo Break"));
-        assert!(text.contains("Rupture into Nova"));
+        assert!(text.contains("finisher into area skill"));
         assert!(text.contains("3 targets"));
         assert!(text.contains("+17 fury"));
         assert!(text.contains("+14 health"));
-        assert!(text.contains("Blood nova | Storm surge"));
+        assert!(text.contains("Bloodburst | Storm surge"));
     }
 
     #[test]
     fn combo_chain_bonus_adds_route_specific_finisher_payoffs() {
-        let cull = combo_chain_bonus(ComboPrimer::Rupture, ComboFinisher::Dash, 1);
-        let blood = combo_chain_bonus(ComboPrimer::Rupture, ComboFinisher::Nova, 4);
-        let frostbreak = combo_chain_bonus(ComboPrimer::Nova, ComboFinisher::Dash, 4);
-        let invalid = combo_chain_bonus(ComboPrimer::Nova, ComboFinisher::Nova, 4);
+        let cull = combo_chain_bonus(SkillSlot::Finisher, SkillSlot::Mobility, 1);
+        let blood = combo_chain_bonus(SkillSlot::Finisher, SkillSlot::Area, 4);
+        let frostbreak = combo_chain_bonus(SkillSlot::Area, SkillSlot::Mobility, 4);
+        let invalid = combo_chain_bonus(SkillSlot::Area, SkillSlot::Area, 4);
 
         assert_eq!(cull.barrier, 8.0);
-        assert_eq!(cull.label, Some("Cull dash"));
+        assert_eq!(cull.label, Some("Cull"));
         assert_eq!(blood.fury, 8.0);
         assert_eq!(blood.healing, 17.0);
-        assert_eq!(blood.label, Some("Blood nova"));
+        assert_eq!(blood.label, Some("Bloodburst"));
         assert_eq!(frostbreak.fury, 10.0);
         assert_eq!(frostbreak.barrier, 22.0);
-        assert_eq!(frostbreak.label, Some("Frostbreak dash"));
+        assert_eq!(frostbreak.label, Some("Breakthrough"));
         assert_eq!(invalid.fury, 0.0);
         assert_eq!(invalid.healing, 0.0);
         assert_eq!(invalid.barrier, 0.0);
@@ -3746,13 +3781,14 @@ mod tests {
         assert_eq!(barrier.grant(ashen.barrier), ashen.barrier);
 
         let text = combo_break_text(
-            ComboPrimer::Nova,
-            ComboFinisher::Dash,
+            SkillSlot::Area,
+            SkillSlot::Mobility,
             4,
             combo_fury_reward(4) + reliquary.fury,
             blood.healing,
             ashen.barrier,
             reliquary.label,
+            ResourceKind::Fury,
         );
         assert!(text.contains("+22 health"));
         assert!(text.contains("+28 barrier"));
@@ -3779,36 +3815,36 @@ mod tests {
     }
 
     #[test]
-    fn legendary_power_skill_synergy_maps_each_power_to_matching_runes() {
-        assert!(legendary_power_skill_synergy(
+    fn legendary_power_rune_synergy_maps_each_power_to_matching_runes() {
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Emberbrand,
-            Some(SkillCast::Nova(NovaRune::Ember))
+            Some(Rune::Ember)
         ));
-        assert!(legendary_power_skill_synergy(
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Emberbrand,
-            Some(SkillCast::Rupture(RuptureRune::Hemorrhage))
+            Some(Rune::Hemorrhage)
         ));
-        assert!(legendary_power_skill_synergy(
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Frostbrand,
-            Some(SkillCast::Nova(NovaRune::Frost))
+            Some(Rune::Frost)
         ));
-        assert!(legendary_power_skill_synergy(
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Stormbrand,
-            Some(SkillCast::Dash(DashRune::Reap))
+            Some(Rune::Reap)
         ));
-        assert!(legendary_power_skill_synergy(
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Soulreaver,
-            Some(SkillCast::Rupture(RuptureRune::Hemorrhage))
+            Some(Rune::Hemorrhage)
         ));
-        assert!(legendary_power_skill_synergy(
+        assert!(legendary_power_rune_synergy(
             LegendaryPower::Aegisbrand,
-            Some(SkillCast::Dash(DashRune::Cleanse))
+            Some(Rune::Cleanse)
         ));
-        assert!(!legendary_power_skill_synergy(
+        assert!(!legendary_power_rune_synergy(
             LegendaryPower::Frostbrand,
-            Some(SkillCast::Nova(NovaRune::Ember))
+            Some(Rune::Ember)
         ));
-        assert!(!legendary_power_skill_synergy(
+        assert!(!legendary_power_rune_synergy(
             LegendaryPower::Stormbrand,
             None
         ));
@@ -3844,7 +3880,13 @@ mod tests {
 
         let rune_burning = legendary_burning(
             power_set(LegendaryPower::Emberbrand),
-            LegendaryProcTrigger::skill(false, SkillCast::Nova(NovaRune::Ember)),
+            LegendaryProcTrigger::skill(
+                false,
+                SkillCast {
+                    slot: SkillSlot::Area,
+                    rune: Rune::Ember,
+                },
+            ),
             40.0,
         )
         .unwrap();
@@ -3855,7 +3897,13 @@ mod tests {
 
         let combined = legendary_burning(
             attuned_power_set(LegendaryPower::Emberbrand),
-            LegendaryProcTrigger::skill(true, SkillCast::Rupture(RuptureRune::Hemorrhage)),
+            LegendaryProcTrigger::skill(
+                true,
+                SkillCast {
+                    slot: SkillSlot::Finisher,
+                    rune: Rune::Hemorrhage,
+                },
+            ),
             40.0,
         )
         .unwrap();
@@ -3889,7 +3937,13 @@ mod tests {
 
         let rune_chilled = legendary_chilled(
             power_set(LegendaryPower::Frostbrand),
-            LegendaryProcTrigger::skill(false, SkillCast::Nova(NovaRune::Frost)),
+            LegendaryProcTrigger::skill(
+                false,
+                SkillCast {
+                    slot: SkillSlot::Area,
+                    rune: Rune::Frost,
+                },
+            ),
         )
         .unwrap();
         assert_eq!(rune_chilled.slow_multiplier, 0.48);
@@ -3900,7 +3954,13 @@ mod tests {
         assert!(
             legendary_chilled(
                 attuned_power_set(LegendaryPower::Frostbrand),
-                LegendaryProcTrigger::skill(true, SkillCast::Rupture(RuptureRune::Expose))
+                LegendaryProcTrigger::skill(
+                    true,
+                    SkillCast {
+                        slot: SkillSlot::Finisher,
+                        rune: Rune::Expose
+                    }
+                )
             )
             .is_some()
         );
@@ -3944,7 +4004,13 @@ mod tests {
         assert_eq!(
             stormbrand_chain_damage(
                 power_set(LegendaryPower::Stormbrand),
-                LegendaryProcTrigger::skill(false, SkillCast::Dash(DashRune::Reap)),
+                LegendaryProcTrigger::skill(
+                    false,
+                    SkillCast {
+                        slot: SkillSlot::Mobility,
+                        rune: Rune::Reap
+                    }
+                ),
                 40.0
             ),
             Some(12.0)
@@ -3952,7 +4018,13 @@ mod tests {
         assert_eq!(
             stormbrand_chain_damage(
                 attuned_power_set(LegendaryPower::Stormbrand),
-                LegendaryProcTrigger::skill(true, SkillCast::Nova(NovaRune::Frost)),
+                LegendaryProcTrigger::skill(
+                    true,
+                    SkillCast {
+                        slot: SkillSlot::Area,
+                        rune: Rune::Frost
+                    }
+                ),
                 40.0
             ),
             Some(20.0)
@@ -3998,7 +4070,13 @@ mod tests {
         assert!(
             (legendary_life_steal(
                 power_set(LegendaryPower::Soulreaver),
-                LegendaryProcTrigger::skill(false, SkillCast::Rupture(RuptureRune::Hemorrhage)),
+                LegendaryProcTrigger::skill(
+                    false,
+                    SkillCast {
+                        slot: SkillSlot::Finisher,
+                        rune: Rune::Hemorrhage
+                    }
+                ),
                 40.0
             ) - 4.8)
                 .abs()
@@ -4007,7 +4085,13 @@ mod tests {
         assert!(
             (legendary_life_steal(
                 attuned_power_set(LegendaryPower::Soulreaver),
-                LegendaryProcTrigger::skill(true, SkillCast::Dash(DashRune::Reap)),
+                LegendaryProcTrigger::skill(
+                    true,
+                    SkillCast {
+                        slot: SkillSlot::Mobility,
+                        rune: Rune::Reap
+                    }
+                ),
                 40.0
             ) - 9.2)
                 .abs()
@@ -4052,7 +4136,13 @@ mod tests {
         assert_eq!(
             legendary_barrier(
                 power_set(LegendaryPower::Aegisbrand),
-                LegendaryProcTrigger::skill(false, SkillCast::Rupture(RuptureRune::Expose)),
+                LegendaryProcTrigger::skill(
+                    false,
+                    SkillCast {
+                        slot: SkillSlot::Finisher,
+                        rune: Rune::Expose
+                    }
+                ),
                 40.0
             ),
             5.6
@@ -4060,7 +4150,13 @@ mod tests {
         assert_eq!(
             legendary_barrier(
                 attuned_power_set(LegendaryPower::Aegisbrand),
-                LegendaryProcTrigger::skill(true, SkillCast::Dash(DashRune::Cleanse)),
+                LegendaryProcTrigger::skill(
+                    true,
+                    SkillCast {
+                        slot: SkillSlot::Mobility,
+                        rune: Rune::Cleanse
+                    }
+                ),
                 40.0
             ),
             10.4
@@ -4105,12 +4201,17 @@ mod tests {
     #[test]
     fn rupture_does_not_authorize_a_cast_on_empty_dead_or_unreachable_targets() {
         let target = |position, health| {
-            rupture_has_target(Vec3::ZERO, Vec3::Z, 3.1, [(position, health)].into_iter())
+            strike_has_target(
+                Vec3::ZERO,
+                Vec3::Z,
+                StrikeShape::Arc { range: 3.1 },
+                [(position, health)].into_iter(),
+            )
         };
-        assert!(!rupture_has_target(
+        assert!(!strike_has_target(
             Vec3::ZERO,
             Vec3::Z,
-            3.1,
+            StrikeShape::Arc { range: 3.1 },
             std::iter::empty()
         ));
         assert!(!target(Vec3::Z * 2.0, 0.0));

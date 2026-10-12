@@ -16,7 +16,7 @@ pub(crate) enum UiLanguage {
 }
 
 #[derive(Component)]
-pub(super) struct NativeLanguageName;
+pub(crate) struct NativeLanguageName;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct LocalizeText;
@@ -279,7 +279,12 @@ mod tests {
     fn journal_sentences_are_fully_chinese_and_restore_english() {
         let catalog = Catalog::default();
         for line in include_str!("../../assets/data/journal_zh_cn.tsv").lines() {
-            let (english, _) = line.split_once('\t').unwrap();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (english, _) = line
+                .split_once('\t')
+                .expect("translation must contain a tab");
             let mut cached = CachedText::new(english, None);
             cached.refresh(english, UiLanguage::Chinese, &catalog);
             assert!(
@@ -441,5 +446,52 @@ mod tests {
             "Lifeform_Custom_42"
         );
         assert_eq!(catalog.translate("生命\n130"), "生命\n130");
+    }
+    #[test]
+    fn every_story_scene_renders_complete_chinese_copy() {
+        use crate::story::StoryBeat;
+        let catalog = Catalog::default();
+        let beats = [
+            StoryBeat::Arrival,
+            StoryBeat::CacheRevealed,
+            StoryBeat::SealRecovered,
+            StoryBeat::SanctumOpened,
+            StoryBeat::SealWardenSlain,
+            StoryBeat::AltarDemand,
+            StoryBeat::KeeperAwakened,
+            StoryBeat::KeeperBloodied,
+            StoryBeat::Victory,
+            StoryBeat::HollowArrival,
+            StoryBeat::ChoirCacheRevealed,
+            StoryBeat::ChoirSealRecovered,
+            StoryBeat::BellCryptOpened,
+            StoryBeat::BellWardenSlain,
+            StoryBeat::SoulFontDemand,
+            StoryBeat::MatronAwakened,
+            StoryBeat::MatronBloodied,
+            StoryBeat::BastionVictory,
+            StoryBeat::CursedShrine,
+            StoryBeat::BloodObelisk,
+            StoryBeat::ReliquaryVault,
+            StoryBeat::EmberRift,
+            StoryBeat::AshenPylon,
+        ];
+        for beat in beats {
+            let scene = crate::story_content::story_scene(beat);
+            let mut human_copy = vec![beat.title(), beat.line(), scene.next_action];
+            for line in scene.lines {
+                human_copy.extend([line.speaker, line.text]);
+            }
+            for source in human_copy {
+                let localized = catalog.translate(source);
+                assert!(
+                    !localized.chars().any(|c| c.is_ascii_alphabetic()),
+                    "{beat:?}: {source} => {localized}"
+                );
+            }
+        }
+        assert_eq!(catalog.translate("Steward Edda"), "执事艾达");
+        assert_eq!(catalog.translate("Quartermaster Vey"), "军需官维伊");
+        assert_eq!(catalog.translate("Sentinel, the Reliquary is falling. Three stolen seals bind Malrec below the ash gate."),"守卫，圣匣正走向覆灭。被夺走的三道封印，将马尔雷克束缚在灰烬之门下。");
     }
 }

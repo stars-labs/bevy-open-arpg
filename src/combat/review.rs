@@ -9,6 +9,7 @@ struct ReviewCase {
     initialized: bool,
     target: Option<Entity>,
     recorded: u32,
+    boss_requested: bool,
 }
 
 pub(super) fn install(app: &mut App) {
@@ -21,6 +22,7 @@ pub(super) fn install(app: &mut App) {
         initialized: false,
         target: None,
         recorded: 0,
+        boss_requested: false,
     })
     .add_systems(
         Update,
@@ -57,6 +59,7 @@ fn prepare(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     catalog: Res<ClassCatalog>,
     selected: Res<SelectedClass>,
+    mut summon_talents: Query<&mut summons::SummonTalents, With<Player>>,
 ) {
     case.elapsed += time.delta_secs();
     if case.elapsed < 2.0 || case.initialized {
@@ -76,9 +79,25 @@ fn prepare(
     else {
         return;
     };
+    if case.name == "soulbinder-boss" && !enemies.iter().any(|entry| entry.2.id == "keeper") {
+        if !case.boss_requested {
+            commands.write_message(crate::chapter::SpawnBoss);
+            case.boss_requested = true;
+        }
+        return;
+    }
     let Some(target) = enemies
         .iter()
-        .filter(|entry| matches!(entry.2.id.as_str(), "skeleton" | "ashbone_guard"))
+        .filter(|entry| {
+            let wanted = if case.name == "soulbinder-boss" {
+                "keeper"
+            } else if case.name == "soulbinder-projectile" {
+                "cultist"
+            } else {
+                "skeleton"
+            };
+            entry.2.id == wanted || (wanted == "skeleton" && entry.2.id == "ashbone_guard")
+        })
         .min_by(|a, b| {
             a.1.translation
                 .distance_squared(hero.translation)
@@ -101,6 +120,34 @@ fn prepare(
         "frost" => loadout.toggle_rune(SkillSlot::Area),
         _ => {}
     }
+    let soulbinder_case = case.name.starts_with("soulbinder-");
+    if soulbinder_case {
+        if let Ok(mut summon_talents) = summon_talents.single_mut() {
+            *summon_talents = summons::SummonTalents::default();
+            if case.name == "soulbinder-bone" {
+                summon_talents.bone = 3;
+            }
+            if case.name == "soulbinder-spirit" {
+                summon_talents.spirit = 3;
+            }
+            if case.name == "soulbinder-resonance" {
+                summon_talents.spirit = 1;
+            }
+        }
+        if case.name == "soulbinder-exchange" {
+            loadout.alt[SkillSlot::Mobility.index()] = true;
+        }
+        if case.name == "soulbinder-bulwark" {
+            loadout.alt[SkillSlot::Area.index()] = true;
+        }
+        if case.name == "soulbinder-sacrifice" {
+            loadout.alt[SkillSlot::Finisher.index()] = true;
+        }
+    }
+    let active_enemy = matches!(
+        case.name.as_str(),
+        "soulbinder-melee" | "soulbinder-projectile" | "soulbinder-boss" | "soulbinder-pack"
+    );
     let visual_case = case.name.starts_with("vfx-");
     let parts: Vec<_> = case.name.split('-').collect();
     let visual_slot = match parts.get(2).copied() {
@@ -121,9 +168,14 @@ fn prepare(
     damage.0 = 0.0;
     health.current = health.max;
     // Every first-tier skill must be castable; nothing else here reads the level.
-    level.level = level.level.max(if visual_case { 6 } else { 3 });
+    level.level = level
+        .level
+        .max(if visual_case || soulbinder_case { 6 } else { 3 });
+    let mut pack_member = 0;
     for (entity, mut transform, mut enemy, mut health) in &mut enemies {
-        if entity != target {
+        let retained_pack_member =
+            case.name == "soulbinder-pack" && entity != target && pack_member < 2;
+        if entity != target && !retained_pack_member {
             commands.entity(entity).despawn();
             continue;
         }
@@ -132,25 +184,36 @@ fn prepare(
             .equipped(&loadout, visual_slot)
             .0
             .movement;
-        let distance = if matches!(kind, "cleanse" | "reap")
+        let distance = if soulbinder_case {
+            4.0
+        } else if matches!(kind, "cleanse" | "reap")
             || (visual_case && matches!(movement, Movement::Toward(_) | Movement::Leap(_)))
         {
             4.1
         } else {
             1.6
         };
-        transform.translation = hero.translation + Vec3::NEG_Z * distance;
-        enemy.affixes.clear();
-        enemy.move_speed = 0.0;
-        enemy.aggro_range = 0.0;
-        enemy.attack_damage = 0.0;
-        enemy.attack_timer = Timer::from_seconds(1000.0, TimerMode::Once);
-        health.max = 500.0;
-        health.current = if case.name == "summon-kill" {
-            38.0
+        let flank = if retained_pack_member {
+            pack_member += 1;
+            if pack_member == 1 { -1.0 } else { 1.0 }
         } else {
-            500.0
+            0.0
         };
+        transform.translation = hero.translation + Vec3::NEG_Z * distance + Vec3::X * flank;
+        enemy.affixes.clear();
+        if active_enemy {
+            enemy.move_speed = 1.0;
+            enemy.aggro_range = 12.0;
+            enemy.attack_damage = 16.0;
+            enemy.attack_timer = Timer::from_seconds(1.0, TimerMode::Once);
+        } else {
+            enemy.move_speed = 0.0;
+            enemy.aggro_range = 0.0;
+            enemy.attack_damage = 0.0;
+            enemy.attack_timer = Timer::from_seconds(1000.0, TimerMode::Once);
+        }
+        health.max = 500.0;
+        health.current = 500.0;
         if let Ok((camera, camera_transform)) = cameras.single()
             && let Ok(point) =
                 camera.world_to_viewport(camera_transform, transform.translation + Vec3::Y * 0.6)
@@ -171,8 +234,9 @@ fn record(
     virtual_time: Res<Time<Virtual>>,
     mut case: ResMut<ReviewCase>,
     mut intent: ResMut<BasicAttackIntent>,
-    player: Query<(&Fury, &Barrier, &PlayerAnimation), With<Player>>,
-    enemies: Query<(&Transform, &Health), (With<Enemy>, Without<Player>)>,
+    player: Query<(&Fury, &Barrier, &PlayerAnimation, &Transform, &Health), With<Player>>,
+    minions: Query<(Entity, &Transform, &summons::SummonVitality), With<summons::Minion>>,
+    enemies: Query<(Entity, &Enemy, &Transform, &Health), (With<Enemy>, Without<Player>)>,
 ) {
     if !case.initialized || case.recorded >= 1800 {
         return;
@@ -180,16 +244,49 @@ fn record(
     let Some(target) = case.target else {
         return;
     };
-    let Ok((transform, health)) = enemies.get(target) else {
+    let Ok((_, _, transform, health)) = enemies.get(target) else {
         return;
     };
-    let Ok((fury, barrier, animation)) = player.single() else {
+    let Ok((fury, barrier, animation, hero, hero_health)) = player.single() else {
         return;
     };
     if health.current < 500.0 {
         intent.target = None;
     }
     case.recorded += 1;
+    if case.name.starts_with("soulbinder-") {
+        for (entity, enemy, _, health) in &enemies {
+            info!(
+                "SOULBINDER_ENEMY {} {:.5} {:?} {} {:.3}",
+                case.name,
+                time.elapsed_secs_f64(),
+                entity,
+                enemy.id,
+                health.current
+            );
+        }
+        info!(
+            "SOULBINDER_HERO {} {:.5} {:.4} {:.4} {:.3}",
+            case.name,
+            time.elapsed_secs_f64(),
+            hero.translation.x,
+            hero.translation.z,
+            hero_health.current
+        );
+        for (entity, transform, vitality) in &minions {
+            info!(
+                "SOULBINDER_MINION {} {:.5} {:?} {:.4} {:.4} {:.3} {:.3} {:.3}",
+                case.name,
+                time.elapsed_secs_f64(),
+                entity,
+                transform.translation.x,
+                transform.translation.z,
+                vitality.current,
+                vitality.max,
+                vitality.dead_secs
+            );
+        }
+    }
     info!(
         "COMBAT_REVIEW_FRAME {} {:.5} {:.5} {:.5} {:.4} {:.4} {:.4} {:.3} {:.3} {:.3}",
         case.name,

@@ -22,11 +22,11 @@ Continuing from Chapter I carries the hero's level, equipment, inventory, talent
 
 ## Hero classes
 
-New campaigns start with a class selection: **Ashbound Warden** (melee sword and Fury), **Boneshot Stalker** (bow and Malice), or **Embercaller** (staff and Arcana). Each class has its own basic attack, passive, character model, six active skills and two rune choices per skill. Skills unlock across levels 1–6; equip one movement skill on `Q`, area skill on `E`, and finisher on `R` in the Skills & Talents panel (`K`). Class and loadout persist in native saves.
+New campaigns start with a class selection: **Ashbound Warden** (melee sword and Fury), **Boneshot Stalker** (bow and Malice), **Embercaller** (staff and Arcana), or **Soulbinder** (bonded spirits and Soul Energy). Each class has its own basic attack, passive, character model, six active skills and two rune choices per skill. Skills unlock across levels 1–6; equip one movement skill on `Q`, area skill on `E`, and finisher on `R` in the Skills & Talents panel (`K`). Class and loadout persist in native saves.
 
 Right-click moves; left-click attacks. The interface defaults to Simplified Chinese, with language selection in Settings. Skill releases follow their actual combat shape and damage timing.
 
-The current production build and 21 native skill recordings pass validation. The full unit suite remains blocked by 313 references to the pre-class skill API; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
+All 871 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
 
 ## Running
 
@@ -456,3 +456,7 @@ cargo test
 ```
 
 Interface typography, icon assets and interaction styling are documented in [UI style](docs/UI_STYLE.md).
+
+### Soulbinder
+
+Choose the fourth hero card to play the Soulbinder. Left-click hits mark prey for the bonded spirit; Q recalls or exchanges positions, E commands a volley or protective formation, and R empowers or sacrifices a spirit. Skills unlock through levels 1–6 and are configured in the Skills panel. Its separate talent page offers Bone Command (two guards and protection) and Spirit Covenant (resonance and coordinated strikes), with five points and mutually exclusive capstones. Minions take damage and reform after death; Recall does not bypass that delay. See [Soulbinder design](docs/SOULBINDER_DESIGN.md) for the combat loop and verification scope.

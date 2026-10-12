@@ -1,6 +1,6 @@
 # Changelog
 
-- Add an opt-in native development prototype for directed spirit summons: basic-hit marking, chasing, skill-triggered heavy attacks, and death/leash/pause safeguards, with measured input recordings.
+- Promote directed summons into the selectable Soulbinder class, with six command skills, two talent paths, authored hero and minion assets, minion survival, save persistence, and class-aware UI.
 
 - Add three selectable hero classes with distinct basic attacks, passives, resources, models, six active skills each, rune loadouts, level unlocks, and native save persistence.
 

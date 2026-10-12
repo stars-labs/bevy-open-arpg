@@ -4,6 +4,8 @@ use std::{fs, path::Path};
 fn chapter_runtime_assets_exist() {
     for path in [
         "assets/data/player.ron",
+        "assets/data/classes.ron",
+        "assets/data/summons.ron",
         "assets/data/enemies.ron",
         "assets/data/loot.ron",
         "assets/audio/ambient_theme.wav",
@@ -51,6 +53,22 @@ fn chapter_runtime_assets_exist() {
         "assets/models/headshot_burst.glb",
         "assets/models/healing_well.glb",
         "assets/models/health_pickup.glb",
+        "assets/models/hero_soulbinder.glb",
+        "assets/models/hero_soulbinder_arm.glb",
+        "assets/models/hero_soulbinder_leg.glb",
+        "assets/models/hero_soulbinder_mantle.glb",
+        "assets/models/soul_spirit.glb",
+        "assets/models/soul_spirit_arm.glb",
+        "assets/models/soul_spirit_leg.glb",
+        "assets/models/soul_spirit_mantle.glb",
+        "assets/models/bone_sentry.glb",
+        "assets/models/bone_sentry_arm.glb",
+        "assets/models/bone_sentry_leg.glb",
+        "assets/models/bone_sentry_mantle.glb",
+        "assets/models/soul_staff.glb",
+        "assets/models/soul_blade.glb",
+        "assets/images/generated/ui/class-portrait-soulbinder.png",
+        "assets/images/generated/ui/soulbinder-skill-icons.png",
         "assets/models/hero.glb",
         "assets/models/hero_arm.glb",
         "assets/models/hero_leg.glb",
@@ -173,6 +191,16 @@ fn webgpu_runtime_avoids_transparent_pbr_materials() {
 #[test]
 fn generated_ui_pngs_have_expected_ihdr() {
     for (path, expected_width, expected_height) in [
+        (
+            "assets/images/generated/ui/class-portrait-soulbinder.png",
+            768,
+            1024,
+        ),
+        (
+            "assets/images/generated/ui/soulbinder-skill-icons.png",
+            1792,
+            256,
+        ),
         (
             "assets/images/generated/ui/main-menu-reliquary-v2.png",
             1_672,

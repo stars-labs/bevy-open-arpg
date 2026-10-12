@@ -1,4 +1,4 @@
-//! Class choice overlay on the title screen: three cards, one descent.
+//! Class choice overlay on the title screen: four cards, one descent.
 use super::localization::{NativeLanguageName, UiLanguage};
 use super::menu::MenuAction;
 use super::*;
@@ -18,6 +18,14 @@ pub(crate) struct BeginDescent;
 
 #[derive(Component)]
 struct ClassSelectModal;
+#[derive(Component)]
+struct ClassViewport;
+#[derive(Component)]
+enum ClassLayoutElement {
+    Card,
+    Portrait,
+    Viewport,
+}
 #[derive(Component, Clone, Copy)]
 struct ClassCard(HeroClass);
 #[derive(Component, Clone, Copy)]
@@ -50,7 +58,12 @@ impl Plugin for ClassSelectPlugin {
             .add_systems(OnExit(GameState::MainMenu), close_class_select)
             .add_systems(
                 Update,
-                (interact_class_select, update_class_select)
+                (
+                    interact_class_select,
+                    resize_class_select,
+                    scroll_class_select,
+                    update_class_select,
+                )
                     .chain()
                     .run_if(in_state(GameState::MainMenu)),
             );
@@ -103,7 +116,7 @@ fn spawn_class_select(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: Val::Px(18.0),
+                row_gap: Val::Px(12.0),
                 padding: UiRect::all(Val::Px(24.0)),
                 display: Display::None,
                 ..default()
@@ -115,21 +128,32 @@ fn spawn_class_select(
             text(modal, &assets, ClassText::Title, 34.0, true, IVORY);
             text(modal, &assets, ClassText::Subtitle, 15.0, false, MUTED);
             modal
-                .spawn(Node {
-                    column_gap: Val::Px(18.0),
-                    row_gap: Val::Px(14.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    justify_content: JustifyContent::Center,
-                    max_width: Val::Percent(100.0),
-                    ..default()
-                })
+                .spawn((
+                    ClassViewport,
+                    ClassLayoutElement::Viewport,
+                    ScrollPosition::default(),
+                    Node {
+                        overflow: Overflow::scroll_y(),
+                        max_height: Val::Px(500.0),
+                        flex_shrink: 0.0,
+                        align_content: AlignContent::FlexStart,
+                        column_gap: Val::Px(12.0),
+                        row_gap: Val::Px(14.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
+                        max_width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ))
                 .with_children(|row| {
                     for class in HeroClass::ALL {
                         row.spawn((
                             Button,
                             ClassCard(class),
+                            ClassLayoutElement::Card,
                             Node {
-                                width: Val::Px(300.0),
+                                flex_shrink: 0.0,
+                                width: Val::Px(272.0),
                                 flex_direction: FlexDirection::Column,
                                 row_gap: Val::Px(8.0),
                                 padding: UiRect::all(Val::Px(12.0)),
@@ -141,12 +165,13 @@ fn spawn_class_select(
                         ))
                         .with_children(|card| {
                             card.spawn((
+                                ClassLayoutElement::Portrait,
                                 ImageNode::new(
                                     game_assets.ui_class_portraits[class.index()].clone(),
                                 ),
                                 Node {
                                     width: Val::Percent(100.0),
-                                    height: Val::Px(276.0),
+                                    height: Val::Px(230.0),
                                     ..default()
                                 },
                                 Pickable::IGNORE,
@@ -351,6 +376,7 @@ fn update_class_select(
     state: Res<ClassSelectState>,
     language: Res<UiLanguage>,
     catalog: Res<ClassCatalog>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut modals: Query<&mut Node, With<ClassSelectModal>>,
     mut cards: Query<(&ClassCard, &mut BorderColor, &mut BackgroundColor)>,
     mut texts: Query<(&ClassText, &mut Text)>,
@@ -390,9 +416,25 @@ fn update_class_select(
             }
             ClassText::Subtitle => {
                 if zh {
-                    "← → 切换 · 回车确认 · Esc 返回".to_string()
+                    if windows
+                        .single()
+                        .is_ok_and(|w| w.width() < 1200.0 || w.height() < 700.0)
+                    {
+                        "← → 切换 · 回车确认 · 滚轮浏览 · Esc 返回"
+                    } else {
+                        "← → 切换 · 回车确认 · Esc 返回"
+                    }
+                    .to_string()
                 } else {
-                    "← → switch · Enter to confirm · Esc to go back".to_string()
+                    if windows
+                        .single()
+                        .is_ok_and(|w| w.width() < 1200.0 || w.height() < 700.0)
+                    {
+                        "← → switch · Enter to confirm · Scroll to browse · Esc to go back"
+                    } else {
+                        "← → switch · Enter to confirm · Esc to go back"
+                    }
+                    .to_string()
                 }
             }
             ClassText::Confirm => {
@@ -427,14 +469,56 @@ fn update_class_select(
     }
 }
 
+fn resize_class_select(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut elements: Query<(&ClassLayoutElement, &mut Node)>,
+) {
+    let Ok(window) = windows.single() else { return };
+    let width = ((window.width() - 84.0) / 4.0).clamp(180.0, 272.0);
+    for (element, mut node) in &mut elements {
+        match element {
+            ClassLayoutElement::Card => node.width = Val::Px(width),
+            ClassLayoutElement::Portrait => {
+                node.height = Val::Px((window.height() * 0.24).clamp(120.0, 230.0))
+            }
+            ClassLayoutElement::Viewport => {
+                node.max_height = Val::Px((window.height() - 200.0).max(160.0))
+            }
+        }
+    }
+}
+fn scroll_class_select(
+    state: Res<ClassSelectState>,
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut viewports: Query<(&ComputedNode, &mut ScrollPosition), With<ClassViewport>>,
+) {
+    let delta: f32 = wheel
+        .read()
+        .map(|event| {
+            event.y
+                * if event.unit == bevy::input::mouse::MouseScrollUnit::Line {
+                    36.0
+                } else {
+                    1.0
+                }
+        })
+        .sum();
+    if !state.open {
+        return;
+    }
+    for (node, mut scroll) in &mut viewports {
+        let max = ((node.content_size.y - node.size.y) * node.inverse_scale_factor).max(0.0);
+        scroll.0.y = (scroll.0.y - delta).clamp(0.0, max);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn focus_wraps_around_the_three_classes() {
-        assert_eq!(next_class(HeroClass::Warden, -1), HeroClass::Embercaller);
-        assert_eq!(next_class(HeroClass::Embercaller, 1), HeroClass::Warden);
+    fn focus_wraps_around_the_four_classes() {
+        assert_eq!(next_class(HeroClass::Warden, -1), HeroClass::Soulbinder);
+        assert_eq!(next_class(HeroClass::Soulbinder, 1), HeroClass::Warden);
         assert_eq!(next_class(HeroClass::Warden, 1), HeroClass::Stalker);
     }
 

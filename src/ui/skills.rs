@@ -2,6 +2,8 @@
 //! `SkillLoadout` component that combat and saves use.
 use super::localization::{NativeLanguageName, UiLanguage};
 use super::*;
+#[path = "summon_talents.rs"]
+mod summon_talents;
 use crate::class::{ClassCatalog, ClassDef, Rune, SelectedClass, SkillLoadout, SkillSlot};
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,7 @@ enum SkillText {
 pub(super) struct SkillPanelPlugin;
 impl Plugin for SkillPanelPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(summon_talents::SummonTalentPlugin);
         app.init_resource::<BuildTab>().add_systems(
             Update,
             (
@@ -132,6 +135,7 @@ fn choice_button(parent: &mut ChildSpawnerCommands, basis: f32) -> Node {
     }
 }
 pub(super) fn spawn_page(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
+    summon_talents::spawn(parent, assets);
     parent
         .spawn((
             BuildPage(BuildTab::Skills),
@@ -327,11 +331,13 @@ fn choose_rune(
 fn choose_talent(
     open: Res<BuildOpen>,
     tab: Res<BuildTab>,
+    selected: Res<SelectedClass>,
     buttons: Query<(&Interaction, &TalentRankNode), Changed<Interaction>>,
     mut player: Query<(&mut Talents, &mut Health), With<Player>>,
     mut events: MessageWriter<CombatEvent>,
 ) {
-    if !open.open || *tab != BuildTab::Talents {
+    if !open.open || *tab != BuildTab::Talents || selected.0 == crate::class::HeroClass::Soulbinder
+    {
         return;
     }
     let Ok((mut talents, mut health)) = player.single_mut() else {
@@ -384,7 +390,12 @@ type TabStyleQuery<'w, 's> = Query<
 
 #[derive(SystemParam)]
 struct PageQueries<'w, 's> {
-    pages: Query<'w, 's, (&'static BuildPage, &'static mut Node)>,
+    pages: Query<
+        'w,
+        's,
+        (&'static BuildPage, &'static mut Node),
+        Without<summon_talents::SummonTalentPage>,
+    >,
     texts: Query<'w, 's, (&'static SkillText, &'static mut Text)>,
     skills: SkillChoiceStyleQuery<'w, 's>,
     runes: RuneChoiceStyleQuery<'w, 's>,
@@ -404,7 +415,9 @@ fn update_page(
     mut queries: PageQueries,
 ) {
     for (page, mut node) in &mut queries.pages {
-        node.display = if page.0 == *tab {
+        node.display = if page.0 == *tab
+            && !(page.0 == BuildTab::Talents && selected.0 == crate::class::HeroClass::Soulbinder)
+        {
             Display::Flex
         } else {
             Display::None
@@ -430,14 +443,25 @@ fn update_page(
     }
     if let Some(game_assets) = game_assets.as_deref() {
         for (icon, mut image) in &mut queries.icons {
+            let soulbinder = class.class == crate::class::HeroClass::Soulbinder;
+            let atlas = if soulbinder {
+                &game_assets.ui_soulbinder_skill_icons
+            } else {
+                &game_assets.ui_class_skill_icons
+            };
+            let atlas_class = if soulbinder {
+                crate::class::HeroClass::Warden
+            } else {
+                class.class
+            };
             let rect = atlas_rect(
                 UI_SKILL_ICON_CELL,
                 UI_SKILL_ICON_CELL,
                 CLASS_SKILL_ATLAS_COLUMNS,
-                class_skill_icon_index(class.class, Some(icon.0.slot), icon.0.alt),
+                class_skill_icon_index(atlas_class, Some(icon.0.slot), icon.0.alt),
             );
-            if image.rect != Some(rect) || image.image != game_assets.ui_class_skill_icons {
-                image.image = game_assets.ui_class_skill_icons.clone();
+            if image.rect != Some(rect) || image.image != *atlas {
+                image.image = atlas.clone();
                 image.rect = Some(rect);
             }
         }
@@ -564,6 +588,7 @@ pub(super) fn resource_name_zh(kind: crate::class::ResourceKind) -> &'static str
         crate::class::ResourceKind::Fury => "怒气",
         crate::class::ResourceKind::Malice => "杀意",
         crate::class::ResourceKind::Arcana => "魔能",
+        crate::class::ResourceKind::Soul => "魂能",
     }
 }
 
