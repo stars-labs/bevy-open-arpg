@@ -29,6 +29,7 @@ pub fn load_repeating_texture(asset_server: &AssetServer, path: &'static str) ->
 }
 
 #[derive(Resource)]
+#[cfg_attr(test, derive(Default))]
 pub struct GameAssets {
     pub hero: Handle<WorldAsset>,
     pub hero_arm: Handle<WorldAsset>,

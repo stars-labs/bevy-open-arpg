@@ -3122,7 +3122,10 @@ fn gain_xp(
         let talent_capacity = (selected.0 == HeroClass::Soulbinder).then(|| {
             summon_tree
                 .single()
-                .map_or(5, |tree| 5_u32.saturating_sub(tree.bone + tree.spirit))
+                .map_or(crate::combat::summon_progression::MAX_POINTS, |tree| {
+                    crate::combat::summon_progression::MAX_POINTS
+                        .saturating_sub(tree.bone + tree.spirit)
+                })
         });
         grant_player_xp(
             total_xp,
@@ -3184,27 +3187,27 @@ struct XpProgression<'a, 'w, 'e> {
 }
 
 fn grant_player_xp(xp: u32, progression: XpProgression) {
+    let level_cap = if progression.talent_capacity.is_some() {
+        crate::combat::summon_progression::LEVEL_CAP
+    } else {
+        CHAPTER_LEVEL_CAP
+    };
     let mut paragon_xp = xp;
-    if progression.level.level < CHAPTER_LEVEL_CAP {
+    if progression.level.level < level_cap {
         progression.level.xp += xp;
         progression.combat_events.write(CombatEvent {
             text: format!("Gained {xp} XP"),
         });
-        while progression.level.level < CHAPTER_LEVEL_CAP
+        while progression.level.level < level_cap
             && progression.level.xp >= progression.level.next_level_xp
         {
-            let mut reward = advance_player_level(
+            let reward = advance_player_level(
                 progression.level,
                 progression.health,
                 progression.damage_bonus,
                 progression.talents,
+                progression.talent_capacity,
             );
-            if let Some(capacity) = progression.talent_capacity
-                && progression.talents.points > capacity
-            {
-                progression.talents.points = capacity;
-                reward.points_gained = 0;
-            }
             let points = reward.points_gained;
             progression.level_ups.write(reward);
             progression.combat_events.write(CombatEvent {
@@ -3215,7 +3218,7 @@ fn grant_player_xp(xp: u32, progression: XpProgression) {
             });
             info!("Level up to {}", progression.level.level);
         }
-        if progression.level.level < CHAPTER_LEVEL_CAP {
+        if progression.level.level < level_cap {
             return;
         }
         paragon_xp = progression.level.xp;
@@ -3231,17 +3234,26 @@ fn advance_player_level(
     health: &mut Health,
     damage_bonus: &mut DamageBonus,
     talents: &mut Talents,
+    talent_capacity: Option<u32>,
 ) -> PlayerLevelUp {
     let previous_health = health.max;
     let previous_damage = damage_bonus.0;
     let previous_points = talents.points;
     level.xp -= level.next_level_xp;
     level.level += 1;
-    level.next_level_xp = (level.next_level_xp as f32 * 1.45).round() as u32;
+    level.next_level_xp = if talent_capacity.is_some() {
+        crate::combat::summon_progression::next_level_xp(level.next_level_xp)
+    } else {
+        (level.next_level_xp as f32 * 1.45).round() as u32
+    };
     health.max += 18.0;
     health.current = health.max;
     damage_bonus.0 += 2.0;
-    talents.points += 1;
+    if talent_capacity
+        .is_none_or(|capacity| level.level.is_multiple_of(2) && talents.points < capacity)
+    {
+        talents.points += 1;
+    }
     PlayerLevelUp {
         level: level.level,
         health_gained: health.max - previous_health,
@@ -3278,11 +3290,7 @@ fn grant_ember_paragon_xp(xp: u32, progression: XpProgression) {
             equipment.crit_chance,
         );
         apply_ember_paragon_rank(paragon.rank, health, damage_bonus, equipment);
-        let points_gained = if talent_capacity.is_none_or(|capacity| talents.points < capacity) {
-            1
-        } else {
-            0
-        };
+        let points_gained = if talent_capacity.is_none() { 1 } else { 0 };
         talents.points += points_gained;
         level_ups.write(PlayerLevelUp {
             level: level.level,
@@ -6074,7 +6082,7 @@ mod tests {
             capacity: 18,
         };
         let level = PlayerLevel {
-            level: 6,
+            level: 20,
             xp: 42,
             next_level_xp: 180,
         };
@@ -6153,7 +6161,7 @@ mod tests {
                 codex.clone(),
                 charm.clone(),
                 runes,
-                crate::combat::summons::SummonTalents { bone: 1, spirit: 2 },
+                crate::combat::summons::SummonTalents { bone: 6, spirit: 4 },
                 armory.clone(),
                 PotionBelt {
                     current: 1,
@@ -6276,7 +6284,7 @@ mod tests {
             *world
                 .get::<crate::combat::summons::SummonTalents>(target)
                 .unwrap(),
-            crate::combat::summons::SummonTalents { bone: 1, spirit: 2 }
+            crate::combat::summons::SummonTalents { bone: 6, spirit: 4 }
         );
         assert_eq!(world.get::<Armory>(target).unwrap(), &armory);
 
@@ -8847,6 +8855,105 @@ mod tests {
     }
 
     #[test]
+    fn soulbinder_real_xp_awards_even_level_points_through_twenty_then_only_paragon_stats() {
+        use crate::combat::summon_progression::{LEVEL_CAP, MAX_POINTS};
+        use bevy::ecs::system::SystemState;
+        let mut world = World::new();
+        world.init_resource::<Messages<CombatEvent>>();
+        world.init_resource::<Messages<PlayerLevelUp>>();
+        let mut writers =
+            SystemState::<(MessageWriter<CombatEvent>, MessageWriter<PlayerLevelUp>)>::new(
+                &mut world,
+            );
+        let mut level = PlayerLevel {
+            level: 1,
+            xp: 0,
+            next_level_xp: 100,
+        };
+        let mut paragon = EmberParagon::default();
+        let mut health = Health {
+            current: 100.0,
+            max: 100.0,
+        };
+        let mut damage = DamageBonus(0.0);
+        let mut equipment = bare_equipment();
+        let mut talents = Talents::default();
+        for expected_level in 2..=LEVEL_CAP {
+            let xp = level.next_level_xp
+                + if expected_level == LEVEL_CAP {
+                    paragon.next_rank_xp
+                } else {
+                    0
+                };
+            let (mut log, mut earned) = writers.get_mut(&mut world).unwrap();
+            grant_player_xp(
+                xp,
+                XpProgression {
+                    talent_capacity: Some(MAX_POINTS),
+                    level: &mut level,
+                    paragon: &mut paragon,
+                    health: &mut health,
+                    damage_bonus: &mut damage,
+                    equipment: &mut equipment,
+                    talents: &mut talents,
+                    combat_events: &mut log,
+                    level_ups: &mut earned,
+                },
+            );
+            assert_eq!(level.level, expected_level);
+            assert_eq!(talents.points, expected_level / 2);
+            assert_eq!(paragon.rank, u32::from(expected_level == LEVEL_CAP));
+        }
+        assert_eq!(talents.points, MAX_POINTS);
+        let before = (health.max, damage.0);
+        let xp = paragon.next_rank_xp;
+        {
+            let (mut log, mut earned) = writers.get_mut(&mut world).unwrap();
+            grant_player_xp(
+                xp,
+                XpProgression {
+                    talent_capacity: Some(MAX_POINTS),
+                    level: &mut level,
+                    paragon: &mut paragon,
+                    health: &mut health,
+                    damage_bonus: &mut damage,
+                    equipment: &mut equipment,
+                    talents: &mut talents,
+                    combat_events: &mut log,
+                    level_ups: &mut earned,
+                },
+            );
+        }
+        assert_eq!(level.level, LEVEL_CAP);
+        assert_eq!(paragon.rank, 2);
+        assert_eq!(talents.points, MAX_POINTS);
+        assert_eq!(health.max, before.0 + 12.0);
+        assert_eq!(damage.0, before.1);
+        let rewards: Vec<_> = world
+            .resource_mut::<Messages<PlayerLevelUp>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            rewards
+                .iter()
+                .map(|reward| reward.points_gained)
+                .sum::<u32>(),
+            MAX_POINTS
+        );
+        let first_paragon = rewards
+            .iter()
+            .find(|reward| reward.paragon_rank == 1)
+            .unwrap();
+        assert_eq!(first_paragon.damage_gained, 1.5);
+        assert_eq!(first_paragon.points_gained, 0);
+        let second_paragon = rewards.last().unwrap();
+        assert_eq!(second_paragon.paragon_rank, 2);
+        assert_eq!(second_paragon.health_gained, 12.0);
+        assert_eq!(second_paragon.damage_gained, 0.0);
+        assert_eq!(second_paragon.points_gained, 0);
+    }
+
+    #[test]
     fn capped_summon_talents_do_not_grant_unspendable_paragon_points() {
         use bevy::ecs::system::SystemState;
         for capacity in [0, 1] {
@@ -8858,7 +8965,7 @@ mod tests {
                 MessageWriter<PlayerLevelUp>,
             )>::new(&mut world);
             let mut level = PlayerLevel {
-                level: CHAPTER_LEVEL_CAP,
+                level: crate::combat::summon_progression::LEVEL_CAP,
                 xp: 0,
                 next_level_xp: 500,
             };
@@ -8893,11 +9000,8 @@ mod tests {
                 .drain()
                 .collect();
             assert_eq!(paragon.rank, 2);
-            assert_eq!(talents.points, capacity);
-            assert_eq!(
-                rewards.iter().map(|r| r.points_gained).sum::<u32>(),
-                capacity
-            );
+            assert_eq!(talents.points, 0);
+            assert_eq!(rewards.iter().map(|r| r.points_gained).sum::<u32>(), 0);
             assert!(
                 damage.0 > 0.0 && health.max > 100.0,
                 "stat progression must survive talent cap"

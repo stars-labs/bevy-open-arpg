@@ -1,5 +1,7 @@
 # Changelog
 
+- Deepen Soulbinder talents to twelve nodes across six tiers through level 20, with real retreat, flanking, rebirth, delayed strikes, Soul recovery and target relay; add an independent XP curve and scrollable talent paths.
+
 - Promote directed summons into the selectable Soulbinder class, with six command skills, two talent paths, authored hero and minion assets, minion survival, save persistence, and class-aware UI.
 
 - Add three selectable hero classes with distinct basic attacks, passives, resources, models, six active skills each, rune loadouts, level unlocks, and native save persistence.

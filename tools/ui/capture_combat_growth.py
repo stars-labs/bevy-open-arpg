@@ -96,15 +96,26 @@ def run_case(binary, output, case):
                             xdo('mousedown', button)
                             time.sleep(.07)
                             xdo('mouseup', button)
-                        if case == 'soulbinder-idle':
+                        if case in ('soulbinder-idle', 'soulbinder-retreat', 'soulbinder-rebirth'):
                             pass
+                        elif case == 'soulbinder-tree':
+                            xdo('key', 'k')
+                            time.sleep(.5)
+                            xdo('mousemove', '--window', window, 410, 124)
+                            xdo('click', 1)
+                            time.sleep(.5)
+                            capture('talents-top')
+                            xdo('mousemove', '--window', window, 550, 400)
+                            xdo('click', '--repeat', 10, '--delay', 80, 5)
+                            time.sleep(.5)
+                            capture('talents-bottom')
                         elif case == 'soulbinder-empty':
                             xdo('mousemove', '--window', window, 1100, 130)
                             click()
                         else:
                             click()
-                            time.sleep(1.2)
-                            if case in ('soulbinder-volley', 'soulbinder-bone', 'soulbinder-spirit', 'soulbinder-pack'):
+                            time.sleep(.2 if case == 'soulbinder-relay' else 1.2)
+                            if case in ('soulbinder-volley', 'soulbinder-bone', 'soulbinder-spirit', 'soulbinder-pack', 'soulbinder-aftershock', 'soulbinder-siphon', 'soulbinder-flank'):
                                 xdo('key', 'e')
                             elif case == 'soulbinder-resonance':
                                 click()
@@ -114,7 +125,7 @@ def run_case(binary, output, case):
                                 xdo('key', 'q')
                             elif case == 'soulbinder-bulwark':
                                 xdo('key', 'e')
-                            elif case in ('soulbinder-overdrive', 'soulbinder-sacrifice'):
+                            elif case in ('soulbinder-overdrive', 'soulbinder-sacrifice', 'soulbinder-relay'):
                                 xdo('key', 'r')
                             elif case == 'soulbinder-pause':
                                 xdo('key', 'Escape')

@@ -10,6 +10,8 @@ struct ReviewCase {
     target: Option<Entity>,
     recorded: u32,
     boss_requested: bool,
+    ready_elapsed: f32,
+    vitality_steps: u8,
 }
 
 pub(super) fn install(app: &mut App) {
@@ -23,6 +25,8 @@ pub(super) fn install(app: &mut App) {
         target: None,
         recorded: 0,
         boss_requested: false,
+        ready_elapsed: 0.0,
+        vitality_steps: 0,
     })
     .add_systems(
         Update,
@@ -50,19 +54,56 @@ fn prepare(
             &mut Health,
             &mut PlayerLevel,
         ),
-        With<Player>,
+        (With<Player>, Without<summons::Minion>),
     >,
     mut enemies: Query<
         (Entity, &mut Transform, &mut Enemy, &mut Health),
-        (With<Enemy>, Without<Player>),
+        (With<Enemy>, Without<Player>, Without<summons::Minion>),
     >,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     catalog: Res<ClassCatalog>,
     selected: Res<SelectedClass>,
     mut summon_talents: Query<&mut summons::SummonTalents, With<Player>>,
+    mut minions: Query<
+        (&mut summons::SummonVitality, &mut Transform),
+        (With<summons::Minion>, Without<Player>),
+    >,
 ) {
     case.elapsed += time.delta_secs();
-    if case.elapsed < 2.0 || case.initialized {
+    if case.initialized {
+        case.ready_elapsed += time.delta_secs();
+        if case.name == "soulbinder-retreat" && case.vitality_steps == 0 {
+            let mut count = 0;
+            let origin = player
+                .single_mut()
+                .map(|p| p.0.translation)
+                .unwrap_or_default();
+            for (mut vitality, mut position) in &mut minions {
+                position.translation = origin + Vec3::NEG_Z * 4.0 + Vec3::X * count as f32;
+                vitality.current = vitality.max * 0.2;
+                count += 1;
+            }
+            if count > 0 {
+                case.vitality_steps = 1;
+                info!("DEPTH_FIXTURE retreat health_fraction=0.2");
+            }
+        }
+        if case.name == "soulbinder-rebirth"
+            && ((case.vitality_steps == 0 && case.ready_elapsed >= 2.0)
+                || (case.vitality_steps == 1 && case.ready_elapsed >= 4.0))
+            && let Some((mut vitality, _)) = minions.iter_mut().next()
+            && vitality.current > 0.0
+        {
+            vitality.damage(10000.0);
+            case.vitality_steps += 1;
+            info!(
+                "DEPTH_FIXTURE controller_death step={}",
+                case.vitality_steps
+            );
+        }
+        return;
+    }
+    if case.elapsed < 2.0 {
         return;
     }
     let Ok((
@@ -124,6 +165,15 @@ fn prepare(
     if soulbinder_case {
         if let Ok(mut summon_talents) = summon_talents.single_mut() {
             *summon_talents = summons::SummonTalents::default();
+            match case.name.as_str() {
+                "soulbinder-aftershock" => summon_talents.spirit = 4,
+                "soulbinder-siphon" => summon_talents.spirit = 5,
+                "soulbinder-relay" => summon_talents.spirit = 6,
+                "soulbinder-retreat" => summon_talents.bone = 4,
+                "soulbinder-flank" => summon_talents.bone = 5,
+                "soulbinder-rebirth" => summon_talents.bone = 6,
+                _ => {}
+            }
             if case.name == "soulbinder-bone" {
                 summon_talents.bone = 3;
             }
@@ -171,10 +221,28 @@ fn prepare(
     level.level = level
         .level
         .max(if visual_case || soulbinder_case { 6 } else { 3 });
+    if matches!(
+        case.name.as_str(),
+        "soulbinder-tree"
+            | "soulbinder-aftershock"
+            | "soulbinder-siphon"
+            | "soulbinder-relay"
+            | "soulbinder-retreat"
+            | "soulbinder-flank"
+            | "soulbinder-rebirth"
+    ) {
+        level.level = 20;
+        talents.points = if case.name == "soulbinder-tree" {
+            10
+        } else {
+            4
+        };
+    }
     let mut pack_member = 0;
     for (entity, mut transform, mut enemy, mut health) in &mut enemies {
-        let retained_pack_member =
-            case.name == "soulbinder-pack" && entity != target && pack_member < 2;
+        let retained_pack_member = (case.name == "soulbinder-pack" && pack_member < 2
+            || case.name == "soulbinder-relay" && pack_member < 1)
+            && entity != target;
         if entity != target && !retained_pack_member {
             commands.entity(entity).despawn();
             continue;
@@ -213,8 +281,13 @@ fn prepare(
             enemy.attack_timer = Timer::from_seconds(1000.0, TimerMode::Once);
         }
         health.max = 500.0;
-        health.current = 500.0;
-        if let Ok((camera, camera_transform)) = cameras.single()
+        health.current = if case.name == "soulbinder-relay" && entity == target {
+            100.0
+        } else {
+            500.0
+        };
+        if entity == target
+            && let Ok((camera, camera_transform)) = cameras.single()
             && let Ok(point) =
                 camera.world_to_viewport(camera_transform, transform.translation + Vec3::Y * 0.6)
         {
@@ -234,7 +307,19 @@ fn record(
     virtual_time: Res<Time<Virtual>>,
     mut case: ResMut<ReviewCase>,
     mut intent: ResMut<BasicAttackIntent>,
-    player: Query<(&Fury, &Barrier, &PlayerAnimation, &Transform, &Health), With<Player>>,
+    player: Query<
+        (
+            &Fury,
+            &Barrier,
+            &PlayerAnimation,
+            &Transform,
+            &Health,
+            &PlayerLevel,
+            &Talents,
+            &summons::SummonTalents,
+        ),
+        With<Player>,
+    >,
     minions: Query<(Entity, &Transform, &summons::SummonVitality), With<summons::Minion>>,
     enemies: Query<(Entity, &Enemy, &Transform, &Health), (With<Enemy>, Without<Player>)>,
 ) {
@@ -244,12 +329,21 @@ fn record(
     let Some(target) = case.target else {
         return;
     };
-    let Ok((_, _, transform, health)) = enemies.get(target) else {
+    let Some((_, _, transform, health)) =
+        enemies.get(target).ok().or_else(|| enemies.iter().next())
+    else {
         return;
     };
-    let Ok((fury, barrier, animation, hero, hero_health)) = player.single() else {
+    let Ok((fury, barrier, animation, hero, hero_health, level, talents, tree)) = player.single()
+    else {
         return;
     };
+    if case.name == "soulbinder-tree" {
+        info!(
+            "SOULBINDER_TREE level={} points={} bone={} spirit={}",
+            level.level, talents.points, tree.bone, tree.spirit
+        );
+    }
     if health.current < 500.0 {
         intent.target = None;
     }

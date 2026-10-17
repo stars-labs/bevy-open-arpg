@@ -7322,7 +7322,7 @@ fn update_hud(resources: HudResources, queries: HudQueryParams) {
         evade,
         skills,
     );
-    update_experience_fills(&mut nodes.experience_fills, level, paragon);
+    update_experience_fills(&mut nodes.experience_fills, level, paragon, selected.0);
     update_inventory_panels(&mut nodes.inventory_panels, inventory_open.open);
     update_build_panels(&mut nodes.build_panels, build_open.open);
     if let Ok(mut text) = texts.3.single_mut() {
@@ -8300,8 +8300,9 @@ fn update_experience_fills(
     experience_fills: &mut ExperienceFillQuery,
     level: &PlayerLevel,
     paragon: &crate::player::EmberParagon,
+    class: crate::class::HeroClass,
 ) {
-    let amount = progression::experience_progress(level, paragon);
+    let amount = progression::experience_progress(level, paragon, class);
     for (mut node, mut color) in experience_fills {
         node.width = Val::Percent(amount);
         color.0 = if amount >= 75.0 {

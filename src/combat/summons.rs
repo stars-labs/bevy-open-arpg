@@ -1,4 +1,8 @@
 //! Shipping Soulbinder controller: mark, command, contact and minion survival.
+mod depth;
+#[cfg(test)]
+mod depth_tests;
+
 use super::{summon_logic::*, *};
 use crate::class::{HeroClass, Rune, SelectedClass, SummonCommand};
 use crate::player::{summon_limb_transform, summon_weapon_transform};
@@ -63,6 +67,20 @@ struct Tuning {
     heavy_impact: f32,
     basic_impact: f32,
     echo_impact: f32,
+    retreat_trigger_fraction: f32,
+    retreat_release_fraction: f32,
+    retreat_heal_per_sec: f32,
+    flank_offset: f32,
+    flank_expose_secs: f32,
+    flank_expose_multiplier: f32,
+    last_stand_cooldown: f32,
+    last_stand_reform_secs: f32,
+    last_stand_health_fraction: f32,
+    aftershock_delay: f32,
+    aftershock_fraction: f32,
+    siphon_amount: f32,
+    siphon_cooldown: f32,
+    relay_radius: f32,
 }
 #[derive(Resource, Default)]
 pub(crate) struct SummonStatus {
@@ -75,6 +93,9 @@ pub(crate) struct SummonStatus {
     wall_cooldown: f32,
     transition_health: Option<f32>,
     transition_dead_secs: f32,
+    rebirth_cooldown: [f32; 2],
+    siphon_cooldown: f32,
+    mark_position: Vec3,
 }
 #[derive(Component)]
 struct State {
@@ -87,6 +108,9 @@ struct State {
     progress: f32,
     heavy: bool,
     volley: f32,
+    retreating: bool,
+    rebirth: bool,
+    echo: Option<depth::Echo>,
     rune: Rune,
 }
 #[derive(Component)]
@@ -219,6 +243,9 @@ fn reconcile(
                     progress: 1.0,
                     heavy: false,
                     volley: 0.0,
+                    retreating: false,
+                    rebirth: false,
+                    echo: None,
                     rune: Rune::Expose,
                 },
                 SummonVitality {
@@ -415,6 +442,7 @@ fn orders(
                         .min(vitality.max);
                     state.attack = None;
                     state.volley = 0.0;
+                    state.echo = None;
                     flash(&mut commands, &art, position.translation, 1.1, false);
                 }
             }
@@ -498,6 +526,8 @@ fn orders(
                     );
                     vitality.current = 0.0;
                     vitality.dead_secs = tuning.revive_secs;
+                    state.rebirth = false;
+                    state.echo = None;
                     state.attack = None;
                     break;
                 }
@@ -515,6 +545,7 @@ fn orders(
 fn behavior(
     layout: Res<crate::dungeon::DungeonLayout>,
     time: Res<Time>,
+    language: Res<crate::ui::localization::UiLanguage>,
     mut session: ResMut<SummonStatus>,
     tuning: Res<Tuning>,
     mut player: Query<
@@ -525,6 +556,7 @@ fn behavior(
             &DamageBonus,
             &PlayerLevel,
             &mut Barrier,
+            &mut Fury,
         ),
         (With<Player>, Without<Minion>),
     >,
@@ -541,13 +573,27 @@ fn behavior(
     mut commands: Commands,
     art: Res<Art>,
 ) {
-    let Ok((hero, health, talents, bonus, level, mut barrier)) = player.single_mut() else {
+    let Ok((hero, health, talents, bonus, level, mut barrier, mut soul)) = player.single_mut()
+    else {
         return;
     };
     let dt = time.delta_secs();
     session.overdrive = (session.overdrive - dt).max(0.0);
     session.guard = (session.guard - dt).max(0.0);
     session.wall_cooldown = (session.wall_cooldown - dt).max(0.0);
+    session.siphon_cooldown = (session.siphon_cooldown - dt).max(0.0);
+    for cooldown in &mut session.rebirth_cooldown {
+        *cooldown = (*cooldown - dt).max(0.0);
+    }
+    depth::relay(
+        &mut session,
+        talents,
+        hero.translation,
+        &damage,
+        &tuning,
+        &mut commands,
+        &art,
+    );
     if talents.bone >= 2
         && session.bond.target.is_none()
         && let Some((target, ..)) = damage
@@ -612,34 +658,91 @@ fn behavior(
         if health.current <= 0.0 {
             *visible = Visibility::Hidden;
             state.attack = None;
+            state.echo = None;
             continue;
         }
         if vitality.current <= 0.0 {
             if vitality.dead_secs <= 0.0 {
-                vitality.dead_secs = tuning.revive_secs;
-                info!("SUMMON_DEATH slot={}", state.slot);
+                let shortened = depth::rebirth_delay(
+                    talents.bone >= 6,
+                    &mut session.rebirth_cooldown[state.slot],
+                    &tuning,
+                );
+                state.rebirth = shortened.is_some();
+                vitality.dead_secs = shortened.unwrap_or(tuning.revive_secs);
+                info!(
+                    "SUMMON_DEATH slot={} last_stand={}",
+                    state.slot, state.rebirth
+                );
             }
             vitality.dead_secs = (vitality.dead_secs - dt).max(0.0);
-            *visible = if vitality.dead_secs > tuning.revive_secs - 0.4 {
-                position.rotation =
-                    Quat::from_rotation_z((tuning.revive_secs - vitality.dead_secs) * 3.5);
+            let span = if state.rebirth {
+                tuning.last_stand_reform_secs
+            } else {
+                tuning.revive_secs
+            };
+            *visible = if vitality.dead_secs > span - 0.4 {
+                position.rotation = Quat::from_rotation_z((span - vitality.dead_secs) * 3.5);
                 Visibility::Visible
             } else {
                 Visibility::Hidden
             };
             state.attack = None;
             state.moving = false;
+            state.echo = None;
+            state.retreating = false;
             state.progress = 1.0;
             if vitality.dead_secs <= 0.0 {
-                vitality.current = vitality.max;
+                vitality.current = vitality.max
+                    * if state.rebirth {
+                        tuning.last_stand_health_fraction
+                    } else {
+                        1.0
+                    };
+                let renewed = state.rebirth;
+                state.rebirth = false;
+                position.rotation = Quat::IDENTITY;
                 position.translation = hero.translation + formation(state.slot, state.bone);
-                flash(&mut commands, &art, position.translation, 1.2, false);
+                flash(&mut commands, &art, position.translation, 1.2, renewed);
+                if renewed {
+                    damage.floating.write(FloatingCombatTextEvent {
+                        text: if *language == crate::ui::localization::UiLanguage::Chinese {
+                            "不屈重聚"
+                        } else {
+                            "Last Stand"
+                        }
+                        .into(),
+                        position: position.translation + Vec3::Y,
+                        critical: false,
+                    });
+                }
                 info!("SUMMON_REVIVE slot={}", state.slot);
             } else {
                 continue;
             }
         }
         *visible = Visibility::Visible;
+        state.retreating = talents.bone >= 4
+            && depth::retreating(state.retreating, vitality.current, vitality.max, &tuning);
+        if state.retreating {
+            state.attack = None;
+            state.echo = None;
+            state.volley = 0.0;
+            if position.translation.distance(hero.translation) < 2.0 {
+                vitality.current =
+                    (vitality.current + tuning.retreat_heal_per_sec * dt).min(vitality.max);
+            }
+        }
+        depth::echo(
+            &mut state,
+            dt,
+            position.translation,
+            session.bond.target,
+            &mut damage,
+            &mut commands,
+            &art,
+            &tuning,
+        );
         if talents.bone >= 3 && position.translation.distance(hero.translation) < 3.0 {
             vitality.current =
                 (vitality.current + dt * tuning.bone_regen_per_sec).min(vitality.max);
@@ -651,11 +754,18 @@ fn behavior(
             state.attack = None;
         }
         state.cooldown = (state.cooldown - dt).max(0.0);
-        let goal = if session.guard > 0.0 {
+        let goal = if session.guard > 0.0 || state.retreating {
             hero.translation + formation(state.slot, state.bone)
         } else {
             target_position
                 .filter(|_| session.bond.target.is_some())
+                .map(|target| {
+                    if talents.bone >= 5 {
+                        depth::flank(target, hero.translation, state.slot, tuning.flank_offset)
+                    } else {
+                        target
+                    }
+                })
                 .unwrap_or(hero.translation + formation(state.slot, state.bone))
         };
         if position.translation.distance(hero.translation) > LEASH * 1.5 {
@@ -669,8 +779,8 @@ fn behavior(
         );
         let distance = delta.length();
         let facing = delta.normalize_or_zero();
-        let stop = if session.bond.target.is_some() && session.guard == 0.0 {
-            REACH * 0.8
+        let stop = if session.bond.target.is_some() && session.guard == 0.0 && !state.retreating {
+            if talents.bone >= 5 { 0.12 } else { REACH * 0.8 }
         } else {
             0.15
         };
@@ -691,8 +801,9 @@ fn behavior(
         }
         if state.attack.is_none()
             && state.cooldown == 0.0
-            && distance <= REACH
+            && target_position.is_some_and(|target| position.translation.distance(target) <= REACH)
             && session.guard == 0.0
+            && !state.retreating
             && let Some(target) = session.bond.target
         {
             state.attack = Some((
@@ -729,7 +840,7 @@ fn behavior(
                     scaled_damage(base, bonus.0, level.level, &tuning)
                         * if session.overdrive > 0.0 {
                             tuning.overdrive_damage_multiplier
-                        } else if session.bond.empowered {
+                        } else if heavy {
                             tuning.heavy_damage_multiplier
                         } else {
                             1.0
@@ -742,6 +853,7 @@ fn behavior(
                 } else {
                     0.0
                 };
+                let before_health = damage.enemies.get(target).map_or(0.0, |e| e.3.current);
                 damage.strike(
                     &mut commands,
                     position.translation,
@@ -767,8 +879,40 @@ fn behavior(
                         None
                     },
                 );
+                let landed = damage
+                    .enemies
+                    .get(target)
+                    .is_ok_and(|e| e.3.current < before_health);
+                if landed && volley > 0.0 && talents.bone >= 5 {
+                    commands.entity(target).try_insert(Vulnerable {
+                        timer: Timer::from_seconds(tuning.flank_expose_secs, TimerMode::Once),
+                        damage_multiplier: tuning.flank_expose_multiplier,
+                    });
+                }
                 if heavy {
                     session.bond.take_empowered();
+                    if landed && talents.spirit >= 4 {
+                        depth::queue_echo(&mut state, target, amount, &tuning);
+                    }
+                    let gained = if landed {
+                        depth::siphon_gain(talents.spirit, &mut session.siphon_cooldown, &tuning)
+                    } else {
+                        0.0
+                    };
+                    if gained > 0.0 {
+                        soul.current = (soul.current + gained).min(soul.max);
+                        flash(&mut commands, &art, hero.translation, 1.0, false);
+                        damage.floating.write(FloatingCombatTextEvent {
+                            text: if *language == crate::ui::localization::UiLanguage::Chinese {
+                                format!("+{gained:.0} 魂能")
+                            } else {
+                                format!("+{gained:.0} Soul")
+                            },
+                            position: hero.translation + Vec3::Y,
+                            critical: false,
+                        });
+                        info!("SUMMON_SIPHON amount={gained}");
+                    }
                 }
                 if volley > 0.0 && talents.spirit >= 2 {
                     damage.strike(
@@ -1086,7 +1230,16 @@ fn update_hud(
                     if zh { "秒" } else { "s" }
                 )
             } else {
-                format!("{name} · {:.0}/{:.0}", v.current, v.max)
+                format!(
+                    "{name} · {:.0}/{:.0}{}",
+                    v.current,
+                    v.max,
+                    if s.retreating {
+                        if zh { " · 撤守" } else { " · Retreating" }
+                    } else {
+                        ""
+                    }
+                )
             }
         })
         .collect::<Vec<_>>()

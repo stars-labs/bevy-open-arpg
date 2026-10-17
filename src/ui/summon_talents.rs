@@ -1,6 +1,7 @@
 //! Two behavior-changing Soulbinder talent paths with visible progression gates.
 use super::{BuildPage, BuildTab};
 use crate::class::HeroClass;
+use crate::combat::summon_progression::{LEVEL_CAP, MAX_POINTS, TIER_LEVELS, can_unlock};
 use crate::combat::summons::SummonTalents;
 use crate::ui::*;
 
@@ -48,7 +49,7 @@ fn copy(parent: &mut ChildSpawnerCommands, assets: &AssetServer, text: &'static 
                 "重置天赋 · 附近十二米无敌人时可用" => {
                     "Reset talents · Available with no living enemy within 12 m"
                 }
-                _ => "Sequential unlocks · Choose one keystone · Five point limit",
+                _ => "One point every two levels · Level cap 20 · Ten points total · Final tiers are exclusive",
             },
         ),
         localization::NativeLanguageName,
@@ -71,6 +72,7 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
                 width: Val::Percent(100.),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(8.),
+                flex_shrink: 0.,
                 ..default()
             },
         ))
@@ -101,12 +103,14 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
             copy(
                 page,
                 assets,
-                "每条路线逐级解锁 · 深层天赋二选一 · 最多投入五点",
+                "每两级获得一点 · 等级上限20 · 共十点 · 两线第六阶互斥",
                 13.,
             );
             page.spawn(Node {
                 width: Val::Percent(100.),
                 column_gap: Val::Px(16.),
+                flex_shrink: 0.,
+                align_items: AlignItems::Start,
                 ..default()
             })
             .with_children(|row| {
@@ -136,13 +140,26 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
                             },
                             13.,
                         );
-                        for rank in 1..=3 {
+                        for rank in 1..=6 {
+                            if rank > 1 {
+                                path.spawn((
+                                    Node {
+                                        width: Val::Px(3.),
+                                        height: Val::Px(20.),
+                                        flex_shrink: 0.,
+                                        align_self: AlignSelf::Center,
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.34, 0.48, 0.39)),
+                                ));
+                            }
                             let node = TalentNode { bone, rank };
                             path.spawn((
                                 Button,
                                 node,
                                 Node {
-                                    min_height: Val::Px(88.),
+                                    min_height: Val::Px(130.),
+                                    flex_shrink: 0.,
                                     width: Val::Percent(100.),
                                     padding: UiRect::all(Val::Px(12.)),
                                     border: UiRect::all(Val::Px(1.)),
@@ -155,9 +172,9 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
                             ))
                             .with_children(|button| {
                                 let column = if bone {
-                                    [4, 1, 6][rank as usize - 1]
+                                    [4, 1, 6, 1, 4, 6][rank as usize - 1]
                                 } else {
-                                    [0, 3, 5][rank as usize - 1]
+                                    [0, 3, 5, 0, 3, 5][rank as usize - 1]
                                 };
                                 button.spawn((
                                     ImageNode {
@@ -201,13 +218,7 @@ pub(super) fn spawn(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
         });
 }
 fn available(node: TalentNode, tree: &SummonTalents, points: u32, level: u32) -> bool {
-    let rank = if node.bone { tree.bone } else { tree.spirit };
-    let other = if node.bone { tree.spirit } else { tree.bone };
-    points > 0
-        && node.rank == rank + 1
-        && level >= node.rank * 2
-        && tree.bone + tree.spirit < 5
-        && (node.rank < 3 || other < 3)
+    can_unlock(tree.bone, tree.spirit, node.bone, node.rank, points, level)
 }
 fn spend(
     open: Res<BuildOpen>,
@@ -251,20 +262,32 @@ fn name(node: TalentNode) -> &'static str {
     match (node.bone, node.rank) {
         (true, 1) => "双卫",
         (true, 2) => "护主",
-        (true, _) => "骨墙",
+        (true, 3) => "骨墙",
+        (true, 4) => "退守",
+        (true, 5) => "围猎",
+        (true, _) => "不屈",
         (false, 1) => "共鸣",
         (false, 2) => "共击",
-        (false, _) => "灵契",
+        (false, 3) => "灵契",
+        (false, 4) => "残响",
+        (false, 5) => "汲魂",
+        (false, _) => "传契",
     }
 }
 fn detail(node: TalentNode) -> &'static str {
     match (node.bone, node.rank) {
         (true, 1) => "一名魂灵化为两名骨卫，围攻标记目标。",
         (true, 2) => "骨卫拦截逼近主人的敌人，护主反击。",
-        (true, _) => "骨卫结成骨墙，以守势保护主人。",
+        (true, 3) => "骨卫结成骨墙，以守势保护主人。",
+        (true, 4) => "残血骨卫撤回主人身边治疗，休整期间不攻击。",
+        (true, 5) => "骨卫从两侧夹击；齐击接触使目标陷入破绽。",
+        (true, _) => "自然阵亡后1.2秒重聚并回复50%生命，每30秒一次；献祭仍需6秒。",
         (false, 1) => "每三次普攻引导魂灵重劈，命中有短暂停顿。",
         (false, 2) => "灵魂齐射触发主人回响，形成协同连击。",
-        (false, _) => "灵契爆发时魂灵重劈横扫周围敌人。",
+        (false, 3) => "灵契爆发时魂灵重劈横扫周围敌人。",
+        (false, 4) => "重劈命中0.22秒后追加35%追击；目标变更、死亡或过期则取消。",
+        (false, 5) => "重劈命中回复8魂能，队伍每0.8秒最多触发一次。",
+        (false, _) => "狂攻期间标记目标死亡，灵契传给4米内下一名敌人。",
     }
 }
 #[allow(clippy::too_many_arguments)]
@@ -292,15 +315,19 @@ fn update(
     for mut text in &mut points_labels {
         text.0 = if zh {
             format!(
-                "缚魂使天赋 · 可用 {} 点 · 已投入 {}/5",
+                "缚魂使天赋 · 可用 {} 点 · 已投入 {}/{} · 等级上限 {}",
                 points.points,
-                tree.bone + tree.spirit
+                tree.bone + tree.spirit,
+                MAX_POINTS,
+                LEVEL_CAP
             )
         } else {
             format!(
-                "Soulbinder talents · {} points available · {}/5 spent",
+                "Soulbinder talents · {} points available · {}/{} spent · Level cap {}",
                 points.points,
-                tree.bone + tree.spirit
+                tree.bone + tree.spirit,
+                MAX_POINTS,
+                LEVEL_CAP
             )
         };
     }
@@ -311,11 +338,11 @@ fn update(
             "已觉醒"
         } else if available(node, tree, points.points, level.level) {
             "点击觉醒 · 消耗一点"
-        } else if node.rank == 3 && (if node.bone { tree.spirit } else { tree.bone }) >= 3 {
-            "与另一条深层天赋互斥"
-        } else if tree.bone + tree.spirit >= 5 {
-            "已达到五点上限"
-        } else if level.level < node.rank * 2 {
+        } else if node.rank == 6 && (if node.bone { tree.spirit } else { tree.bone }) >= 6 {
+            "与另一条第六阶天赋互斥"
+        } else if tree.bone + tree.spirit >= MAX_POINTS {
+            "已达到十点上限"
+        } else if level.level < TIER_LEVELS[node.rank as usize - 1] {
             "等级尚未满足"
         } else if rank + 1 < node.rank {
             "先觉醒上一节点"
@@ -328,15 +355,15 @@ fn update(
                 name(node),
                 node.rank,
                 detail(node),
-                node.rank * 2,
+                TIER_LEVELS[node.rank as usize - 1],
                 state
             )
         } else {
             let state = match state {
                 "已觉醒" => "Awakened",
                 "点击觉醒 · 消耗一点" => "Awaken · One point",
-                "与另一条深层天赋互斥" => "Other keystone chosen",
-                "已达到五点上限" => "Five point limit reached",
+                "与另一条第六阶天赋互斥" => "Other keystone chosen",
+                "已达到十点上限" => "Ten point limit reached",
                 "等级尚未满足" => "Level requirement unmet",
                 "先觉醒上一节点" => "Awaken preceding node first",
                 _ => "Level up to earn points",
@@ -346,7 +373,7 @@ fn update(
                 name_en(node),
                 node.rank,
                 detail_en(node),
-                node.rank * 2,
+                TIER_LEVELS[node.rank as usize - 1],
                 state
             )
         };
@@ -374,20 +401,38 @@ fn name_en(node: TalentNode) -> &'static str {
     match (node.bone, node.rank) {
         (true, 1) => "Twin Guard",
         (true, 2) => "Interception",
-        (true, _) => "Bone Wall",
+        (true, 3) => "Bone Wall",
+        (true, 4) => "Fallback",
+        (true, 5) => "Encirclement",
+        (true, _) => "Defiance",
         (false, 1) => "Resonance",
         (false, 2) => "Echo Strike",
-        (false, _) => "Soul Concord",
+        (false, 3) => "Soul Concord",
+        (false, 4) => "Aftershock",
+        (false, 5) => "Soul Siphon",
+        (false, _) => "Passing Pact",
     }
 }
 fn detail_en(node: TalentNode) -> &'static str {
     match (node.bone, node.rank) {
         (true, 1) => "Replace one spirit with two bone guards surrounding the marked target.",
         (true, 2) => "Guards intercept enemies approaching their master.",
-        (true, _) => "Guards form a defensive bone wall.",
+        (true, 3) => "Guards form a defensive bone wall.",
+        (true, 4) => "Wounded guards retreat to their master and heal without attacking.",
+        (true, 5) => "Guards flank their target; coordinated contact applies Expose.",
+        (true, _) => {
+            "Natural deaths reform after 1.2s at 50% health, once per 30s. Sacrifice still takes 6s."
+        }
         (false, 1) => "Every third basic attack guides a heavy spirit strike with contact hold.",
         (false, 2) => "Soul Volley triggers an additional owner echo.",
-        (false, _) => "Overdrive heavy strikes cleave nearby enemies.",
+        (false, 3) => "Overdrive heavy strikes cleave nearby enemies.",
+        (false, 4) => {
+            "Heavy hits echo for 35% after 0.22s; target changes, death or expiry cancel it."
+        }
+        (false, 5) => "Heavy hits restore 8 soul energy, at most once per 0.8s for the team.",
+        (false, _) => {
+            "During Overdrive, a marked target dying passes the pact to another foe within 4m."
+        }
     }
 }
 fn localize_static(
@@ -454,6 +499,120 @@ fn reset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn interaction_app(level: u32) -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.insert_resource(BuildOpen { open: true })
+            .insert_resource(BuildTab::Talents)
+            .insert_resource(SelectedClass(HeroClass::Soulbinder))
+            .insert_resource(localization::UiLanguage::Chinese)
+            .add_message::<CombatEvent>()
+            .add_systems(Update, (spend, reset).chain());
+        let player = app
+            .world_mut()
+            .spawn((
+                Player,
+                PlayerLevel {
+                    level,
+                    xp: 0,
+                    next_level_xp: 100,
+                },
+                Talents {
+                    points: MAX_POINTS,
+                    ..default()
+                },
+                SummonTalents::default(),
+                Transform::default(),
+            ))
+            .id();
+        let button = app
+            .world_mut()
+            .spawn((
+                TalentNode {
+                    bone: true,
+                    rank: 1,
+                },
+                Interaction::None,
+            ))
+            .id();
+        (app, player, button)
+    }
+
+    fn press_talent(app: &mut App, button: Entity, bone: bool, rank: u32) {
+        app.world_mut()
+            .entity_mut(button)
+            .insert(TalentNode { bone, rank });
+        {
+            let mut interaction = app.world_mut().get_mut::<Interaction>(button).unwrap();
+            *interaction = Interaction::Pressed;
+            interaction.set_changed();
+        }
+        app.update();
+    }
+
+    #[test]
+    fn ecs_talent_presses_spend_ten_points_and_reset_refunds_all() {
+        let (mut app, player, button) = interaction_app(LEVEL_CAP);
+        for rank in 1..=6 {
+            press_talent(&mut app, button, true, rank);
+            assert_eq!(app.world().get::<SummonTalents>(player).unwrap().bone, rank);
+            assert_eq!(
+                app.world().get::<Talents>(player).unwrap().points,
+                MAX_POINTS - rank
+            );
+        }
+        for rank in 1..=4 {
+            press_talent(&mut app, button, false, rank);
+            assert_eq!(
+                app.world().get::<SummonTalents>(player).unwrap().spirit,
+                rank
+            );
+            assert_eq!(app.world().get::<Talents>(player).unwrap().points, 4 - rank);
+        }
+        // A further point and the other capstone must not be purchased.
+        press_talent(&mut app, button, false, 5);
+        press_talent(&mut app, button, false, 6);
+        let tree = app.world().get::<SummonTalents>(player).unwrap();
+        assert_eq!((tree.bone, tree.spirit), (6, 4));
+        assert_eq!(app.world().get::<Talents>(player).unwrap().points, 0);
+
+        app.world_mut()
+            .entity_mut(button)
+            .remove::<TalentNode>()
+            .insert(ResetTalent);
+        app.world_mut()
+            .get_mut::<Interaction>(button)
+            .unwrap()
+            .set_changed();
+        app.update();
+        let tree = app.world().get::<SummonTalents>(player).unwrap();
+        assert_eq!((tree.bone, tree.spirit), (0, 0));
+        assert_eq!(
+            app.world().get::<Talents>(player).unwrap().points,
+            MAX_POINTS
+        );
+    }
+
+    #[test]
+    fn ecs_talent_press_respects_level_gate_without_spending() {
+        let (mut app, player, button) = interaction_app(1);
+        press_talent(&mut app, button, true, 1);
+        assert_eq!(app.world().get::<SummonTalents>(player).unwrap().bone, 0);
+        assert_eq!(
+            app.world().get::<Talents>(player).unwrap().points,
+            MAX_POINTS
+        );
+        app.world_mut()
+            .get_mut::<PlayerLevel>(player)
+            .unwrap()
+            .level = 2;
+        press_talent(&mut app, button, true, 1);
+        assert_eq!(app.world().get::<SummonTalents>(player).unwrap().bone, 1);
+        assert_eq!(
+            app.world().get::<Talents>(player).unwrap().points,
+            MAX_POINTS - 1
+        );
+    }
+
     #[test]
     fn talent_gates_require_levels_and_predecessors() {
         let tree = SummonTalents::default();
@@ -475,35 +634,18 @@ mod tests {
         assert!(!available(first, &tree, 0, 6));
     }
     #[test]
-    fn talent_keystones_are_mutually_exclusive_and_capped() {
-        let tree = SummonTalents { bone: 2, spirit: 3 };
-        assert!(!available(
-            TalentNode {
-                bone: true,
-                rank: 3
-            },
-            &tree,
-            1,
-            6
-        ));
-        let tree = SummonTalents { bone: 2, spirit: 2 };
-        assert!(available(
-            TalentNode {
-                bone: true,
-                rank: 3
-            },
-            &tree,
-            1,
-            6
-        ));
-        assert!(!available(
-            TalentNode {
-                bone: true,
-                rank: 3
-            },
-            &tree,
-            1,
-            5
-        ));
+    fn talent_copy_covers_both_six_tier_paths() {
+        for bone in [true, false] {
+            let mut names = std::collections::HashSet::new();
+            let mut english_names = std::collections::HashSet::new();
+            for rank in 1..=6 {
+                let node = TalentNode { bone, rank };
+                assert!(names.insert(name(node)));
+                assert!(english_names.insert(name_en(node)));
+                assert!(!detail(node).is_empty());
+                assert!(!detail_en(node).is_empty());
+            }
+        }
+        assert_eq!(TIER_LEVELS, [2, 4, 6, 10, 14, 18]);
     }
 }

@@ -2124,7 +2124,7 @@ mod tests {
                 health_max: 120.0,
                 barrier_current: 18.0,
                 barrier_max: 42.0,
-                level: 3,
+                level: 20,
                 xp: 12,
                 next_level_xp: 126,
                 paragon_rank: 2,
@@ -2137,7 +2137,7 @@ mod tests {
                 fury_regen: 0.0,
                 skill_cost_discount: 0.0,
                 class: HeroClass::Soulbinder,
-                summon_talents: SummonTalents { bone: 1, spirit: 2 },
+                summon_talents: SummonTalents { bone: 6, spirit: 4 },
                 equipment: SaveEquipment {
                     weapon_name: "rare Moonforged Cleaver".to_string(),
                     quality: "rare".to_string(),
@@ -2257,6 +2257,11 @@ mod tests {
         let content = ron::ser::to_string(&save).unwrap();
         let parsed: SaveGame = ron::from_str(&content).unwrap();
         assert_eq!(parsed, save);
+        assert_eq!(parsed.player.level, 20);
+        assert_eq!(
+            parsed.player.summon_talents,
+            SummonTalents { bone: 6, spirit: 4 }
+        );
         assert_eq!(parsed.modifier_affix, OrdealAffix::AshenHunger);
         assert_eq!(parsed.stats.journey_score, 32);
         assert_eq!(parsed.stats.chapter_clear_bonus_gold, 220);

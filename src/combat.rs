@@ -5,6 +5,7 @@ mod review;
 mod skill_vfx;
 mod skill_vfx_art;
 mod summon_logic;
+pub(crate) mod summon_progression;
 pub(crate) mod summons;
 
 use crate::{
@@ -2885,7 +2886,7 @@ mod tests {
         LegendaryPowerSet::new(LegendaryPower::None, power)
     }
 
-    fn test_enemy(affixes: Vec<EnemyAffix>) -> Enemy {
+    pub(super) fn test_enemy(affixes: Vec<EnemyAffix>) -> Enemy {
         Enemy {
             id: "test".to_string(),
             display_name: "Test Enemy".to_string(),

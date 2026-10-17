@@ -26,7 +26,7 @@ New campaigns start with a class selection: **Ashbound Warden** (melee sword and
 
 Right-click moves; left-click attacks. The interface defaults to Simplified Chinese, with language selection in Settings. Skill releases follow their actual combat shape and damage timing.
 
-All 871 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
+All 888 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
 
 ## Running
 
@@ -459,4 +459,4 @@ Interface typography, icon assets and interaction styling are documented in [UI 
 
 ### Soulbinder
 
-Choose the fourth hero card to play the Soulbinder. Left-click hits mark prey for the bonded spirit; Q recalls or exchanges positions, E commands a volley or protective formation, and R empowers or sacrifices a spirit. Skills unlock through levels 1–6 and are configured in the Skills panel. Its separate talent page offers Bone Command (two guards and protection) and Spirit Covenant (resonance and coordinated strikes), with five points and mutually exclusive capstones. Minions take damage and reform after death; Recall does not bypass that delay. See [Soulbinder design](docs/SOULBINDER_DESIGN.md) for the combat loop and verification scope.
+Choose the fourth hero card to play the Soulbinder. Left-click hits mark prey for the bonded spirit; Q recalls or exchanges positions, E commands a volley or protective formation, and R empowers or sacrifices a spirit. Skills unlock through levels 1–6 and are configured in the Skills panel. Its separate talent page offers Bone Command (two guards and protection) and Spirit Covenant (resonance and coordinated strikes), with twelve nodes over six tiers, ten points earned at even levels through level 20, and mutually exclusive final capstones. Upper tiers add retreat-and-heal behavior, flanking guards, limited rapid rebirth, delayed aftershocks, Soul recovery and mark relay. Minions take damage and reform after death; Recall does not bypass that delay. See [Soulbinder design](docs/SOULBINDER_DESIGN.md) for the combat loop and verification scope.

@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 fn chapter_runtime_assets_exist() {
     for path in [
         "assets/data/player.ron",
+        "assets/data/summon_progression.ron",
         "assets/data/classes.ron",
         "assets/data/summons.ron",
         "assets/data/enemies.ron",
@@ -303,6 +304,7 @@ fn generated_world_and_material_textures_are_compact_jpegs() {
 fn runtime_data_files_are_valid_ron() {
     for path in [
         "assets/data/player.ron",
+        "assets/data/summon_progression.ron",
         "assets/data/enemies.ron",
         "assets/data/loot.ron",
     ] {

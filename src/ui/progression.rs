@@ -188,8 +188,14 @@ fn reward_copy(reward: PlayerLevelUp, language: UiLanguage) -> String {
 pub(super) fn experience_progress(
     level: &crate::player::PlayerLevel,
     paragon: &crate::player::EmberParagon,
+    class: crate::class::HeroClass,
 ) -> f32 {
-    let (xp, next) = if level.level >= crate::player::CHAPTER_LEVEL_CAP {
+    let level_cap = if class == crate::class::HeroClass::Soulbinder {
+        crate::combat::summon_progression::LEVEL_CAP
+    } else {
+        crate::player::CHAPTER_LEVEL_CAP
+    };
+    let (xp, next) = if level.level >= level_cap {
         (paragon.xp, paragon.next_rank_xp)
     } else {
         (level.xp, level.next_level_xp)
@@ -358,10 +364,50 @@ mod tests {
             xp: 35,
             next_rank_xp: 140,
         };
-        assert_eq!(experience_progress(&level, &paragon), 50.0);
+        assert_eq!(
+            experience_progress(&level, &paragon, crate::class::HeroClass::Warden),
+            50.0
+        );
         level.level = crate::player::CHAPTER_LEVEL_CAP;
         level.xp = 0;
-        assert_eq!(experience_progress(&level, &paragon), 25.0);
+        assert_eq!(
+            experience_progress(&level, &paragon, crate::class::HeroClass::Warden),
+            25.0
+        );
+    }
+
+    #[test]
+    fn soulbinder_experience_bar_uses_normal_xp_until_twenty() {
+        let mut level = crate::player::PlayerLevel {
+            level: 6,
+            xp: 50,
+            next_level_xp: 100,
+        };
+        let paragon = crate::player::EmberParagon {
+            rank: 0,
+            xp: 35,
+            next_rank_xp: 140,
+        };
+        for current_level in 6..crate::combat::summon_progression::LEVEL_CAP {
+            level.level = current_level;
+            assert_eq!(
+                experience_progress(&level, &paragon, crate::class::HeroClass::Soulbinder),
+                50.0
+            );
+        }
+        level.level = crate::combat::summon_progression::LEVEL_CAP;
+        assert_eq!(
+            experience_progress(&level, &paragon, crate::class::HeroClass::Soulbinder),
+            25.0
+        );
+        level.level = crate::player::CHAPTER_LEVEL_CAP;
+        for class in [
+            crate::class::HeroClass::Warden,
+            crate::class::HeroClass::Stalker,
+            crate::class::HeroClass::Embercaller,
+        ] {
+            assert_eq!(experience_progress(&level, &paragon, class), 25.0);
+        }
     }
 
     #[test]
