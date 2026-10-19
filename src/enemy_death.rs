@@ -149,7 +149,12 @@ mod tests {
         let initial = Transform::from_xyz(4.0, 0.0, 8.0)
             .with_scale(Vec3::splat(1.12))
             .with_rotation(Quat::from_rotation_y(0.7));
-        assert_eq!(corpse_pose(initial, 0.0), initial);
+        // Slerp at t = 0 is only equal up to float rounding, and the rounding
+        // differs between x86_64 and aarch64, so compare rotation with a tolerance.
+        let start = corpse_pose(initial, 0.0);
+        assert_eq!(start.translation, initial.translation);
+        assert_eq!(start.scale, initial.scale);
+        assert!(start.rotation.abs_diff_eq(initial.rotation, 1e-6));
         let down = corpse_pose(initial, FALL_SECONDS);
         assert!((down.rotation * Vec3::Y).y.abs() < 0.02);
         assert_eq!(down, corpse_pose(initial, FALL_SECONDS + REST_SECONDS));
