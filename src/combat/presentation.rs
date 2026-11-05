@@ -3,7 +3,7 @@ use super::SkillCast;
 use crate::{
     GameState,
     assets::GameAssets,
-    class::Rune,
+    class::{HeroClass, Rune, SelectedClass},
     feedback::{ContactSound, ContactSoundEvent},
     not_paused,
     player::TalentBranch,
@@ -19,6 +19,9 @@ pub(super) struct ContactFeedback {
     pub source: Vec3,
     pub skill: Option<SkillCast>,
     pub strength: f32,
+    pub critical: bool,
+    pub killed: bool,
+    pub material: ContactSound,
 }
 
 #[derive(Message, Clone, Copy, Debug)]
@@ -165,11 +168,42 @@ fn spawn_particle(
     ));
 }
 
+pub(super) fn basic_material_sound(enemy: Option<&str>) -> ContactSound {
+    let id = enemy.unwrap_or("");
+    if ["skeleton", "bone", "thrall"]
+        .iter()
+        .any(|part| id.contains(part))
+    {
+        ContactSound::Bone
+    } else if [
+        "warden", "keeper", "guard", "marksman", "knight", "sentinel",
+    ]
+    .iter()
+    .any(|part| id.contains(part))
+    {
+        ContactSound::Steel
+    } else {
+        ContactSound::Blood
+    }
+}
+
+fn contact_art(event: &ContactFeedback, class: HeroClass) -> ContactArt {
+    if event.skill.is_none() && event.cast != 0 {
+        match class {
+            HeroClass::Embercaller => return ContactArt::Ember,
+            HeroClass::Soulbinder => return ContactArt::Reap,
+            _ => {}
+        }
+    }
+    ContactArt::for_skill(event.skill)
+}
+
 fn show_contacts(
     mut commands: Commands,
     assets: Res<GameAssets>,
     mut events: MessageReader<ContactFeedback>,
     targets: Query<&Transform, Without<ContactParticle>>,
+    selected: Res<SelectedClass>,
     previous: Query<(Entity, &ContactParticle)>,
     mut sounds: MessageWriter<ContactSoundEvent>,
 ) {
@@ -192,8 +226,20 @@ fn show_contacts(
         .max_by(|a, b| a.strength.total_cmp(&b.strength));
     if let Some(event) = strongest {
         sounds.write(ContactSoundEvent {
-            kind: ContactArt::for_skill(event.skill).sound(),
-            strength: event.strength,
+            kind: if event.skill.is_none()
+                && !matches!(selected.0, HeroClass::Embercaller | HeroClass::Soulbinder)
+            {
+                event.material
+            } else {
+                contact_art(event, selected.0).sound()
+            },
+            strength: event.strength.max(if event.killed {
+                1.7
+            } else if event.critical {
+                1.4
+            } else {
+                0.0
+            }),
         });
     }
     for event in contacts {
@@ -202,7 +248,7 @@ fn show_contacts(
                 commands.entity(entity).despawn();
             }
         }
-        let art = ContactArt::for_skill(event.skill);
+        let art = contact_art(&event, selected.0);
         let direction = (event.position - event.source)
             .with_y(0.0)
             .normalize_or_zero();
@@ -230,7 +276,14 @@ fn show_contacts(
                 origin,
                 destination,
                 age: 0.0,
-                size: contact_size(event.strength),
+                size: contact_size(event.strength)
+                    * if event.killed {
+                        1.14
+                    } else if event.critical {
+                        1.08
+                    } else {
+                        1.0
+                    },
             },
             yaw,
         );

@@ -1,5 +1,7 @@
 # Changelog
 
+- Make combat contact pauses local to the actors, sharpen attack recovery and dodge response, remove empty-cast camera shake, and layer material impacts with restrained audio variation.
+
 - Deepen Soulbinder talents to twelve nodes across six tiers through level 20, with real retreat, flanking, rebirth, delayed strikes, Soul recovery and target relay; add an independent XP curve and scrollable talent paths.
 
 - Promote directed summons into the selectable Soulbinder class, with six command skills, two talent paths, authored hero and minion assets, minion survival, save persistence, and class-aware UI.

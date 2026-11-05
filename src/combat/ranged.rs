@@ -317,6 +317,16 @@ pub(super) fn despawn_ranged_strikes(
     }
 }
 
+pub(super) fn clear_inflight_strikes(world: &mut World) {
+    let entities: Vec<_> = world
+        .query_filtered::<Entity, Or<(With<PlayerProjectile>, With<PlayerGroundBlast>)>>()
+        .iter(world)
+        .collect();
+    for entity in entities {
+        world.entity_mut(entity).despawn();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

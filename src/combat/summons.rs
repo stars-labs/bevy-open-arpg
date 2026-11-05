@@ -142,6 +142,7 @@ pub(crate) fn install(app: &mut App) {
         (reconcile, contacts, orders, behavior, visuals, auras)
             .chain()
             .after(CombatSet::PlayerDamage)
+            .after(crate::feedback::FeedbackSet::ContactPause)
             .run_if(in_state(GameState::InGame).and_then(not_paused)),
     )
     .add_systems(Update, update_hud)
@@ -566,6 +567,7 @@ fn behavior(
             &mut SummonVitality,
             &mut State,
             &mut Visibility,
+            Option<&crate::feedback::ContactPause>,
         ),
         (With<Minion>, Without<Player>, Without<Enemy>),
     >,
@@ -622,7 +624,7 @@ fn behavior(
         session.wall_cooldown = tuning.wall_cooldown;
         barrier.current = (barrier.current + tuning.wall_barrier).min(barrier.max);
         flash(&mut commands, &art, hero.translation, 1.6, false);
-        for (_, mut v, _, _) in &mut minions {
+        for (_, mut v, _, _, _) in &mut minions {
             if v.current > 0.0 {
                 v.guard_secs = tuning.wall_guard_secs;
             }
@@ -642,7 +644,7 @@ fn behavior(
             && target_position.is_some_and(|position| within_leash(hero.translation, position)),
     );
     session.marked = session.bond.target;
-    for (mut position, mut vitality, mut state, mut visible) in &mut minions {
+    for (mut position, mut vitality, mut state, mut visible, contact_pause) in &mut minions {
         let new_max = (if state.bone {
             tuning.bone_health
         } else {
@@ -820,7 +822,8 @@ fn behavior(
             } else {
                 1.0
             };
-            let after = before + dt * speed;
+            let clock_scale = contact_pause.map_or(1.0, |pause| pause.frame_animation_scale(dt));
+            let after = before + dt * speed * clock_scale;
             state.progress = (after / duration).min(1.0);
             state.heavy = heavy;
             if contact_crossed(before, after, heavy)
@@ -1278,6 +1281,23 @@ fn update_hud(
     };
     for mut label in &mut labels {
         label.0 = format!("{text}\n{status}{resonance}");
+    }
+}
+
+pub(crate) fn clear_action_intent(world: &mut World) {
+    if let Some(mut session) = world.get_resource_mut::<SummonStatus>() {
+        session.bond = Bond::default();
+        session.marked = None;
+        session.basics = 0;
+        session.overdrive = 0.0;
+        session.guard = 0.0;
+        session.rune = None;
+    }
+    for mut state in world.query::<&mut State>().iter_mut(world) {
+        state.attack = None;
+        state.echo = None;
+        state.volley = 0.0;
+        state.progress = 1.0;
     }
 }
 

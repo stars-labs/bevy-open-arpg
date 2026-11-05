@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 fn chapter_runtime_assets_exist() {
     for path in [
         "assets/data/player.ron",
+        "assets/data/combat_feel.ron",
         "assets/data/summon_progression.ron",
         "assets/data/classes.ron",
         "assets/data/summons.ron",
@@ -123,7 +124,9 @@ fn chapter_runtime_assets_exist() {
         "assets/models/vampiric_siphon.glb",
         "assets/models/void_impact.glb",
         "assets/audio/hit.wav",
+        "assets/audio/swing_air.wav",
         "assets/audio/contact_steel.wav",
+        "assets/audio/contact_bone.wav",
         "assets/audio/contact_expose.wav",
         "assets/audio/contact_blood.wav",
         "assets/audio/contact_cleanse.wav",

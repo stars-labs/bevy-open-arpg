@@ -63,6 +63,7 @@ fn prepare(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     catalog: Res<ClassCatalog>,
     selected: Res<SelectedClass>,
+    companion_bonds: Query<Entity, With<crate::companion::CompanionBond>>,
     mut summon_talents: Query<&mut summons::SummonTalents, With<Player>>,
     mut minions: Query<
         (&mut summons::SummonVitality, &mut Transform),
@@ -70,6 +71,15 @@ fn prepare(
     >,
 ) {
     case.elapsed += time.delta_secs();
+    // Isolate real player/minion contact from the automatic story companion.
+    // Remove its player-side behavior input before fixture enemies are positioned.
+    if case.name.starts_with("feel-") {
+        for entity in &companion_bonds {
+            commands
+                .entity(entity)
+                .remove::<crate::companion::CompanionBond>();
+        }
+    }
     if case.initialized {
         case.ready_elapsed += time.delta_secs();
         if case.name == "soulbinder-retreat" && case.vitality_steps == 0 {
@@ -161,7 +171,9 @@ fn prepare(
         "frost" => loadout.toggle_rune(SkillSlot::Area),
         _ => {}
     }
-    let soulbinder_case = case.name.starts_with("soulbinder-");
+    let feel_case = case.name.starts_with("feel-");
+    let soulbinder_case =
+        case.name.starts_with("soulbinder-") || case.name == "feel-summon-isolation";
     if soulbinder_case {
         if let Ok(mut summon_talents) = summon_talents.single_mut() {
             *summon_talents = summons::SummonTalents::default();
@@ -213,14 +225,22 @@ fn prepare(
     }
     fury.current = if kind == "focus" { 0.0 } else { 100.0 };
     barrier.current = 0.0;
-    equipment.crit_chance = -talents.crit_bonus();
+    equipment.crit_chance = if case.name == "feel-critical" {
+        1.0
+    } else {
+        -talents.crit_bonus()
+    };
     equipment.legendary_power = LegendaryPower::None;
     damage.0 = 0.0;
     health.current = health.max;
     // Every first-tier skill must be castable; nothing else here reads the level.
     level.level = level
         .level
-        .max(if visual_case || soulbinder_case { 6 } else { 3 });
+        .max(if visual_case || soulbinder_case || feel_case {
+            6
+        } else {
+            3
+        });
     if matches!(
         case.name.as_str(),
         "soulbinder-tree"
@@ -240,7 +260,12 @@ fn prepare(
     }
     let mut pack_member = 0;
     for (entity, mut transform, mut enemy, mut health) in &mut enemies {
-        let retained_pack_member = (case.name == "soulbinder-pack" && pack_member < 2
+        if case.name == "feel-empty" {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let retained_pack_member = (matches!(case.name.as_str(), "soulbinder-pack" | "feel-multi")
+            && pack_member < 2
             || case.name == "soulbinder-relay" && pack_member < 1)
             && entity != target;
         if entity != target && !retained_pack_member {
@@ -252,7 +277,11 @@ fn prepare(
             .equipped(&loadout, visual_slot)
             .0
             .movement;
-        let distance = if soulbinder_case {
+        let distance = if case.name == "feel-ranged-hit" {
+            5.0
+        } else if case.name == "feel-edge-hit" {
+            2.1
+        } else if soulbinder_case {
             4.0
         } else if matches!(kind, "cleanse" | "reap")
             || (visual_case && matches!(movement, Movement::Toward(_) | Movement::Leap(_)))
@@ -281,7 +310,9 @@ fn prepare(
             enemy.attack_timer = Timer::from_seconds(1000.0, TimerMode::Once);
         }
         health.max = 500.0;
-        health.current = if case.name == "soulbinder-relay" && entity == target {
+        health.current = if case.name == "feel-kill" {
+            1.0
+        } else if case.name == "soulbinder-relay" && entity == target {
             100.0
         } else {
             500.0
@@ -297,11 +328,14 @@ fn prepare(
             );
         }
     }
+    if case.name == "feel-empty" {
+        info!("COMBAT_REVIEW_READY {} 1100 130", case.name);
+    }
     case.target = Some(target);
     case.initialized = true;
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn record(
     time: Res<Time<Real>>,
     virtual_time: Res<Time<Virtual>>,
@@ -320,6 +354,11 @@ fn record(
         ),
         With<Player>,
     >,
+    pauses: Query<&crate::feedback::ContactPause>,
+    cameras: Query<&Transform, (With<Camera3d>, Without<Player>)>,
+    heroes: Query<Entity, With<Player>>,
+    mut contacts: MessageReader<crate::feedback::HitStopEvent>,
+    mut shakes: MessageReader<crate::feedback::ScreenShakeEvent>,
     minions: Query<(Entity, &Transform, &summons::SummonVitality), With<summons::Minion>>,
     enemies: Query<(Entity, &Enemy, &Transform, &Health), (With<Enemy>, Without<Player>)>,
 ) {
@@ -329,11 +368,15 @@ fn record(
     let Some(target) = case.target else {
         return;
     };
-    let Some((_, _, transform, health)) =
-        enemies.get(target).ok().or_else(|| enemies.iter().next())
-    else {
-        return;
-    };
+    let target_state = enemies.get(target).ok().or_else(|| {
+        if case.name.starts_with("feel-") {
+            None
+        } else {
+            enemies.iter().next()
+        }
+    });
+    let target_position = target_state.map_or(Vec3::ZERO, |entry| entry.2.translation);
+    let target_health = target_state.map_or(0.0, |entry| entry.3.current);
     let Ok((fury, barrier, animation, hero, hero_health, level, talents, tree)) = player.single()
     else {
         return;
@@ -344,10 +387,76 @@ fn record(
             level.level, talents.points, tree.bone, tree.spirit
         );
     }
-    if health.current < 500.0 {
+    if target_health < 500.0 && !case.name.starts_with("feel-") {
         intent.target = None;
     }
     case.recorded += 1;
+    if case.name.starts_with("feel-") {
+        for event in contacts.read() {
+            info!(
+                "COMBAT_FEEL_CONTACT {} {:.5} {:?} {} {:.4} {:.4}",
+                case.name,
+                time.elapsed_secs_f64(),
+                event.target,
+                event.player_source,
+                event.relative_speed,
+                event.duration_secs
+            );
+        }
+        for event in shakes.read() {
+            info!(
+                "COMBAT_FEEL_SHAKE {} {:.5} {:.4} {:.4}",
+                case.name,
+                time.elapsed_secs_f64(),
+                event.intensity,
+                event.duration_secs
+            );
+        }
+        let hero_scale = heroes
+            .single()
+            .ok()
+            .and_then(|entity| pauses.get(entity).ok())
+            .map_or(1.0, crate::feedback::ContactPause::animation_scale);
+        let target_scale = pauses
+            .get(target)
+            .ok()
+            .map_or(1.0, crate::feedback::ContactPause::animation_scale);
+        let camera = cameras
+            .single()
+            .map_or(Vec3::ZERO, |camera| camera.translation);
+        for (entity, transform, vitality) in &minions {
+            info!(
+                "COMBAT_FEEL_MINION {} {:.5} {:?} {:.4} {:.4} {:.3} {:.4}",
+                case.name,
+                time.elapsed_secs_f64(),
+                entity,
+                transform.translation.x,
+                transform.translation.z,
+                vitality.current,
+                pauses
+                    .get(entity)
+                    .map_or(1.0, crate::feedback::ContactPause::animation_scale)
+            );
+        }
+        info!(
+            "COMBAT_FEEL_FRAME {} {:.5} {:.5} {:.5} {:.4} {:.4} {:.4} {:.3} {:.3} {:.3} {:.4} {:.4} {:.4} {:.4} {:.4}",
+            case.name,
+            time.elapsed_secs_f64(),
+            virtual_time.relative_speed(),
+            animation.attack_progress(),
+            hero.translation.x,
+            hero.translation.y,
+            hero.translation.z,
+            hero_health.current,
+            target_health,
+            fury.current,
+            hero_scale,
+            target_scale,
+            camera.x,
+            camera.y,
+            camera.z
+        );
+    }
     if case.name.starts_with("soulbinder-") {
         for (entity, enemy, _, health) in &enemies {
             info!(
@@ -387,10 +496,10 @@ fn record(
         time.elapsed_secs_f64(),
         virtual_time.relative_speed(),
         animation.attack_progress(),
-        transform.translation.x,
-        transform.translation.y,
-        transform.translation.z,
-        health.current,
+        target_position.x,
+        target_position.y,
+        target_position.z,
+        target_health,
         fury.current,
         barrier.current
     );

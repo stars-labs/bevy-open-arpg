@@ -1,3 +1,4 @@
+pub(crate) mod feel;
 mod presentation;
 mod ranged;
 #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
@@ -71,23 +72,24 @@ struct Vulnerable {
 }
 
 const COMBO_WINDOW_SECS: f32 = 3.0;
-const SKILL_INPUT_BUFFER_SECS: f32 = 0.18;
 
 #[derive(Resource, Debug, Default)]
 struct SkillInputBuffer {
     /// Seconds each slot's key press stays buffered, indexed by `SkillSlot::index`.
     secs: [f32; 3],
+    basic_secs: f32,
 }
 
 impl SkillInputBuffer {
     fn tick(&mut self, delta_secs: f32) {
+        self.basic_secs = (self.basic_secs - delta_secs).max(0.0);
         for secs in &mut self.secs {
             *secs = (*secs - delta_secs).max(0.0);
         }
     }
 
     fn capture(&mut self, slot: SkillSlot) {
-        self.secs[slot.index()] = SKILL_INPUT_BUFFER_SECS;
+        self.secs[slot.index()] = feel::tuning().skill_buffer_secs;
     }
 
     fn requested(&self, slot: SkillSlot) -> bool {
@@ -544,6 +546,9 @@ struct CombatInputs<'w, 's> {
     keyboard: Res<'w, ButtonInput<KeyCode>>,
     mouse: Res<'w, ButtonInput<MouseButton>>,
     ui_capture: Res<'w, crate::ui::UiPointerCapture>,
+    build_open: Option<Res<'w, crate::BuildOpen>>,
+    inventory_open: Option<Res<'w, crate::InventoryOpen>>,
+    journal_open: Option<Res<'w, crate::JournalOpen>>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera3d>>,
     tuning: Res<'w, PlayerTuning>,
@@ -842,7 +847,11 @@ impl Plugin for CombatPlugin {
         .init_resource::<BasicAttackIntent>()
         .add_systems(
             OnEnter(GameState::InGame),
-            (reset_combat_combo, reset_basic_attack_intent),
+            (
+                reset_combat_combo,
+                reset_basic_attack_intent,
+                reset_combat_input_buffer,
+            ),
         )
         .add_systems(
             Update,
@@ -856,7 +865,8 @@ impl Plugin for CombatPlugin {
                     tick_enemy_burning,
                 )
                     .chain()
-                    .in_set(CombatSet::PlayerDamage),
+                    .in_set(CombatSet::PlayerDamage)
+                    .after(crate::player::PlayerSet::Evade),
                 tick_combat_vfx,
                 tick_vulnerable,
                 tick_combat_combo,
@@ -864,8 +874,17 @@ impl Plugin for CombatPlugin {
                 .run_if(in_state(GameState::InGame).and_then(not_paused)),
         )
         .add_systems(
+            Update,
+            clear_paused_inputs.run_if(in_state(GameState::InGame)),
+        )
+        .add_systems(
             OnExit(GameState::InGame),
-            (despawn_combat_vfx, ranged::despawn_ranged_strikes),
+            (
+                despawn_combat_vfx,
+                ranged::despawn_ranged_strikes,
+                reset_basic_attack_intent,
+                reset_combat_input_buffer,
+            ),
         );
     }
 }
@@ -924,6 +943,27 @@ fn player_attacks(
     else {
         return;
     };
+    if inputs.build_open.as_ref().is_some_and(|open| open.open)
+        || inputs.inventory_open.as_ref().is_some_and(|open| open.open)
+        || inputs.journal_open.as_ref().is_some_and(|open| open.open)
+        || inputs.ui_capture.0
+    {
+        *inputs.input_buffer = SkillInputBuffer::default();
+        inputs.basic_attack_intent.target = None;
+        return;
+    }
+    if crate::player::evade_seconds_remaining(evade) > 0.0 || player_health.current <= 0.0 {
+        if pending_strike.is_some() {
+            world
+                .commands
+                .entity(player_entity)
+                .try_remove::<PendingPlayerStrike>();
+        }
+        animation.cancel_attack();
+        inputs.basic_attack_intent.target = None;
+        *inputs.input_buffer = SkillInputBuffer::default();
+        return;
+    }
     let class = inputs.catalog.get(inputs.selected.0);
     let resource = class.resource.kind;
     let growth = &inputs.tuning.growth;
@@ -935,6 +975,13 @@ fn player_attacks(
         * unbowed_multiplier(class.passive, &player_health);
     let damage_bonus = total_damage_bonus(bonus, equipment, charm);
     let crit_chance = (total_crit_chance(equipment, charm) + talents.crit_bonus()).min(0.60);
+    #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+    let crit_chance =
+        if std::env::var("BEVY_OPEN_ARPG_COMBAT_REVIEW").is_ok_and(|v| v == "feel-critical") {
+            1.0
+        } else {
+            crit_chance
+        };
     let legendary_powers = LegendaryPowerSet::new(equipment.legendary_power, codex.attuned);
     let long_shot = long_shot_passive(class.passive);
     let basic_reach = class.basic.strike.reach();
@@ -971,6 +1018,11 @@ fn player_attacks(
             && (slot != SkillSlot::Finisher || !inputs.ui_capture.0);
     }
     inputs.input_buffer.tick(inputs.time.delta_secs());
+    if inputs.ui_capture.0 || inputs.mouse.pressed(MouseButton::Right) {
+        inputs.input_buffer.basic_secs = 0.0;
+    } else if inputs.mouse.just_pressed(MouseButton::Left) {
+        inputs.input_buffer.basic_secs = feel::tuning().basic_buffer_secs;
+    }
     for slot in SkillSlot::ALL {
         if pressed[slot.index()] {
             inputs.input_buffer.capture(slot);
@@ -982,14 +1034,20 @@ fn player_attacks(
 
     if !inputs.ui_capture.0
         && cursor_ground.is_some()
-        && animation.attack_progress() >= 1.0
-        && basic_attack_requested(
+        && animation.can_chain_attack()
+        && !SkillSlot::ALL
+            .into_iter()
+            .any(|slot| inputs.input_buffer.requested(slot) && cooldowns.slot(slot).is_finished())
+        && (basic_attack_requested(
             &inputs.mouse,
             &cooldowns,
             &inputs.basic_attack_intent,
             primary_attack_target,
-        )
+        ) || (inputs.input_buffer.basic_secs > 0.0
+            && basic_attack_ready(&cooldowns)
+            && primary_attack_target.is_none_or(|target| target.in_range)))
     {
+        inputs.input_buffer.basic_secs = 0.0;
         let aim = primary_attack_target
             .map(|target| target.position)
             .or(cursor_ground);
@@ -1032,6 +1090,9 @@ fn player_attacks(
         );
     }
 
+    if !animation.can_recovery_cancel() {
+        return;
+    }
     for slot in [SkillSlot::Mobility, SkillSlot::Finisher, SkillSlot::Area] {
         if !inputs.input_buffer.requested(slot) {
             continue;
@@ -1135,7 +1196,7 @@ fn player_attacks(
         world.combat_events.write(CombatEvent {
             text: skill_cast_text(&skill.name, rune),
         });
-        world.screen_shake.write(skill_cast_screen_shake(slot));
+        // Casting and whiffing do not imply impact. Shake comes from resolved damage.
         let cast_secs = if skill.hasted {
             skill.cast_secs * talents.cooldown_multiplier()
         } else {
@@ -1380,11 +1441,30 @@ fn resolve_pending_player_strikes(
         let Some(mut pending) = pending else {
             continue;
         };
+        if crate::player::evade_seconds_remaining(evade) > 0.0 || player_health.current <= 0.0 {
+            animation.cancel_attack();
+            world
+                .commands
+                .entity(player_entity)
+                .try_remove::<PendingPlayerStrike>();
+            continue;
+        }
         pending.timer.tick(time.delta());
         if !pending.timer.is_finished() {
             continue;
         }
         let origin = player_transform.translation;
+        if matches!(
+            pending.motion,
+            PlayerAttackMotion::Basic | PlayerAttackMotion::Rupture
+        ) && pending.shape.is_melee()
+        {
+            world
+                .commands
+                .write_message(crate::feedback::SwingSoundEvent {
+                    heavy: pending.motion == PlayerAttackMotion::Rupture,
+                });
+        }
         let outcome = world.release(
             Hero {
                 position: origin,
@@ -1414,6 +1494,49 @@ fn resolve_pending_player_strikes(
             .commands
             .entity(player_entity)
             .remove::<PendingPlayerStrike>();
+    }
+}
+
+fn reset_combat_input_buffer(mut buffer: ResMut<SkillInputBuffer>) {
+    *buffer = SkillInputBuffer::default();
+}
+
+fn clear_paused_inputs(
+    pause: Res<crate::PauseState>,
+    mut buffer: ResMut<SkillInputBuffer>,
+    mut intent: ResMut<BasicAttackIntent>,
+) {
+    if pause.paused {
+        *buffer = SkillInputBuffer::default();
+        intent.target = None;
+    }
+}
+
+pub(crate) fn clear_transient_actions(world: &mut World) {
+    let players: Vec<_> = world
+        .query_filtered::<Entity, With<Player>>()
+        .iter(world)
+        .collect();
+    for player in players {
+        let mut entity = world.entity_mut(player);
+        entity.remove::<PendingPlayerStrike>();
+        entity.remove::<crate::feedback::ContactPause>();
+        if let Some(mut animation) = entity.get_mut::<PlayerAnimation>() {
+            animation.cancel_attack();
+        }
+    }
+    if let Some(mut buffer) = world.get_resource_mut::<SkillInputBuffer>() {
+        *buffer = SkillInputBuffer::default();
+    }
+    if let Some(mut intent) = world.get_resource_mut::<BasicAttackIntent>() {
+        intent.target = None;
+    }
+    crate::player::cancel_pointer_movement(world);
+    ranged::clear_inflight_strikes(world);
+    summons::clear_action_intent(world);
+    crate::feedback::clear_contact_feel(world);
+    if let Some(mut events) = world.get_resource_mut::<Messages<ContactFeedback>>() {
+        events.clear();
     }
 }
 
@@ -1543,7 +1666,13 @@ fn cursor_ground_primary_attack_target(
         .iter()
         .filter(|(_, transform, enemy, health, ..)| {
             health.current > 0.0
-                && cursor_targets_enemy(cursor_ground, transform.translation, enemy)
+                && (cursor_targets_enemy(cursor_ground, transform.translation, enemy)
+                    || assisted_cursor_target(
+                        cursor_ground,
+                        player_position,
+                        transform.translation,
+                        enemy,
+                    ))
         })
         .min_by(|(_, left_transform, ..), (_, right_transform, ..)| {
             flat_distance(cursor_ground, left_transform.translation)
@@ -1565,13 +1694,22 @@ fn cursor_targets_enemy(cursor_ground: Vec3, enemy_position: Vec3, enemy: &Enemy
     flat_distance(cursor_ground, enemy_position) <= enemy_cursor_pick_radius(enemy)
 }
 
+fn assisted_cursor_target(cursor: Vec3, player: Vec3, target: Vec3, enemy: &Enemy) -> bool {
+    let aim = (cursor - player).with_y(0.0).normalize_or_zero();
+    let direction = (target - player).with_y(0.0).normalize_or_zero();
+    aim.dot(direction) >= feel::tuning().assist_aim_cosine
+        && flat_distance(cursor, target)
+            <= enemy_cursor_pick_radius(enemy) + feel::tuning().assist_extra_reach
+}
+
 fn attack_target_in_range(
     player_position: Vec3,
     enemy_position: Vec3,
     attack_range: f32,
     enemy: &Enemy,
 ) -> bool {
-    let forgiveness = enemy_cursor_pick_radius(enemy).min(0.42) * 0.35;
+    let forgiveness =
+        (enemy_cursor_pick_radius(enemy).min(0.42) * 0.35).min(feel::tuning().assist_extra_reach);
     flat_distance(player_position, enemy_position) <= attack_range + forgiveness
 }
 
@@ -1593,15 +1731,6 @@ fn rune_effect_text(rune: Rune, affected: u32) -> Option<String> {
 
 fn skill_cast_text(name: &str, rune: Rune) -> String {
     format!("{} {name}", rune.label())
-}
-
-fn skill_cast_screen_shake(slot: SkillSlot) -> ScreenShakeEvent {
-    let (intensity, duration_secs) = match slot {
-        SkillSlot::Mobility => (0.026, 0.10),
-        SkillSlot::Finisher => (0.036, 0.13),
-        SkillSlot::Area => (0.046, 0.16),
-    };
-    ScreenShakeEvent::new(intensity, duration_secs)
 }
 
 fn roll_critical(crit_chance: f32) -> bool {
@@ -1916,11 +2045,24 @@ fn hit_impact_screen_shake_event_for_profile(profile: HitImpactProfile) -> Scree
 }
 
 fn hit_impact_hit_stop_event(critical: bool, impact_scale: f32) -> HitStopEvent {
-    let impact_scale = impact_scale.clamp(0.5, 1.8);
-    let extra_weight = (impact_scale - 1.0).max(0.0);
-    let duration_secs = (if critical { 0.095 } else { 0.070 }) + extra_weight * 0.025;
-    let relative_speed = (if critical { 0.055 } else { 0.09 }) - extra_weight * 0.025;
-    HitStopEvent::new(relative_speed, duration_secs)
+    let data = feel::tuning();
+    let heavy = impact_scale >= 1.25;
+    let extra = (impact_scale.clamp(0.5, 1.8) - 1.0).max(0.0);
+    let duration = if heavy {
+        data.heavy_pause_secs + extra * 0.01
+    } else if critical {
+        data.critical_pause_secs + extra * 0.02
+    } else {
+        data.basic_pause_secs + extra * 0.02
+    };
+    let speed = if heavy {
+        0.06
+    } else if critical {
+        0.09
+    } else {
+        0.12
+    };
+    HitStopEvent::new(speed - extra * 0.015, duration)
 }
 
 fn hit_impact_hit_stop_event_for_profile(profile: HitImpactProfile) -> HitStopEvent {
@@ -1938,12 +2080,19 @@ fn trigger_hit_impact_screen_shake(
 fn trigger_hit_impact_hit_stop(
     hit_stop: &mut MessageWriter<HitStopEvent>,
     profile: HitImpactProfile,
+    target: Entity,
+    source: Vec3,
+    player_source: bool,
 ) {
-    hit_stop.write(hit_impact_hit_stop_event_for_profile(profile));
+    hit_stop.write(hit_impact_hit_stop_event_for_profile(profile).for_contact(
+        target,
+        source,
+        player_source,
+    ));
 }
 
 fn boss_break_hit_stop_event() -> HitStopEvent {
-    HitStopEvent::new(0.04, 0.12)
+    HitStopEvent::new(0.04, feel::tuning().boss_break_pause_secs)
 }
 
 fn trigger_boss_stagger(
@@ -2410,7 +2559,12 @@ fn apply_strike(
         );
         if boss_break {
             outcome.boss_staggers += 1;
-            feedback.hit_stop.write(boss_break_hit_stop_event());
+            let pause = boss_break_hit_stop_event();
+            feedback.hit_stop.write(if profile.hit_stop {
+                pause.for_contact(entity, strike.source, profile.cast != 0)
+            } else {
+                pause.for_victim(entity)
+            });
         }
         let impact_profile = hit_impact_profile(enemy, critical, profile.impact_scale, boss_break);
         if final_damage > 0.0 {
@@ -2423,9 +2577,17 @@ fn apply_strike(
             position: hit_bone_world_position(transform.translation, enemy, critical),
             critical,
         });
-        trigger_hit_impact_screen_shake(feedback.screen_shake, impact_profile);
-        if profile.hit_stop {
-            trigger_hit_impact_hit_stop(feedback.hit_stop, impact_profile);
+        if final_damage > 0.0 {
+            trigger_hit_impact_screen_shake(feedback.screen_shake, impact_profile);
+            if profile.hit_stop {
+                trigger_hit_impact_hit_stop(
+                    feedback.hit_stop,
+                    impact_profile,
+                    entity,
+                    strike.source,
+                    profile.cast != 0,
+                );
+            }
         }
         if final_damage > 0.0 {
             outcome.damaging_hits += 1;
@@ -2436,6 +2598,9 @@ fn apply_strike(
                 source: strike.source,
                 skill: profile.skill,
                 strength: profile.impact_scale * if critical { 1.2 } else { 1.0 },
+                critical,
+                killed: health.current <= 0.0,
+                material: presentation::basic_material_sound(Some(&enemy.id)),
             });
         }
         commands.entity(entity).try_insert((
@@ -2799,7 +2964,7 @@ fn arc_target_hit(origin: Vec3, forward: Vec3, target: Vec3, range: f32) -> bool
     let flat = Vec3::new(to_target.x, 0.0, to_target.z);
     let distance = flat.length();
     let alignment = forward.dot(flat.normalize_or_zero());
-    distance <= range && alignment > 0.1
+    distance <= range + feel::tuning().assist_extra_reach && alignment > 0.1
 }
 
 fn tick_enemy_burning(
@@ -2968,7 +3133,7 @@ mod tests {
         assert!(recoil_scale_for_enemy(&boss, 1.57) <= 0.15);
         let light = hit_impact_hit_stop_event(false, 1.0);
         let heavy = hit_impact_hit_stop_event(false, 1.57);
-        assert!(light.duration_secs >= 0.07);
+        assert!(light.duration_secs >= 0.025 && light.duration_secs <= 0.045);
         assert!(heavy.duration_secs > light.duration_secs);
         assert!(heavy.relative_speed < light.relative_speed);
     }
@@ -3285,7 +3450,7 @@ mod tests {
         assert!(!buffer.requested(SkillSlot::Finisher));
         assert!(buffer.requested(SkillSlot::Area));
 
-        buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.5);
+        buffer.tick(feel::tuning().skill_buffer_secs * 0.5);
         assert!(buffer.requested(SkillSlot::Mobility));
         assert!(buffer.requested(SkillSlot::Area));
 
@@ -3293,7 +3458,7 @@ mod tests {
         assert!(!buffer.requested(SkillSlot::Mobility));
         assert!(buffer.requested(SkillSlot::Area));
 
-        buffer.tick(SKILL_INPUT_BUFFER_SECS);
+        buffer.tick(feel::tuning().skill_buffer_secs);
         assert!(!buffer.requested(SkillSlot::Area));
     }
 
@@ -3302,18 +3467,18 @@ mod tests {
         let mut buffer = SkillInputBuffer::default();
 
         buffer.capture(SkillSlot::Finisher);
-        buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.75);
+        buffer.tick(feel::tuning().skill_buffer_secs * 0.75);
         assert!(buffer.requested(SkillSlot::Finisher));
 
         buffer.capture(SkillSlot::Finisher);
-        buffer.tick(SKILL_INPUT_BUFFER_SECS * 0.75);
+        buffer.tick(feel::tuning().skill_buffer_secs * 0.75);
         assert!(buffer.requested(SkillSlot::Finisher));
 
         buffer.clear(SkillSlot::Finisher);
         assert!(!buffer.requested(SkillSlot::Finisher));
 
         buffer.capture(SkillSlot::Mobility);
-        buffer.tick(SKILL_INPUT_BUFFER_SECS + 0.01);
+        buffer.tick(feel::tuning().skill_buffer_secs + 0.01);
         assert!(!buffer.requested(SkillSlot::Mobility));
     }
 
@@ -3393,7 +3558,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_cast_feedback_names_runes_and_scales_impact() {
+    fn skill_cast_feedback_names_runes_without_implying_contact() {
         assert_eq!(
             skill_cast_text("Heavy Cut", Rune::Hemorrhage),
             "Hemorrhage Heavy Cut"
@@ -3402,12 +3567,6 @@ mod tests {
             skill_cast_text("Frost Nova", Rune::Frost),
             "Frost Frost Nova"
         );
-        let mobility = skill_cast_screen_shake(SkillSlot::Mobility);
-        let finisher = skill_cast_screen_shake(SkillSlot::Finisher);
-        let area = skill_cast_screen_shake(SkillSlot::Area);
-        assert!(mobility.intensity < finisher.intensity);
-        assert!(finisher.intensity < area.intensity);
-        assert!(mobility.duration_secs < area.duration_secs);
     }
 
     #[test]

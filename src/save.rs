@@ -919,7 +919,12 @@ fn load_game(
         )
     });
     let status = match load_result {
-        Ok(()) => "Loaded slot 1".to_string(),
+        Ok(()) => {
+            inputs
+                .commands
+                .queue(crate::combat::clear_transient_actions);
+            "Loaded slot 1".to_string()
+        }
         Err(err) => format!("Load failed: {err}"),
     };
     // Resetting the presentation is necessary even when loading fails so stale

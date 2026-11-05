@@ -10,7 +10,7 @@ use crate::{
     player::{Health, Player, PlayerLevelUp},
 };
 use bevy::prelude::*;
-use bevy::time::{Real, Virtual};
+use bevy::time::Real;
 use bevy::window::PrimaryWindow;
 #[cfg(not(target_arch = "wasm32"))]
 use rodio::Source;
@@ -54,6 +54,9 @@ impl ScreenShakeEvent {
 
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct HitStopEvent {
+    pub target: Option<Entity>,
+    pub source: Option<Vec3>,
+    pub player_source: bool,
     pub relative_speed: f32,
     pub duration_secs: f32,
 }
@@ -61,9 +64,69 @@ pub struct HitStopEvent {
 impl HitStopEvent {
     pub fn new(relative_speed: f32, duration_secs: f32) -> Self {
         Self {
+            target: None,
+            source: None,
+            player_source: false,
             relative_speed: relative_speed.clamp(0.04, 0.82),
             duration_secs: duration_secs.clamp(0.012, 0.12),
         }
+    }
+}
+
+impl HitStopEvent {
+    pub fn for_victim(mut self, target: Entity) -> Self {
+        self.target = Some(target);
+        self.source = None;
+        self.player_source = false;
+        self
+    }
+
+    pub fn for_contact(mut self, target: Entity, source: Vec3, player_source: bool) -> Self {
+        self.target = Some(target);
+        self.source = Some(source);
+        self.player_source = player_source;
+        self
+    }
+}
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FeedbackSet {
+    ContactPause,
+    CameraRestore,
+    CameraShake,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ContactPause {
+    frame_start_remaining: f32,
+    remaining_secs: f32,
+    duration_secs: f32,
+    relative_speed: f32,
+}
+
+impl ContactPause {
+    pub fn clear(&mut self) {
+        self.remaining_secs = 0.0;
+        self.frame_start_remaining = 0.0;
+    }
+
+    /// Average curve speed over this frame, including normal time after release.
+    pub fn frame_animation_scale(&self, delta_secs: f32) -> f32 {
+        if delta_secs <= 0.0 {
+            return self.animation_scale();
+        }
+        let remaining = self.frame_start_remaining.min(self.duration_secs).max(0.0);
+        let affected = remaining.min(delta_secs);
+        let start = 1.0 - remaining / self.duration_secs;
+        let end = start + affected / self.duration_secs;
+        let animated = self.duration_secs
+            * (contact_curve_integral(end, self.relative_speed)
+                - contact_curve_integral(start, self.relative_speed));
+        ((animated + delta_secs - affected) / delta_secs).clamp(0.0, 1.0)
+    }
+
+    pub fn animation_scale(&self) -> f32 {
+        hit_stop_recovery_speed(self.relative_speed, self.remaining_secs, self.duration_secs)
     }
 }
 
@@ -77,23 +140,35 @@ struct CameraShakeState {
     timer: Option<Timer>,
     duration_secs: f32,
     intensity: f32,
-    base_translation: Option<Vec3>,
+    offset: Vec3,
 }
 
-#[derive(Resource, Debug, Default)]
-struct HitStopState {
-    remaining_secs: f32,
-    duration_secs: f32,
-    relative_speed: f32,
+#[derive(Clone, Copy)]
+struct SoundPlayback {
+    cue: SoundCue,
+    pitch: f32,
+    gain: f32,
+}
+
+fn sound_variation(sequence: u32) -> (f32, f32) {
+    let mixed = sequence
+        .wrapping_mul(747_796_405)
+        .wrapping_add(2_891_336_453);
+    let tuning = crate::combat::feel::tuning();
+    let pitch = 1.0 + ((mixed % 71) as f32 / 70.0 * 2.0 - 1.0) * tuning.audio_pitch_variation;
+    let gain =
+        tuning.audio_gain_min + ((mixed >> 8) % 61) as f32 / 60.0 * (1.0 - tuning.audio_gain_min);
+    (pitch, gain)
 }
 
 #[derive(Resource, Default)]
 struct GameAudio {
-    sender: Option<Sender<SoundCue>>,
+    sender: Option<Sender<SoundPlayback>>,
+    sequence: std::sync::atomic::AtomicU32,
     // The web build has no mixer thread; cues queue here and a per-frame
     // system plays them through bevy_audio (Web Audio API).
     #[cfg(target_arch = "wasm32")]
-    web_queue: std::sync::Mutex<Vec<SoundCue>>,
+    web_queue: std::sync::Mutex<Vec<SoundPlayback>>,
 }
 
 #[derive(Resource)]
@@ -406,6 +481,7 @@ struct FloatingTextStyle {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ContactSound {
     Steel,
+    Bone,
     Expose,
     Blood,
     Cleanse,
@@ -418,6 +494,11 @@ pub(crate) enum ContactSound {
 pub(crate) struct ContactSoundEvent {
     pub kind: ContactSound,
     pub strength: f32,
+}
+
+#[derive(Message, Debug, Clone, Copy)]
+pub struct SwingSoundEvent {
+    pub heavy: bool,
 }
 
 #[derive(Resource, Default)]
@@ -437,6 +518,7 @@ impl ContactAudioGate {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SoundCue {
+    Swing(bool),
     Contact(ContactSound, bool),
     Hit,
     Critical,
@@ -454,8 +536,11 @@ enum SoundCue {
 }
 
 #[cfg(test)]
-const ALL_SOUND_CUES: [SoundCue; 20] = [
+const ALL_SOUND_CUES: [SoundCue; 23] = [
+    SoundCue::Swing(false),
+    SoundCue::Swing(true),
     SoundCue::Contact(ContactSound::Steel, false),
+    SoundCue::Contact(ContactSound::Bone, false),
     SoundCue::Contact(ContactSound::Expose, false),
     SoundCue::Contact(ContactSound::Blood, false),
     SoundCue::Contact(ContactSound::Cleanse, false),
@@ -485,13 +570,13 @@ impl Plugin for FeedbackPlugin {
         app.add_systems(Update, play_web_sound_cues);
         app.init_resource::<CombatLog>()
             .init_resource::<CameraShakeState>()
-            .init_resource::<HitStopState>()
             .init_resource::<GameAudio>()
             .init_resource::<AudioBackendRetry>()
             .init_resource::<AudioBackendStatus>()
             .init_resource::<AudioCueLimiter>()
             .init_resource::<ContactAudioGate>()
             .add_message::<ContactSoundEvent>()
+            .add_message::<SwingSoundEvent>()
             .init_resource::<EnemyHoverTarget>()
             .init_resource::<TargetInfo>()
             .init_resource::<BasicAttackIntent>()
@@ -499,6 +584,13 @@ impl Plugin for FeedbackPlugin {
             .add_message::<FloatingCombatTextEvent>()
             .add_message::<ScreenShakeEvent>()
             .add_message::<HitStopEvent>()
+            .add_systems(
+                Update,
+                update_hit_stop
+                    .after(crate::combat::CombatSet::PlayerDamage)
+                    .in_set(FeedbackSet::ContactPause)
+                    .run_if(in_state(GameState::InGame)),
+            )
             .add_systems(Startup, (setup_audio_backend, start_ambient_music))
             .add_systems(Update, (maintain_audio_backend, sync_ambient_music_mute))
             .add_systems(
@@ -506,6 +598,7 @@ impl Plugin for FeedbackPlugin {
                 (
                     collect_combat_events,
                     play_contact_audio,
+                    play_swing_audio,
                     level_up_feedback,
                     animate_level_up_glow,
                     spawn_floating_combat_text,
@@ -519,8 +612,10 @@ impl Plugin for FeedbackPlugin {
                         update_enemy_focus_targets,
                     )
                         .chain(),
-                    update_camera_shake,
-                    update_hit_stop.after(crate::combat::CombatSet::PlayerDamage),
+                    restore_camera_shake.in_set(FeedbackSet::CameraRestore),
+                    update_camera_shake
+                        .in_set(FeedbackSet::CameraShake)
+                        .after(FeedbackSet::CameraRestore),
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
@@ -603,13 +698,46 @@ fn collect_combat_events(
     mut events: MessageReader<CombatEvent>,
     mut log: ResMut<CombatLog>,
 ) {
+    let mut selected = None;
     for event in events.read() {
-        if let Some(cue) = sound_cue_for_combat_event(&event.text)
-            && limiter.should_play(cue, time.elapsed_secs())
-        {
-            play_sound_cue(&audio, &audio_settings, cue);
+        if let Some(cue) = sound_cue_for_combat_event(&event.text) {
+            selected = select_semantic_cue(selected, cue);
         }
         log.push_event(&event.text);
+    }
+    if let Some(cue) = selected
+        && limiter.should_play(cue, time.elapsed_secs())
+    {
+        play_sound_cue(&audio, &audio_settings, cue);
+    }
+}
+
+fn select_semantic_cue(previous: Option<SoundCue>, next: SoundCue) -> Option<SoundCue> {
+    fn priority(cue: SoundCue) -> u8 {
+        match cue {
+            SoundCue::Boss => 9,
+            SoundCue::Death => 8,
+            SoundCue::Critical => 7,
+            SoundCue::Combo => 6,
+            SoundCue::Danger => 5,
+            SoundCue::Quest => 4,
+            SoundCue::Loot => 3,
+            _ => 1,
+        }
+    }
+    Some(match previous {
+        Some(current) if priority(current) >= priority(next) => current,
+        _ => next,
+    })
+}
+
+fn play_swing_audio(
+    mut events: MessageReader<SwingSoundEvent>,
+    audio: Res<GameAudio>,
+    settings: Res<AudioSettings>,
+) {
+    if let Some(heavy) = events.read().map(|event| event.heavy).max() {
+        play_sound_cue(&audio, &settings, SoundCue::Swing(heavy));
     }
 }
 
@@ -762,12 +890,21 @@ fn play_sound_cue(audio: &GameAudio, audio_settings: &AudioSettings, cue: SoundC
     if !audio_settings.enabled {
         return;
     }
+    let sequence = audio
+        .sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (pitch, gain) = sound_variation(sequence);
+    let playback = SoundPlayback {
+        cue,
+        pitch,
+        gain: sound_cue_gain(cue) * gain,
+    };
     #[cfg(target_arch = "wasm32")]
     if let Ok(mut queue) = audio.web_queue.lock() {
-        queue.push(cue);
+        queue.push(playback);
     }
     if let Some(sender) = &audio.sender {
-        let _ = sender.send(cue);
+        let _ = sender.send(playback);
     }
 }
 
@@ -820,21 +957,22 @@ fn play_web_sound_cues(
     audio: Res<GameAudio>,
     status: Res<AudioBackendStatus>,
 ) {
-    let cues: Vec<SoundCue> = match audio.web_queue.lock() {
+    let cues: Vec<SoundPlayback> = match audio.web_queue.lock() {
         Ok(mut queue) => queue.drain(..).collect(),
         Err(_) => return,
     };
     if *status != AudioBackendStatus::Ready {
         return;
     }
-    for cue in cues {
+    for playback in cues {
+        let cue = playback.cue;
         let source: Handle<bevy::audio::AudioSource> =
             asset_server.load(format!("audio/{}", sound_cue_file(cue)));
         commands.spawn((
             bevy::audio::AudioPlayer::new(source),
-            bevy::audio::PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
-                sound_cue_gain(cue).clamp(0.0, 1.4),
-            )),
+            bevy::audio::PlaybackSettings::DESPAWN
+                .with_volume(bevy::audio::Volume::Linear(playback.gain.clamp(0.0, 1.4)))
+                .with_speed(playback.pitch),
         ));
     }
 }
@@ -951,15 +1089,16 @@ fn try_start_audio_backend(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
+fn audio_thread(receiver: Receiver<SoundPlayback>, audio_root: PathBuf) {
     let Ok(handle) = rodio::DeviceSinkBuilder::open_default_sink() else {
         bevy::log::warn!("Bevy Open ARPG audio: no output device available");
         return;
     };
 
-    for cue in receiver {
+    for playback in receiver {
+        let cue = playback.cue;
         let path = audio_root.join(sound_cue_file(cue));
-        if let Err(error) = play_audio_file(&handle, &path, sound_cue_gain(cue)) {
+        if let Err(error) = play_audio_file(&handle, &path, playback.gain, playback.pitch) {
             bevy::log::warn!(
                 "Bevy Open ARPG audio: failed to play {}: {error}",
                 path.display()
@@ -969,19 +1108,26 @@ fn audio_thread(receiver: Receiver<SoundCue>, audio_root: PathBuf) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn play_audio_file(handle: &rodio::MixerDeviceSink, path: &Path, gain: f32) -> Result<(), String> {
+fn play_audio_file(
+    handle: &rodio::MixerDeviceSink,
+    path: &Path,
+    gain: f32,
+    pitch: f32,
+) -> Result<(), String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let source = rodio::Decoder::new(BufReader::new(file)).map_err(|error| error.to_string())?;
     let player = rodio::Player::connect_new(handle.mixer());
-    player.append(source.amplify(gain.clamp(0.0, 1.4)));
+    player.append(source.speed(pitch).amplify(gain.clamp(0.0, 1.4)));
     player.detach();
     Ok(())
 }
 
 fn sound_cue_file(cue: SoundCue) -> &'static str {
     match cue {
+        SoundCue::Swing(_) => "swing_air.wav",
         SoundCue::Contact(kind, _) => match kind {
             ContactSound::Steel => "contact_steel.wav",
+            ContactSound::Bone => "contact_bone.wav",
             ContactSound::Expose => "contact_expose.wav",
             ContactSound::Blood => "contact_blood.wav",
             ContactSound::Cleanse => "contact_cleanse.wav",
@@ -1007,6 +1153,7 @@ fn sound_cue_file(cue: SoundCue) -> &'static str {
 
 fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
     match cue {
+        SoundCue::Swing(_) => 0.0,
         SoundCue::Contact(_, _) => 0.08,
         SoundCue::Hit => 0.045,
         SoundCue::Critical => 0.08,
@@ -1025,6 +1172,13 @@ fn sound_cue_cooldown_secs(cue: SoundCue) -> f32 {
 
 fn sound_cue_gain(cue: SoundCue) -> f32 {
     match cue {
+        SoundCue::Swing(heavy) => {
+            if heavy {
+                0.38
+            } else {
+                0.24
+            }
+        }
         SoundCue::Contact(_, heavy) => {
             if heavy {
                 0.95
@@ -1051,6 +1205,7 @@ fn sound_cue_gain(cue: SoundCue) -> f32 {
 fn sound_cue_for_combat_event(text: &str) -> Option<SoundCue> {
     // Typed contacts own these sounds; a log must not replay a second generic impact.
     if text.contains("Strike hit for")
+        || text.contains("skill hit for")
         || text.contains("nova hit for")
         || matches!(
             text,
@@ -2201,8 +2356,18 @@ fn enemy_focus_ring_base_scale(enemy: &Enemy) -> f32 {
     }
 }
 
+fn restore_camera_shake(
+    mut state: ResMut<CameraShakeState>,
+    mut cameras: Query<&mut Transform, With<Camera3d>>,
+) {
+    for mut transform in &mut cameras {
+        transform.translation -= state.offset;
+    }
+    state.offset = Vec3::ZERO;
+}
+
 fn update_camera_shake(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut events: MessageReader<ScreenShakeEvent>,
     mut state: ResMut<CameraShakeState>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
@@ -2211,88 +2376,184 @@ fn update_camera_shake(
         return;
     };
     for event in events.read() {
-        if state.base_translation.is_none() {
-            state.base_translation = Some(transform.translation);
-        }
         if event.intensity >= state.intensity {
-            state.timer = Some(Timer::from_seconds(
-                event.duration_secs.max(0.01),
-                TimerMode::Once,
-            ));
-            state.duration_secs = event.duration_secs.max(0.01);
-            state.intensity = event.intensity.max(0.0);
+            let duration = event
+                .duration_secs
+                .clamp(0.01, crate::combat::feel::tuning().camera_max_duration);
+            state.timer = Some(Timer::from_seconds(duration, TimerMode::Once));
+            state.duration_secs = duration;
+            state.intensity = event
+                .intensity
+                .clamp(0.0, crate::combat::feel::tuning().camera_max_intensity);
         }
     }
-
-    let base = state.base_translation.unwrap_or(transform.translation);
-    let duration_secs = state.duration_secs;
+    let duration = state.duration_secs;
     let intensity = state.intensity;
     let Some(timer) = state.timer.as_mut() else {
         return;
     };
     timer.tick(time.delta());
     if timer.is_finished() {
-        transform.translation = base;
         state.timer = None;
-        state.base_translation = None;
-        state.duration_secs = 0.0;
         state.intensity = 0.0;
         return;
     }
-
-    transform.translation =
-        base + camera_shake_offset(timer.elapsed_secs(), duration_secs, intensity);
+    state.offset = camera_shake_offset(timer.elapsed_secs(), duration, intensity);
+    transform.translation += state.offset;
 }
 
 fn update_hit_stop(
+    mut commands: Commands,
     real_time: Res<Time<Real>>,
-    mut virtual_time: ResMut<Time<Virtual>>,
-    mut state: ResMut<HitStopState>,
+    mut pauses: Query<(Entity, &mut ContactPause)>,
+    sources: Query<(
+        Entity,
+        &Transform,
+        Has<Player>,
+        Has<crate::combat::summons::Minion>,
+    )>,
     mut events: MessageReader<HitStopEvent>,
 ) {
-    // Age the previous contact first. A new impact gets its full real-time window,
-    // even on a slow frame; simultaneous targets select the strongest, never sum.
-    state.remaining_secs = (state.remaining_secs - real_time.delta_secs()).max(0.0);
-    for event in events.read() {
-        if event.duration_secs >= state.remaining_secs {
-            state.remaining_secs = event.duration_secs;
-            state.duration_secs = event.duration_secs;
-            state.relative_speed = event.relative_speed;
+    // Collect after aging, so new contacts always get their complete real-time window.
+    let mut active = std::collections::HashMap::new();
+    for (entity, mut pause) in &mut pauses {
+        pause.frame_start_remaining = pause.remaining_secs;
+        pause.remaining_secs = (pause.remaining_secs - real_time.delta_secs()).max(0.0);
+        if pause.frame_start_remaining > 0.0 {
+            active.insert(entity, *pause);
+        } else {
+            pause.clear();
+            commands.entity(entity).remove::<ContactPause>();
         }
     }
-    let speed = if state.remaining_secs > 0.0 {
-        hit_stop_recovery_speed(
-            state.relative_speed,
-            state.remaining_secs,
-            state.duration_secs,
-        )
-    } else {
-        1.0
-    };
-    if (virtual_time.relative_speed() - speed).abs() > f32::EPSILON {
-        virtual_time.set_relative_speed(speed);
+    for event in events.read() {
+        let Some(target) = event.target else {
+            continue;
+        };
+        let contact = ContactPause {
+            frame_start_remaining: event.duration_secs,
+            remaining_secs: (event.duration_secs - real_time.delta_secs()).max(0.0),
+            duration_secs: event.duration_secs,
+            relative_speed: event.relative_speed,
+        };
+        let mut apply = |entity| {
+            let pause = active.entry(entity).or_insert(contact);
+            if pause.frame_start_remaining <= 0.0
+                || contact.relative_speed < pause.relative_speed
+                || (contact.relative_speed == pause.relative_speed
+                    && contact.duration_secs > pause.duration_secs)
+            {
+                *pause = contact;
+            }
+        };
+        apply(target);
+        let Some(source) = event.source else {
+            continue;
+        };
+        for (entity, transform, player, minion) in &sources {
+            if (event.player_source && player)
+                || (!event.player_source
+                    && minion
+                    && transform.translation.distance_squared(source) <= 0.25_f32.powi(2))
+            {
+                apply(entity);
+            }
+        }
     }
+    for (entity, pause) in active {
+        if let Ok(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.insert(pause);
+        }
+    }
+}
+
+// Exact antiderivative of the hold, linear drag and quadratic release curve.
+fn contact_curve_integral(progress: f32, relative_speed: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    let tuning = crate::combat::feel::tuning();
+    let hold = tuning.contact_hold_fraction;
+    let drag_end = tuning.contact_drag_fraction;
+    let contact = relative_speed.clamp(0.04, 0.82);
+    let drag = contact.max(0.42);
+    let mut integral = contact * progress.min(hold);
+    let drag_length = (progress.min(drag_end) - hold).max(0.0);
+    integral +=
+        contact * drag_length + (drag - contact) * drag_length.powi(2) / (2.0 * (drag_end - hold));
+    let release_length = (progress - drag_end).max(0.0);
+    let release_duration = 1.0 - drag_end;
+    integral
+        + drag * release_length
+        + (1.0 - drag)
+            * (release_length.powi(2) / release_duration
+                - release_length.powi(3) / (3.0 * release_duration.powi(2)))
 }
 
 fn hit_stop_recovery_speed(relative_speed: f32, remaining_secs: f32, duration_secs: f32) -> f32 {
     let contact_speed = relative_speed.clamp(0.04, 0.82);
     let progress = (1.0 - remaining_secs / duration_secs.max(0.001)).clamp(0.0, 1.0);
+    let tuning = crate::combat::feel::tuning();
+    let hold = tuning.contact_hold_fraction;
+    let drag_end = tuning.contact_drag_fraction;
     // Hold the edge at contact, drag it through the target, then release the cut.
-    if progress < 0.38 {
+    if progress < hold {
         contact_speed
-    } else if progress < 0.72 {
-        let drag = (progress - 0.38) / 0.34;
+    } else if progress < drag_end {
+        let drag = (progress - hold) / (drag_end - hold);
         contact_speed + (0.42_f32.max(contact_speed) - contact_speed) * drag
     } else {
-        let release = (progress - 0.72) / 0.28;
+        let release = (progress - drag_end) / (1.0 - drag_end);
         let drag_speed = 0.42_f32.max(contact_speed);
         drag_speed + (1.0 - drag_speed) * (1.0 - (1.0 - release).powi(2))
     }
 }
 
-fn reset_hit_stop(mut virtual_time: ResMut<Time<Virtual>>, mut state: ResMut<HitStopState>) {
-    *state = HitStopState::default();
-    virtual_time.set_relative_speed(1.0);
+fn reset_hit_stop(
+    mut commands: Commands,
+    pauses: Query<Entity, With<ContactPause>>,
+    mut state: ResMut<CameraShakeState>,
+    mut cameras: Query<&mut Transform, With<Camera3d>>,
+) {
+    for entity in &pauses {
+        commands.entity(entity).remove::<ContactPause>();
+    }
+    for mut camera in &mut cameras {
+        camera.translation -= state.offset;
+    }
+    *state = CameraShakeState::default();
+}
+
+pub(crate) fn clear_contact_feel(world: &mut World) {
+    let entities: Vec<_> = world
+        .query_filtered::<Entity, With<ContactPause>>()
+        .iter(world)
+        .collect();
+    for entity in entities {
+        world.entity_mut(entity).remove::<ContactPause>();
+    }
+    let offset = world
+        .get_resource::<CameraShakeState>()
+        .map_or(Vec3::ZERO, |state| state.offset);
+    for mut camera in world
+        .query_filtered::<&mut Transform, With<Camera3d>>()
+        .iter_mut(world)
+    {
+        camera.translation -= offset;
+    }
+    if let Some(mut shake) = world.get_resource_mut::<CameraShakeState>() {
+        *shake = CameraShakeState::default();
+    }
+    if let Some(mut events) = world.get_resource_mut::<Messages<HitStopEvent>>() {
+        events.clear();
+    }
+    if let Some(mut events) = world.get_resource_mut::<Messages<ScreenShakeEvent>>() {
+        events.clear();
+    }
+    if let Some(mut events) = world.get_resource_mut::<Messages<SwingSoundEvent>>() {
+        events.clear();
+    }
+    if let Some(mut events) = world.get_resource_mut::<Messages<ContactSoundEvent>>() {
+        events.clear();
+    }
 }
 
 #[cfg(test)]
@@ -2358,6 +2619,60 @@ mod tests {
     }
 
     #[test]
+    fn resolved_damage_logs_do_not_double_contact_audio() {
+        for text in [
+            "Strike hit for 20",
+            "Critical Strike hit for 35",
+            "Expose skill hit for 20",
+            "Critical Ember skill hit for 35",
+        ] {
+            assert_eq!(sound_cue_for_combat_event(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn simultaneous_semantic_sounds_select_one_priority_and_deduplicate() {
+        let select = |lines: &[&str]| {
+            lines
+                .iter()
+                .filter_map(|text| sound_cue_for_combat_event(text))
+                .fold(None, select_semantic_cue)
+        };
+        assert_eq!(
+            select(&[
+                "Combo Break",
+                "Malrec staggered",
+                "Ashbone Guard slain",
+                "Ashbone Guard slain"
+            ]),
+            Some(SoundCue::Death)
+        );
+        assert_eq!(
+            select(&["Ashbone Guard slain", "BREAK MALREC"]),
+            Some(SoundCue::Boss)
+        );
+        assert_eq!(
+            select(&["Combo Break", "Malrec staggered"]),
+            Some(SoundCue::Critical)
+        );
+        assert_ne!(
+            sound_cue_file(SoundCue::Swing(false)),
+            sound_cue_file(SoundCue::Contact(ContactSound::Steel, false))
+        );
+    }
+
+    #[test]
+    fn audio_variation_is_deterministic_and_subtle() {
+        for sequence in 0..512 {
+            let (pitch, gain) = sound_variation(sequence);
+            assert!((0.965..=1.035).contains(&pitch));
+            assert!((0.94..=1.0).contains(&gain));
+            assert_eq!(sound_variation(sequence), (pitch, gain));
+        }
+        assert_ne!(sound_variation(0), sound_variation(1));
+    }
+
+    #[test]
     fn hit_stop_events_clamp_and_recover_toward_normal_time() {
         let event = HitStopEvent::new(0.02, 0.5);
 
@@ -2373,6 +2688,31 @@ mod tests {
     }
 
     #[test]
+    fn contact_pause_integrates_identical_delay_at_all_frame_rates() {
+        let duration = 0.035;
+        let expected = duration * (1.0 - contact_curve_integral(1.0, 0.09));
+        for dt in [1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0, 0.25] {
+            let mut remaining = duration;
+            let mut delay = 0.0;
+            while remaining > 0.0 {
+                let pause = ContactPause {
+                    frame_start_remaining: remaining,
+                    remaining_secs: remaining,
+                    duration_secs: duration,
+                    relative_speed: 0.09,
+                };
+                delay += dt * (1.0 - pause.frame_animation_scale(dt));
+                remaining = (remaining - dt).max(0.0);
+            }
+            assert!(
+                (delay - expected).abs() < 0.00001,
+                "dt={dt} delay={delay} expected={expected}"
+            );
+            assert!(delay < duration);
+        }
+    }
+
+    #[test]
     fn contact_pause_has_hold_drag_and_release_phases() {
         let duration = 0.070;
         let speed = |elapsed: f32| hit_stop_recovery_speed(0.09, duration - elapsed, duration);
@@ -2384,30 +2724,107 @@ mod tests {
     }
 
     #[test]
-    fn simultaneous_targets_do_not_stack_hitstop_duration() {
+    fn victim_only_pause_does_not_pause_nearby_player_or_minion() {
         let mut app = App::new();
         app.insert_resource(Time::<Real>::default())
-            .insert_resource(Time::<Virtual>::default())
-            .init_resource::<HitStopState>()
             .add_message::<HitStopEvent>()
             .add_systems(Update, update_hit_stop);
+        let player = app.world_mut().spawn((Player, Transform::default())).id();
+        let pet = app
+            .world_mut()
+            .spawn((crate::combat::summons::Minion, Transform::default()))
+            .id();
+        let victim = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .write_message(HitStopEvent::new(0.09, 0.085).for_victim(victim));
+        app.update();
+        assert!(app.world().get::<ContactPause>(victim).is_some());
+        assert!(app.world().get::<ContactPause>(player).is_none());
+        assert!(app.world().get::<ContactPause>(pet).is_none());
+    }
+
+    #[test]
+    fn weaker_contact_cannot_extend_a_stronger_pause() {
+        let mut app = App::new();
+        app.insert_resource(Time::<Real>::default())
+            .add_message::<HitStopEvent>()
+            .add_systems(Update, update_hit_stop);
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .write_message(HitStopEvent::new(0.08, 0.055).for_contact(target, Vec3::ZERO, false));
+        app.world_mut()
+            .write_message(HitStopEvent::new(0.4, 0.12).for_contact(target, Vec3::ZERO, false));
+        app.update();
+        let pause = app.world().get::<ContactPause>(target).unwrap();
+        assert_eq!(pause.relative_speed, 0.08);
+        assert_eq!(pause.duration_secs, 0.055);
+        app.world_mut()
+            .get_mut::<ContactPause>(target)
+            .unwrap()
+            .clear();
+        assert_eq!(
+            app.world()
+                .get::<ContactPause>(target)
+                .unwrap()
+                .animation_scale(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn contact_pause_is_local_and_simultaneous_contacts_do_not_stack() {
+        let mut app = App::new();
+        app.insert_resource(Time::<Real>::default())
+            .insert_resource(Time::<bevy::time::Virtual>::default())
+            .add_message::<HitStopEvent>()
+            .add_systems(Update, update_hit_stop);
+        let player = app.world_mut().spawn((Player, Transform::default())).id();
+        let pet = app
+            .world_mut()
+            .spawn((crate::combat::summons::Minion, Transform::default()))
+            .id();
+        let target = app.world_mut().spawn_empty().id();
         for _ in 0..5 {
-            app.world_mut().write_message(HitStopEvent::new(0.09, 0.07));
+            app.world_mut()
+                .write_message(HitStopEvent::new(0.09, 0.07).for_contact(
+                    target,
+                    Vec3::ZERO,
+                    false,
+                ));
         }
         app.update();
-        assert_eq!(app.world().resource::<HitStopState>().duration_secs, 0.07);
+        assert!(app.world().get::<ContactPause>(player).is_none());
         assert_eq!(
-            app.world().resource::<Time<Virtual>>().relative_speed(),
+            app.world().get::<ContactPause>(pet).unwrap().duration_secs,
+            0.07
+        );
+        assert_eq!(
+            app.world()
+                .get::<ContactPause>(target)
+                .unwrap()
+                .animation_scale(),
             0.09
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Time<bevy::time::Virtual>>()
+                .relative_speed(),
+            1.0
         );
         app.world_mut()
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_secs_f32(0.080));
         app.update();
         assert_eq!(
-            app.world().resource::<Time<Virtual>>().relative_speed(),
+            app.world()
+                .get::<ContactPause>(pet)
+                .unwrap()
+                .animation_scale(),
             1.0
         );
+        app.update();
+        assert!(app.world().get::<ContactPause>(pet).is_none());
+        assert!(app.world().get::<ContactPause>(target).is_none());
     }
 
     #[test]
@@ -2424,6 +2841,40 @@ mod tests {
         assert!(boss.font_size > elite.font_size);
         assert!(boss.lifetime_secs > normal.lifetime_secs);
         assert!(elite.scale.x > critical.scale.x);
+    }
+
+    #[test]
+    fn camera_shake_restores_current_follow_position_and_clears_on_exit() {
+        let mut app = App::new();
+        app.insert_resource(Time::<Real>::default())
+            .init_resource::<CameraShakeState>()
+            .add_message::<ScreenShakeEvent>()
+            .add_systems(Update, (restore_camera_shake, update_camera_shake).chain());
+        let base = Vec3::new(3.0, 8.0, 5.0);
+        let camera = app
+            .world_mut()
+            .spawn((Camera3d::default(), Transform::from_translation(base)))
+            .id();
+        app.world_mut()
+            .write_message(ScreenShakeEvent::new(0.1, 0.1));
+        app.update();
+        let pan = Vec3::new(4.0, 0.0, 0.0);
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation += pan;
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs_f32(0.2));
+        app.update();
+        assert!(
+            (app.world().get::<Transform>(camera).unwrap().translation - (base + pan)).length()
+                < 0.00001
+        );
+        assert_eq!(
+            app.world().resource::<CameraShakeState>().offset,
+            Vec3::ZERO
+        );
     }
 
     #[test]
@@ -3444,6 +3895,15 @@ mod tests {
     }
     #[test]
     fn contact_audio_is_material_specific_and_batch_limited() {
+        let bone = sound_cue_file(SoundCue::Contact(ContactSound::Bone, false));
+        assert_ne!(
+            bone,
+            sound_cue_file(SoundCue::Contact(ContactSound::Steel, false))
+        );
+        assert_ne!(
+            bone,
+            sound_cue_file(SoundCue::Contact(ContactSound::Blood, false))
+        );
         let mut gate = ContactAudioGate::default();
         assert!(gate.admit(1.0));
         assert!(!gate.admit(1.0));

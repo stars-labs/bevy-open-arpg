@@ -1,0 +1,23 @@
+// Contact pauses affect actors only, never the world clock.
+(
+    basic_buffer_secs: 0.16,
+    skill_buffer_secs: 0.18,
+    evade_buffer_secs: 0.12,
+    chain_recovery_fraction: 0.68,
+    cancel_recovery_fraction: 0.60,
+    basic_contact_fraction: 0.36,
+    heavy_contact_fraction: 0.58,
+    evade_active_secs: 0.30,
+    assist_extra_reach: 0.18,
+    assist_aim_cosine: 0.94,
+    contact_hold_fraction: 0.38,
+    contact_drag_fraction: 0.72,
+    camera_max_intensity: 0.16,
+    camera_max_duration: 0.18,
+    audio_pitch_variation: 0.035,
+    audio_gain_min: 0.94,
+    basic_pause_secs: 0.035,
+    critical_pause_secs: 0.055,
+    heavy_pause_secs: 0.070,
+    boss_break_pause_secs: 0.085,
+)

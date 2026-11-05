@@ -161,3 +161,49 @@ def contact_material(kind, duration, seed):
 
 for index, kind in enumerate(['steel','expose','blood','cleanse','reap','ember','frost']):
     write_wav('contact_'+kind, contact_material(kind, .19 if kind=='steel' else .26, 151+index))
+
+
+def swing_air():
+    """Soft band-limited air sweep: no impact body or ringing transient."""
+    rng = random.Random(211)
+    duration = .145
+    total = int(duration * RATE)
+    fast = slow = 0.0
+    samples = []
+    for index in range(total):
+        phase = index / max(total - 1, 1)
+        noise = rng.uniform(-1.0, 1.0)
+        fast += .32 * (noise - fast)
+        slow += .045 * (noise - slow)
+        swell = math.sin(math.pi * phase) ** 1.7
+        samples.append((fast - slow) * swell * .44)
+    return samples
+
+
+write_wav('swing_air', swing_air())
+
+
+def contact_bone():
+    """Dry close fracture: staggered tiny cracks with short woody resonances."""
+    rng = random.Random(223)
+    duration = .105
+    samples = []
+    previous = 0.0
+    for index in range(int(duration * RATE)):
+        t = index / RATE
+        noise = rng.uniform(-1.0, 1.0)
+        high = noise - previous
+        previous = noise
+        crack = 0.0
+        for onset, strength in [(0.0, 1.0), (.006, .58), (.014, .29)]:
+            elapsed = t - onset
+            if elapsed >= 0.0:
+                crack += high * math.exp(-elapsed / .004) * strength * .24
+        body = (math.sin(math.tau * 430 * t) + math.sin(math.tau * 710 * t) * .36) * math.exp(-t / .012) * .16
+        attack = min(1.0, t / .0007)
+        tail = min(1.0, max(duration - t, 0.0) / .012)
+        samples.append((crack + body) * attack * tail)
+    return samples
+
+
+write_wav('contact_bone', contact_bone())

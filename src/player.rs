@@ -111,11 +111,67 @@ pub fn apply_player_damage(health: &mut Health, barrier: &mut Barrier, damage: f
 }
 
 #[derive(Component, Debug)]
+#[require(EvadeDrive)]
 pub struct Evade {
     pub active: Timer,
     pub cooldown: Timer,
     pub cooldown_secs: f32,
     pub speed_multiplier: f32,
+}
+
+/// Transient direction captured when a dodge begins; never persisted in saves.
+#[derive(Component, Debug, Default)]
+pub(crate) struct EvadeDrive(Vec3);
+
+fn evade_direction(axis: Vec3, position: Vec3, click: Option<Vec3>, facing: Vec3) -> Vec3 {
+    let horizontal = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize_or_zero();
+    let axis = horizontal(axis);
+    if axis != Vec3::ZERO {
+        return axis;
+    }
+    if let Some(click) = click {
+        let toward = horizontal(click - position);
+        if toward != Vec3::ZERO {
+            return toward;
+        }
+    }
+    horizontal(facing)
+}
+
+fn active_evade_direction(evade: &Evade, drive: &EvadeDrive, ordinary: Vec3) -> Vec3 {
+    if evade_seconds_remaining(evade) > 0.0 {
+        drive.0
+    } else {
+        ordinary
+    }
+}
+
+fn movement_frame_displacement(
+    evade: &Evade,
+    drive: &EvadeDrive,
+    ordinary: Vec3,
+    speed: f32,
+    delta_secs: f32,
+) -> Vec3 {
+    let active_secs = evade_seconds_remaining(evade).min(delta_secs.max(0.0));
+    (drive.0 * evade_speed_multiplier(evade) * active_secs
+        + ordinary * (delta_secs - active_secs).max(0.0))
+        * speed
+}
+
+fn keyboard_move_axis(keyboard: &ButtonInput<KeyCode>) -> Vec3 {
+    let mut axis = Vec3::ZERO;
+    for (key, direction) in [
+        (KeyCode::KeyW, Vec3::NEG_Z),
+        (KeyCode::KeyS, Vec3::Z),
+        (KeyCode::KeyA, Vec3::NEG_X),
+        (KeyCode::KeyD, Vec3::X),
+    ] {
+        if keyboard.pressed(key) {
+            axis += direction;
+        }
+    }
+    axis
 }
 
 pub fn evade_seconds_remaining(evade: &Evade) -> f32 {
@@ -262,9 +318,9 @@ impl PlayerAttackMotion {
 /// Shared by the weapon pose and damage scheduling so contact stays aligned at any attack speed.
 pub(crate) fn attack_contact_fraction(motion: PlayerAttackMotion) -> f32 {
     match motion {
-        PlayerAttackMotion::Basic => 0.44,
+        PlayerAttackMotion::Basic => crate::combat::feel::tuning().basic_contact_fraction,
         PlayerAttackMotion::Dash => 0.30,
-        PlayerAttackMotion::Rupture => 0.58,
+        PlayerAttackMotion::Rupture => crate::combat::feel::tuning().heavy_contact_fraction,
         PlayerAttackMotion::Nova => 0.50,
         PlayerAttackMotion::Shoot => 0.46,
         PlayerAttackMotion::Cast => 0.50,
@@ -280,7 +336,7 @@ pub struct PlayerAnimation {
     attack_timer: Timer,
     attack_duration_secs: f32,
     attack_motion: PlayerAttackMotion,
-    contact_hold_frame: bool,
+    contact_confirmed: bool,
     motion_trail_timer: Timer,
     attack_trail_timer: Timer,
 }
@@ -301,7 +357,7 @@ impl Default for PlayerAnimation {
             attack_timer,
             attack_duration_secs: 0.01,
             attack_motion: PlayerAttackMotion::Basic,
-            contact_hold_frame: false,
+            contact_confirmed: false,
             motion_trail_timer,
             attack_trail_timer,
         }
@@ -312,7 +368,7 @@ impl PlayerAnimation {
     pub fn trigger_attack(&mut self, motion: PlayerAttackMotion, duration_secs: f32) {
         self.attack_duration_secs = duration_secs.max(0.05);
         self.attack_motion = motion;
-        self.contact_hold_frame = false;
+        self.contact_confirmed = false;
         self.attack_timer = Timer::from_seconds(self.attack_duration_secs, TimerMode::Once);
         self.attack_timer.reset();
     }
@@ -326,15 +382,39 @@ impl PlayerAnimation {
     }
 
     pub(crate) fn confirm_melee_contact(&mut self, motion: PlayerAttackMotion) {
-        if self.attack_motion != motion {
+        if self.attack_motion != motion || self.contact_confirmed || self.attack_timer.is_finished()
+        {
             return;
         }
-        self.attack_timer.reset();
+        let contact_elapsed = std::time::Duration::from_secs_f32(
+            self.attack_duration_secs * attack_contact_fraction(motion),
+        );
+        // Confirmation may arrive after contact on a long frame; never rewind it.
         self.attack_timer
-            .set_elapsed(std::time::Duration::from_secs_f32(
-                self.attack_duration_secs * attack_contact_fraction(motion),
-            ));
-        self.contact_hold_frame = true;
+            .set_elapsed(self.attack_timer.elapsed().max(contact_elapsed));
+        self.contact_confirmed = true;
+    }
+
+    /// Recovery opens after the blade has crossed contact, including on a miss.
+    pub(crate) fn can_chain_attack(&self) -> bool {
+        self.attack_progress()
+            >= (attack_contact_fraction(self.attack_motion) + 0.05)
+                .max(crate::combat::feel::tuning().chain_recovery_fraction)
+    }
+
+    pub(crate) fn can_recovery_cancel(&self) -> bool {
+        self.attack_progress()
+            >= (attack_contact_fraction(self.attack_motion) + 0.05)
+                .max(crate::combat::feel::tuning().cancel_recovery_fraction)
+    }
+
+    pub(crate) fn cancel_attack(&mut self) {
+        self.attack_timer.set_elapsed(self.attack_timer.duration());
+        self.contact_confirmed = false;
+    }
+
+    fn tick_attack(&mut self, delta: std::time::Duration, scale: f32) {
+        self.attack_timer.tick(delta.mul_f32(scale.clamp(0.0, 1.0)));
     }
 
     pub fn facing_direction(&self) -> Vec3 {
@@ -2472,14 +2552,18 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (
                     (
-                        update_click_move_target,
-                        player_movement,
+                        update_click_move_target.before(PlayerSet::Evade),
+                        player_movement
+                            .after(PlayerSet::Evade)
+                            .before(crate::combat::CombatSet::PlayerDamage),
                         update_click_move_marker,
-                        animate_player_visuals.after(crate::combat::CombatSet::PlayerDamage),
+                        animate_player_visuals
+                            .after(crate::combat::CombatSet::PlayerDamage)
+                            .after(crate::feedback::FeedbackSet::ContactPause),
                     )
                         .chain(),
                     tick_player_motion_trails,
-                    tick_cooldowns,
+                    tick_cooldowns.before(crate::combat::CombatSet::PlayerDamage),
                     regenerate_class_resource,
                     tick_class_passive,
                     tick_relic_buff,
@@ -2487,7 +2571,10 @@ impl Plugin for PlayerPlugin {
                     tick_fortune_buff,
                     tick_glory_buff,
                     tick_surge_buff,
-                    tick_evade,
+                    tick_evade
+                        .after(player_movement)
+                        .before(crate::combat::CombatSet::PlayerDamage),
+                    tick_evade_cooldown.before(PlayerSet::Evade),
                     tick_town_portal,
                     tick_potion_cooldown,
                     tick_burning,
@@ -2508,7 +2595,7 @@ impl Plugin for PlayerPlugin {
                     extend_surge_from_kills,
                     record_pylon_kills,
                     use_surge,
-                    use_evade,
+                    use_evade.in_set(PlayerSet::Evade),
                     use_town_portal,
                     use_armory_loadout,
                     cycle_codex_attunement,
@@ -2527,7 +2614,9 @@ impl Plugin for PlayerPlugin {
                     spend_talent_points,
                     choose_chapter_boon,
                     gain_xp,
-                    camera_follow,
+                    camera_follow
+                        .after(crate::feedback::FeedbackSet::CameraRestore)
+                        .before(crate::feedback::FeedbackSet::CameraShake),
                     check_player_death,
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
@@ -3806,6 +3895,7 @@ type PlayerMovementQuery<'w, 's> = Query<
         &'static GloryBuff,
         &'static SurgeBuff,
         &'static Evade,
+        &'static EvadeDrive,
         Option<&'static Jailed>,
     ),
     With<Player>,
@@ -3867,6 +3957,7 @@ type PlayerVisualPlayerQuery<'w, 's> = Query<
         &'static Evade,
         Option<&'static mut PlayerHitReact>,
         &'static mut PlayerAnimation,
+        Option<&'static crate::feedback::ContactPause>,
     ),
     With<Player>,
 >;
@@ -3905,26 +3996,23 @@ fn player_movement(
     mut click_move: ResMut<ClickMoveTarget>,
     mut query: PlayerMovementQuery,
 ) {
-    let Ok((mut transform, mut velocity, mut animation, buff, elixir, glory, surge, evade, jailed)) =
-        query.single_mut()
+    let Ok((
+        mut transform,
+        mut velocity,
+        mut animation,
+        buff,
+        elixir,
+        glory,
+        surge,
+        evade,
+        drive,
+        jailed,
+    )) = query.single_mut()
     else {
         return;
     };
 
-    let mut axis = Vec3::ZERO;
-    if keyboard.pressed(KeyCode::KeyW) {
-        axis.z -= 1.0;
-    }
-    if keyboard.pressed(KeyCode::KeyS) {
-        axis.z += 1.0;
-    }
-    if keyboard.pressed(KeyCode::KeyA) {
-        axis.x -= 1.0;
-    }
-    if keyboard.pressed(KeyCode::KeyD) {
-        axis.x += 1.0;
-    }
-    axis += gamepad_move_axis(&gamepads);
+    let axis = keyboard_move_axis(&keyboard) + gamepad_move_axis(&gamepads);
 
     let (direction, reached_click_target) = movement_direction(
         axis,
@@ -3936,18 +4024,24 @@ fn player_movement(
         click_move.position = None;
         click_move.stop_radius = CLICK_MOVE_STOP_RADIUS;
     }
-    velocity.0 = direction
-        * catalog.get(selected.0).move_speed
+    let ordinary_direction = direction;
+    let direction = active_evade_direction(evade, drive, ordinary_direction);
+    if direction.length_squared() > 0.0 && animation.can_recovery_cancel() {
+        animation.cancel_attack();
+    }
+    let speed = catalog.get(selected.0).move_speed
         * active_speed_multiplier(buff)
         * elixir_speed_multiplier(elixir)
         * glory_speed_multiplier(glory)
         * surge_speed_multiplier(surge)
-        * evade_speed_multiplier(evade)
         * jailed_speed_multiplier(jailed);
-    transform.translation += velocity.0 * time.delta_secs();
+    let displacement =
+        movement_frame_displacement(evade, drive, ordinary_direction, speed, time.delta_secs());
+    velocity.0 = displacement / time.delta_secs().max(f32::EPSILON);
+    transform.translation += displacement;
     transform.translation = clamp_player_translation(&layout, transform.translation);
 
-    if direction.length_squared() > 0.0 {
+    if direction.length_squared() > 0.0 && animation.can_recovery_cancel() {
         let response = player_turn_response(
             animation.facing_yaw,
             direction.x.atan2(direction.z),
@@ -4234,17 +4328,23 @@ fn animate_player_visuals(
     mut commands: Commands,
     mut visuals: PlayerVisualQueries,
 ) {
-    let Ok((player_entity, player_transform, velocity, evade, hit_react, mut animation)) =
-        visuals.player.single_mut()
+    let Ok((
+        player_entity,
+        player_transform,
+        velocity,
+        evade,
+        hit_react,
+        mut animation,
+        contact_pause,
+    )) = visuals.player.single_mut()
     else {
         return;
     };
 
-    if animation.contact_hold_frame {
-        animation.contact_hold_frame = false;
-    } else {
-        animation.attack_timer.tick(time.delta());
-    }
+    animation.tick_attack(
+        time.delta(),
+        contact_pause.map_or(1.0, |pause| pause.frame_animation_scale(time.delta_secs())),
+    );
     animation.motion_trail_timer.tick(time.delta());
     animation.attack_trail_timer.tick(time.delta());
     let hit_react_pose = update_player_hit_react(player_entity, hit_react, &time, &mut commands);
@@ -4700,7 +4800,9 @@ fn player_visual_pose(
     let attack_yaw = profile.body_yaw * attack_arc + profile.body_drive_yaw * attack_drive;
     let attack_roll = profile.body_roll * attack_arc;
     let sweep = if attacking {
-        (profile.weapon_roll_start + attack_progress * profile.weapon_roll_sweep)
+        (profile.weapon_roll_start
+            + player_weapon_sweep_progress(attack_motion, attack_progress)
+                * profile.weapon_roll_sweep)
             * if attack_motion.planted() {
                 attack_arc
             } else {
@@ -4759,6 +4861,24 @@ fn player_visual_pose(
 
 /// The exported sword has its grip at zero and its tip on local +Y.
 /// Pitch it toward the hero's +Z before applying the wrist and shoulder turn.
+fn player_weapon_sweep_progress(motion: PlayerAttackMotion, progress: f32) -> f32 {
+    let contact = attack_contact_fraction(motion);
+    let release_width = if motion == PlayerAttackMotion::Rupture {
+        0.24
+    } else {
+        0.16
+    };
+    let release = (contact - release_width).max(0.05);
+    if progress < release {
+        // A compact draw keeps the grip near the body before the blade releases.
+        0.12 * progress / release
+    } else if progress < contact {
+        0.12 + 0.58 * (progress - release) / (contact - release)
+    } else {
+        0.70 + 0.30 * (progress - contact) / (1.0 - contact)
+    }
+}
+
 fn player_weapon_rotation(pose: &PlayerVisualPose) -> Quat {
     Quat::from_rotation_y(-pose.weapon_yaw)
         * Quat::from_rotation_z(pose.weapon_roll)
@@ -4877,7 +4997,10 @@ fn player_hit_react_pose(kind: PlayerHitReactKind, progress: f32) -> PlayerHitRe
 fn player_attack_motion_weights(motion: PlayerAttackMotion, attack_progress: f32) -> (f32, f32) {
     let progress = attack_progress.clamp(0.0, 1.0);
     let (arc_center, arc_width, impact_center, impact_width) = match motion {
-        PlayerAttackMotion::Basic => (0.44, 0.53, 0.46, 0.32),
+        PlayerAttackMotion::Basic => {
+            let contact = attack_contact_fraction(motion);
+            (contact, 0.53, contact, 0.32)
+        }
         PlayerAttackMotion::Dash => (0.30, 0.30, 0.30, 0.20),
         PlayerAttackMotion::Rupture => (0.50, 0.50, 0.58, 0.27),
         PlayerAttackMotion::Nova => (0.50, 0.54, 0.50, 0.46),
@@ -5460,7 +5583,12 @@ fn tick_evade(time: Res<Time>, mut query: Query<&mut Evade, With<Player>>) {
         return;
     };
     evade.active.tick(time.delta());
-    evade.cooldown.tick(time.delta());
+}
+
+fn tick_evade_cooldown(time: Res<Time>, mut query: Query<&mut Evade, With<Player>>) {
+    for mut evade in &mut query {
+        evade.cooldown.tick(time.delta());
+    }
 }
 
 fn charge_surge_from_kills(
@@ -5610,30 +5738,64 @@ fn use_town_portal(
     });
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PlayerSet {
+    Evade,
+}
+
+type EvadeActivationQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Evade,
+        &'static mut PlayerAnimation,
+        &'static Transform,
+        &'static mut EvadeDrive,
+    ),
+    With<Player>,
+>;
+
 fn use_evade(
+    time: Res<Time>,
+    mut buffered_secs: Local<f32>,
+    mut click_move: ResMut<ClickMoveTarget>,
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<&mut Evade, With<Player>>,
+    mut player: EvadeActivationQuery,
 ) {
-    if !keyboard.just_pressed(KeyCode::ShiftLeft)
-        && !gamepad_button_just_pressed(
+    *buffered_secs = (*buffered_secs - time.delta_secs()).max(0.0);
+    if keyboard.just_pressed(KeyCode::ShiftLeft)
+        || gamepad_button_just_pressed(
             &gamepads,
             &[GamepadButton::East, GamepadButton::RightTrigger2],
         )
     {
+        *buffered_secs = crate::combat::feel::tuning().evade_buffer_secs;
+    }
+    if *buffered_secs <= 0.0 {
         return;
     }
-    let Ok(mut evade) = player.single_mut() else {
+    let Ok((mut evade, mut animation, transform, mut drive)) = player.single_mut() else {
         return;
     };
     if evade_cooldown_remaining(&evade) > 0.0 {
-        combat_events.write(CombatEvent {
-            text: format!("Evade recharging {:.0}s", evade_cooldown_remaining(&evade)),
-        });
         return;
     }
-    evade.active = Timer::from_seconds(0.42, TimerMode::Once);
+    *buffered_secs = 0.0;
+    drive.0 = evade_direction(
+        keyboard_move_axis(&keyboard) + gamepad_move_axis(&gamepads),
+        transform.translation,
+        click_move.position,
+        animation.facing_direction(),
+    );
+    animation.cancel_attack();
+    click_move.position = None;
+    click_move.stop_radius = CLICK_MOVE_STOP_RADIUS;
+    evade.active = Timer::from_seconds(
+        crate::combat::feel::tuning().evade_active_secs,
+        TimerMode::Once,
+    );
     evade.cooldown = Timer::from_seconds(evade.cooldown_secs, TimerMode::Once);
     combat_events.write(CombatEvent {
         text: "Evade".to_string(),
@@ -7674,6 +7836,198 @@ mod tests {
         assert!(stride_pose.body_roll < 0.07);
         assert!(stride_pose.body_pitch < -0.10);
         assert!(stride_pose.body_pitch > -0.16);
+    }
+
+    #[test]
+    fn player_contact_pose_holds_without_rewinding_at_multiple_frame_rates() {
+        for fps in [30, 60, 144] {
+            let mut world = World::new();
+            let mut animation = PlayerAnimation::default();
+            animation.trigger_attack(PlayerAttackMotion::Basic, 0.5);
+            let entity = world.spawn(animation).id();
+            let frame = std::time::Duration::from_secs_f32(1.0 / fps as f32);
+            let mut animation = world.get_mut::<PlayerAnimation>(entity).unwrap();
+            animation.confirm_melee_contact(PlayerAttackMotion::Basic);
+            let contact = animation.attack_progress();
+            let pose = player_visual_pose(0.0, false, 0.0, 0.0, PlayerAttackMotion::Basic, contact);
+            for _ in 0..3 {
+                animation.tick_attack(frame, 0.0);
+                assert_eq!(animation.attack_progress(), contact);
+            }
+            assert_eq!(
+                pose,
+                player_visual_pose(
+                    0.0,
+                    false,
+                    0.0,
+                    0.0,
+                    PlayerAttackMotion::Basic,
+                    animation.attack_progress()
+                )
+            );
+            animation.tick_attack(frame, 1.0);
+            let released = animation.attack_progress();
+            animation.confirm_melee_contact(PlayerAttackMotion::Basic);
+            assert_eq!(animation.attack_progress(), released);
+        }
+    }
+
+    #[test]
+    fn contact_confirmation_adds_no_extra_frame_or_rewind() {
+        for fps in [4, 30, 60, 144] {
+            let mut world = World::new();
+            let mut animation = PlayerAnimation::default();
+            animation.trigger_attack(PlayerAttackMotion::Basic, 1.0);
+            let entity = world.spawn(animation).id();
+            let mut animation = world.get_mut::<PlayerAnimation>(entity).unwrap();
+            animation.confirm_melee_contact(PlayerAttackMotion::Basic);
+            let contact = animation.attack_progress();
+            let frame = std::time::Duration::from_secs_f32(1.0 / fps as f32);
+            animation.tick_attack(frame, 1.0);
+            assert!((animation.attack_progress() - contact - frame.as_secs_f32()).abs() < 0.00001);
+            animation.trigger_attack(PlayerAttackMotion::Basic, 1.0);
+            animation.tick_attack(std::time::Duration::from_secs_f32(0.75), 1.0);
+            animation.confirm_melee_contact(PlayerAttackMotion::Basic);
+            assert!((animation.attack_progress() - 0.75).abs() < 0.00001);
+        }
+    }
+
+    #[test]
+    fn stationary_evade_captures_facing_and_only_drives_while_active() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ClickMoveTarget>()
+            .add_message::<CombatEvent>()
+            .add_systems(Update, use_evade);
+        let mut ready = Timer::from_seconds(1.0, TimerMode::Once);
+        ready.set_elapsed(ready.duration());
+        let entity = app
+            .world_mut()
+            .spawn((
+                Player,
+                Transform::default(),
+                PlayerAnimation::default(),
+                Evade {
+                    active: ready.clone(),
+                    cooldown: ready,
+                    cooldown_secs: 2.0,
+                    speed_multiplier: 2.0,
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        app.update();
+        let world = app.world_mut();
+        let evade = world.get::<Evade>(entity).unwrap();
+        let drive = world.get::<EvadeDrive>(entity).unwrap();
+        assert_eq!(drive.0, Vec3::Z);
+        assert_eq!(active_evade_direction(evade, drive, Vec3::NEG_X), Vec3::Z);
+        let position = world.get::<Transform>(entity).unwrap().translation;
+        let layout = crate::dungeon::DungeonLayout {
+            sanctum_gate_open: true,
+        };
+        let stepped = clamp_player_translation(
+            &layout,
+            position + active_evade_direction(evade, drive, Vec3::ZERO) * 0.2,
+        );
+        assert!(stepped.distance(position) > 0.1);
+        let sealed = crate::dungeon::DungeonLayout {
+            sanctum_gate_open: false,
+        };
+        let blocked = clamp_player_translation(&sealed, Vec3::new(2.0, 0.0, -28.0));
+        assert!(blocked.z > -28.0);
+        world
+            .get_mut::<Evade>(entity)
+            .unwrap()
+            .active
+            .tick(std::time::Duration::from_secs_f32(1.0));
+        assert_eq!(
+            active_evade_direction(
+                world.get::<Evade>(entity).unwrap(),
+                world.get::<EvadeDrive>(entity).unwrap(),
+                Vec3::NEG_X
+            ),
+            Vec3::NEG_X
+        );
+        assert_eq!(
+            evade_direction(Vec3::X, Vec3::ZERO, Some(Vec3::NEG_Z), Vec3::Z),
+            Vec3::X
+        );
+        assert_eq!(
+            evade_direction(Vec3::ZERO, Vec3::ZERO, Some(Vec3::NEG_Z), Vec3::Z),
+            Vec3::NEG_Z
+        );
+    }
+
+    #[test]
+    fn evade_distance_is_independent_of_frame_rate_and_long_frames() {
+        let duration = crate::combat::feel::tuning().evade_active_secs;
+        let speed = 5.0;
+        let multiplier = 2.0;
+        for delta_secs in [1.0_f32 / 30.0, 1.0 / 60.0, 1.0 / 144.0, 0.25] {
+            let mut evade = Evade {
+                active: Timer::from_seconds(duration, TimerMode::Once),
+                cooldown: Timer::from_seconds(2.0, TimerMode::Once),
+                cooldown_secs: 2.0,
+                speed_multiplier: multiplier,
+            };
+            let drive = EvadeDrive(Vec3::Z);
+            let mut position = Vec3::ZERO;
+            for _ in 0..((1.0 / delta_secs).ceil() as usize) {
+                position +=
+                    movement_frame_displacement(&evade, &drive, Vec3::ZERO, speed, delta_secs);
+                evade
+                    .active
+                    .tick(std::time::Duration::from_secs_f32(delta_secs));
+            }
+            assert!((position.z - speed * multiplier * duration).abs() < 0.02);
+            let rest = movement_frame_displacement(&evade, &drive, Vec3::X, speed, delta_secs);
+            assert!((rest - Vec3::X * speed * delta_secs).length() < 0.0001);
+        }
+        let evade = Evade {
+            active: Timer::from_seconds(duration, TimerMode::Once),
+            cooldown: Timer::from_seconds(2.0, TimerMode::Once),
+            cooldown_secs: 2.0,
+            speed_multiplier: multiplier,
+        };
+        let crossing_frame = movement_frame_displacement(
+            &evade,
+            &EvadeDrive(Vec3::Z),
+            Vec3::X,
+            speed,
+            duration + 0.1,
+        );
+        assert!((crossing_frame.x - speed * 0.1).abs() < 0.0001);
+        assert!((crossing_frame.z - speed * multiplier * duration).abs() < 0.0001);
+    }
+
+    #[test]
+    fn recovery_cancel_preserves_facing_and_finishes_pose() {
+        let mut world = World::new();
+        let mut animation = PlayerAnimation::default();
+        animation.trigger_attack(PlayerAttackMotion::Basic, 0.5);
+        animation.face_direction(Vec3::X);
+        let entity = world.spawn(animation).id();
+        let mut animation = world.get_mut::<PlayerAnimation>(entity).unwrap();
+        assert!(!animation.can_recovery_cancel());
+        animation.tick_attack(std::time::Duration::from_secs_f32(0.40), 1.0);
+        assert!(animation.can_chain_attack());
+        animation.cancel_attack();
+        assert_eq!(animation.attack_progress(), 1.0);
+        assert!(animation.facing_direction().distance(Vec3::X) < 0.001);
+        let pose = player_visual_pose(
+            0.0,
+            false,
+            0.0,
+            0.0,
+            PlayerAttackMotion::Basic,
+            animation.attack_progress(),
+        );
+        assert_eq!(pose.body_pitch, 0.0);
+        assert_eq!(pose.body_y, 0.0);
     }
 
     #[test]

@@ -1,6 +1,10 @@
 # Claude Code 交接：Bevy Open ARPG
 
-更新时间：2026-10-17。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
+更新时间：2026-11-05。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
+
+## 本轮战斗手感（2026-11-05）
+
+按响应、节奏、反馈、容错实现了局部卡刀/拖刀、短输入缓存、收招衔接、闪避取消与定向位移、材质接触音与剑风分离、克制的相机震动和读档清理。参数位于 `assets/data/combat_feel.ron`；完整规则、验收边界与11场真实输入证据见 [COMBAT_FEEL.md](COMBAT_FEEL.md)。本轮904项测试、严格Clippy、原生与wasm检查、第二章120帧冒烟通过；最终实捕11场全局速度恒1，隔离音频有输出且无外来流。完整Web发布构建通过（build id `0d2d117468a127b2`），本轮以 `feat: refine combat rhythm and local hit feedback` 提交。录像与日志保留于target；未推送、部署或进行浏览器验收。
 
 ## 当前实现与边界
 

@@ -752,6 +752,7 @@ type EnemyAiQuery<'w, 's> = Query<
         Option<&'static mut EnemyHitReact>,
         Option<&'static mut EnemyAttackWarning>,
         &'static mut EnemySkillCycle,
+        Option<&'static crate::feedback::ContactPause>,
     ),
 >;
 type EnemyLimbQuery<'w, 's> =
@@ -796,7 +797,9 @@ impl Plugin for EnemyPlugin {
             .add_systems(
                 Update,
                 (
-                    (bind_enemy_limbs, enemy_ai, animate_enemy_limbs_system).chain(),
+                    (bind_enemy_limbs, enemy_ai, animate_enemy_limbs_system)
+                        .chain()
+                        .after(crate::feedback::FeedbackSet::ContactPause),
                     tick_chilled,
                     tick_staggered,
                     tick_elite_affix_auras,
@@ -2101,8 +2104,17 @@ fn enemy_ai(
         hit_react,
         attack_warning,
         mut skill_cycle,
+        contact_pause,
     ) in &mut enemies
     {
+        let mut actor_time = *time;
+        if let Some(pause) = contact_pause {
+            actor_time.advance_by(
+                time.delta()
+                    .mul_f32(pause.frame_animation_scale(time.delta_secs())),
+            );
+        }
+        let time = &actor_time;
         let mut hit_react_power = 0.0;
         if let Some(mut hit_react) = hit_react {
             let recoil = enemy_hit_recoil_step(&hit_react, time.delta_secs());
@@ -2139,7 +2151,7 @@ fn enemy_ai(
         enemy.attack_timer.tick(time.delta());
         if staggered.is_some() {
             animate_enemy(
-                &time,
+                time,
                 &mut transform,
                 &mut animation,
                 &enemy.attack_kind,
@@ -2165,7 +2177,7 @@ fn enemy_ai(
 
         if let Some(mut treasure_fiend) = treasure_fiend {
             match handle_treasure_fiend_ai(
-                &time,
+                time,
                 &mut transform,
                 &enemy,
                 &mut treasure_fiend,
@@ -2179,7 +2191,7 @@ fn enemy_ai(
                         text: "A treasure imp bolts with a reliquary cache".to_string(),
                     });
                     animate_enemy(
-                        &time,
+                        time,
                         &mut transform,
                         &mut animation,
                         &enemy.attack_kind,
@@ -2194,7 +2206,7 @@ fn enemy_ai(
                 }
                 TreasureFiendState::Fleeing => {
                     animate_enemy(
-                        &time,
+                        time,
                         &mut transform,
                         &mut animation,
                         &enemy.attack_kind,
@@ -2489,7 +2501,7 @@ fn enemy_ai(
             }
         }
         animate_enemy(
-            &time,
+            time,
             &mut transform,
             &mut animation,
             &enemy.attack_kind,
