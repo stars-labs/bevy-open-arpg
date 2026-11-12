@@ -26,6 +26,7 @@ fn fixture(bone: u32, spirit: u32) -> (App, Entity) {
         .add_message::<ScreenShakeEvent>()
         .add_message::<HitStopEvent>()
         .add_message::<SummonOrder>()
+        .add_message::<pixelfx::PixelFx>()
         .add_systems(Update, (orders, behavior).chain());
     let hero = app
         .world_mut()

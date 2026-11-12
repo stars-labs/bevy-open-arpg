@@ -88,7 +88,6 @@ pub(super) fn launch_projectiles(
         let start = origin + direction * 0.6 + Vec3::Y * projectile_height(art);
         let missile = commands
             .spawn((
-                WorldAssetRoot(projectile_scene(assets, art)),
                 Transform::from_translation(start)
                     .with_rotation(Quat::from_rotation_y(direction.x.atan2(direction.z))),
                 PlayerProjectile {
@@ -104,7 +103,19 @@ pub(super) fn launch_projectiles(
                 Name::new("Player Projectile"),
             ))
             .id();
-        if let Some(cast) = profile.skill {
+        if art == ProjectileArt::EmberBolt {
+            commands.write_message(pixelfx::PixelFx {
+                follow: Some(missile),
+                ..pixelfx::PixelFx::at(pixelfx::Kind::Fireball, start, direction, 2.6)
+            });
+        } else {
+            commands
+                .entity(missile)
+                .insert(WorldAssetRoot(projectile_scene(assets, art)));
+        }
+        if let Some(cast) = profile.skill
+            && art != ProjectileArt::EmberBolt
+        {
             commands.write_message(skill_vfx::ProjectileVisual {
                 entity: missile,
                 rune: cast.rune,

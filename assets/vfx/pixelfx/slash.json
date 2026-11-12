@@ -1,0 +1,481 @@
+{
+  "frames": [
+    {
+      "filename": "slash 0",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 1",
+      "frame": {
+        "x": 136,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 2",
+      "frame": {
+        "x": 272,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 3",
+      "frame": {
+        "x": 408,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 4",
+      "frame": {
+        "x": 0,
+        "y": 104,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 5",
+      "frame": {
+        "x": 136,
+        "y": 104,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 6",
+      "frame": {
+        "x": 272,
+        "y": 104,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 7",
+      "frame": {
+        "x": 408,
+        "y": 104,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 8",
+      "frame": {
+        "x": 0,
+        "y": 208,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 9",
+      "frame": {
+        "x": 136,
+        "y": 208,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 10",
+      "frame": {
+        "x": 272,
+        "y": 208,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 11",
+      "frame": {
+        "x": 408,
+        "y": 208,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 12",
+      "frame": {
+        "x": 0,
+        "y": 312,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 13",
+      "frame": {
+        "x": 136,
+        "y": 312,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 14",
+      "frame": {
+        "x": 272,
+        "y": 312,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 15",
+      "frame": {
+        "x": 408,
+        "y": 312,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 16",
+      "frame": {
+        "x": 0,
+        "y": 416,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 17",
+      "frame": {
+        "x": 136,
+        "y": 416,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 18",
+      "frame": {
+        "x": 272,
+        "y": 416,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    },
+    {
+      "filename": "slash 19",
+      "frame": {
+        "x": 408,
+        "y": 416,
+        "w": 136,
+        "h": 104
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 136,
+        "h": 104
+      },
+      "sourceSize": {
+        "w": 136,
+        "h": 104
+      },
+      "duration": 16
+    }
+  ],
+  "meta": {
+    "app": "https://github.com/patch-gg/pixelfx",
+    "version": "1",
+    "image": "slash.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 544,
+      "h": 520
+    },
+    "scale": "1",
+    "frameTags": [
+      {
+        "name": "slash",
+        "from": 0,
+        "to": 19,
+        "direction": "forward"
+      }
+    ],
+    "pixelfx": {
+      "id": "melee/sword-slash",
+      "name": "Sword slash",
+      "fps": 62.5,
+      "loop": false,
+      "frames": 20,
+      "frameSize": [
+        136,
+        104
+      ],
+      "pivot": [
+        44,
+        92
+      ],
+      "columns": 4,
+      "sourceRevision": "044e12a45dc9cc312cec50ee606dfc98afe5adc2",
+      "adaptation": "Dark-fantasy palette and release-aligned timing."
+    }
+  }
+}

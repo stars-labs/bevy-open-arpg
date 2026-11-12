@@ -3,7 +3,7 @@ use super::SkillCast;
 use crate::{
     GameState,
     assets::GameAssets,
-    class::{HeroClass, Rune, SelectedClass},
+    class::{HeroClass, Rune, SelectedClass, SkillSlot},
     feedback::{ContactSound, ContactSoundEvent},
     not_paused,
     player::TalentBranch,
@@ -247,6 +247,19 @@ fn show_contacts(
             if particle.target == Some(event.target) {
                 commands.entity(entity).despawn();
             }
+        }
+        if selected.0 == HeroClass::Warden
+            && event
+                .skill
+                .is_some_and(|cast| cast.slot == SkillSlot::Finisher)
+        {
+            commands.write_message(super::pixelfx::PixelFx::at(
+                super::pixelfx::Kind::HeavyImpact,
+                event.position,
+                event.position - event.source,
+                1.35 * event.strength.clamp(0.85, 1.4),
+            ));
+            continue;
         }
         let art = contact_art(&event, selected.0);
         let direction = (event.position - event.source)

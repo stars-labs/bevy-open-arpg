@@ -26,9 +26,9 @@ New campaigns start with a class selection: **Ashbound Warden** (melee sword and
 
 Right-click moves; left-click attacks. The interface defaults to Simplified Chinese, with language selection in Settings. Skill releases follow their actual combat shape and damage timing.
 
-Combat feel is tuned around input response, attack phases, actor-local contact pauses, material-specific sound and bounded input forgiveness. Implementation and current validation evidence are tracked in [Combat Feel](docs/COMBAT_FEEL.md).
+Combat feel is tuned around input response, attack phases, actor-local contact pauses, material-specific sound and bounded input forgiveness. Implementation and current validation evidence are tracked in [Combat Feel](docs/COMBAT_FEEL.md). Five dark-fantasy PixelFX animations accompany sword attacks, heavy impacts, fireballs, frost nova and spirit appearances. [Asset generation and verification](docs/PIXELFX.md).
 
-All 904 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
+All 907 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
 
 ## Running
 

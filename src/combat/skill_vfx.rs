@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     GameState,
-    class::{Rune, StrikeShape},
+    class::{HeroClass, ProjectileArt, Rune, SelectedClass, StrikeShape},
     not_paused,
 };
 use bevy::{
@@ -181,6 +181,7 @@ fn show_releases(
     art: Res<Art>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut events: MessageReader<SkillVisual>,
+    selected: Res<SelectedClass>,
 ) {
     for e in events.read() {
         #[cfg(feature = "dev_tools")]
@@ -194,6 +195,26 @@ fn show_releases(
         let base = e.origin + Vec3::Y * 0.09;
         match e.shape {
             StrikeShape::Command { .. } => {}
+            StrikeShape::Arc { range } if selected.0 == HeroClass::Warden => {
+                commands.write_message(super::pixelfx::PixelFx::at(
+                    super::pixelfx::Kind::Slash,
+                    e.origin + Vec3::Y * 0.65,
+                    e.facing,
+                    range * 1.25,
+                ));
+            }
+            StrikeShape::Radial { radius } if e.cast.rune == Rune::Frost => {
+                commands.write_message(super::pixelfx::PixelFx::at(
+                    super::pixelfx::Kind::FrostNova,
+                    base,
+                    e.facing,
+                    radius * 2.5,
+                ));
+            }
+            StrikeShape::Projectiles {
+                art: ProjectileArt::EmberBolt,
+                ..
+            } => {}
             StrikeShape::Arc { range } => {
                 let scale = Vec3::new(range * 0.64, 1.0, range * 0.64);
                 spawn(

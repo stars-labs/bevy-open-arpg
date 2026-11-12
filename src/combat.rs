@@ -1,4 +1,5 @@
 pub(crate) mod feel;
+mod pixelfx;
 mod presentation;
 mod ranged;
 #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
@@ -840,6 +841,7 @@ impl Plugin for CombatPlugin {
         summons::install(app);
         app.add_plugins((
             presentation::CombatPresentationPlugin,
+            pixelfx::PixelFxPlugin,
             skill_vfx::SkillVfxPlugin,
         ))
         .init_resource::<CombatComboState>()
@@ -1465,6 +1467,16 @@ fn resolve_pending_player_strikes(
                     heavy: pending.motion == PlayerAttackMotion::Rupture,
                 });
         }
+        if pending.motion == PlayerAttackMotion::Basic
+            && selected.0 == crate::class::HeroClass::Warden
+        {
+            world.commands.write_message(pixelfx::PixelFx::at(
+                pixelfx::Kind::Slash,
+                origin + Vec3::Y * 0.65,
+                pending.facing,
+                2.8,
+            ));
+        }
         let outcome = world.release(
             Hero {
                 position: origin,
@@ -1533,6 +1545,7 @@ pub(crate) fn clear_transient_actions(world: &mut World) {
     }
     crate::player::cancel_pointer_movement(world);
     ranged::clear_inflight_strikes(world);
+    pixelfx::clear_transient(world);
     summons::clear_action_intent(world);
     crate::feedback::clear_contact_feel(world);
     if let Some(mut events) = world.get_resource_mut::<Messages<ContactFeedback>>() {

@@ -1,0 +1,613 @@
+{
+  "frames": [
+    {
+      "filename": "heavy_impact 0",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 1",
+      "frame": {
+        "x": 128,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 2",
+      "frame": {
+        "x": 256,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 3",
+      "frame": {
+        "x": 384,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 4",
+      "frame": {
+        "x": 512,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 5",
+      "frame": {
+        "x": 0,
+        "y": 88,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 6",
+      "frame": {
+        "x": 128,
+        "y": 88,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 7",
+      "frame": {
+        "x": 256,
+        "y": 88,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 8",
+      "frame": {
+        "x": 384,
+        "y": 88,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 9",
+      "frame": {
+        "x": 512,
+        "y": 88,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 10",
+      "frame": {
+        "x": 0,
+        "y": 176,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 11",
+      "frame": {
+        "x": 128,
+        "y": 176,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 12",
+      "frame": {
+        "x": 256,
+        "y": 176,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 13",
+      "frame": {
+        "x": 384,
+        "y": 176,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 14",
+      "frame": {
+        "x": 512,
+        "y": 176,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 15",
+      "frame": {
+        "x": 0,
+        "y": 264,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 16",
+      "frame": {
+        "x": 128,
+        "y": 264,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 17",
+      "frame": {
+        "x": 256,
+        "y": 264,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 18",
+      "frame": {
+        "x": 384,
+        "y": 264,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 19",
+      "frame": {
+        "x": 512,
+        "y": 264,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 20",
+      "frame": {
+        "x": 0,
+        "y": 352,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 21",
+      "frame": {
+        "x": 128,
+        "y": 352,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 22",
+      "frame": {
+        "x": 256,
+        "y": 352,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 23",
+      "frame": {
+        "x": 384,
+        "y": 352,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 24",
+      "frame": {
+        "x": 512,
+        "y": 352,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    },
+    {
+      "filename": "heavy_impact 25",
+      "frame": {
+        "x": 0,
+        "y": 440,
+        "w": 128,
+        "h": 88
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 88
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 88
+      },
+      "duration": 21.153846153846153
+    }
+  ],
+  "meta": {
+    "app": "https://github.com/patch-gg/pixelfx",
+    "version": "1",
+    "image": "heavy_impact.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 640,
+      "h": 528
+    },
+    "scale": "1",
+    "frameTags": [
+      {
+        "name": "heavy_impact",
+        "from": 0,
+        "to": 25,
+        "direction": "forward"
+      }
+    ],
+    "pixelfx": {
+      "id": "impacts/blunt-hit",
+      "name": "Blunt hit",
+      "fps": 47.272727272727266,
+      "loop": false,
+      "frames": 26,
+      "frameSize": [
+        128,
+        88
+      ],
+      "pivot": [
+        64,
+        72
+      ],
+      "columns": 5,
+      "sourceRevision": "044e12a45dc9cc312cec50ee606dfc98afe5adc2",
+      "adaptation": "Dark-fantasy palette and release-aligned timing."
+    }
+  }
+}

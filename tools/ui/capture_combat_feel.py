@@ -37,7 +37,7 @@ def run_case(binary, output, case, audio=False, audio_source=None):
                    XDG_CONFIG_HOME=str(output / 'config'), BEVY_OPEN_ARPG_COMBAT_REVIEW=case, RUST_LOG='info',
                    BEVY_ASSET_ROOT=str(Path(__file__).resolve().parents[2]))
         env.pop('WAYLAND_DISPLAY', None)
-        soulbinder = (case.startswith('soulbinder-') or case == 'feel-summon-isolation')
+        soulbinder = (case.startswith('soulbinder-') or case in ('feel-summon-isolation', 'pixelfx-summon'))
         sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
         env['LD_LIBRARY_PATH'] = os.pathsep.join([str(binary.parent / 'deps'), env.get('LD_LIBRARY_PATH', ''),
                                                 *map(str, (sysroot / 'lib/rustlib').glob('*/lib'))])
@@ -77,7 +77,7 @@ def run_case(binary, output, case, audio=False, audio_source=None):
                 xdo('mouseup', 1)
                 time.sleep(.5)
                 # Confirm the class picker, introduced after the original recorder.
-                hero = 'soulbinder' if soulbinder else 'embercaller' if case == 'feel-ranged-hit' else case.split('-')[1] if case.startswith('vfx-') else 'warden'
+                hero = 'soulbinder' if soulbinder else 'embercaller' if case in ('feel-ranged-hit', 'pixelfx-fireball', 'pixelfx-frostnova') else case.split('-')[1] if case.startswith('vfx-') else 'warden'
                 for _ in range({'warden': 0, 'stalker': 1, 'embercaller': 2, 'soulbinder': 3}[hero]):
                     xdo('key', 'Right')
                     time.sleep(.15)
@@ -93,7 +93,8 @@ def run_case(binary, output, case, audio=False, audio_source=None):
                     subprocess.run(['import', '-display', env['DISPLAY'], '-window', window, str(output / 'not-ready.png')], check=False)
                     raise RuntimeError(f'Fixture did not become ready: {case}')
                 time.sleep(.5)
-                xdo('mousemove', '--window', window, *map(int, match.groups()))
+                aim = (900, 400) if case == 'pixelfx-heavy-empty' else tuple(map(int, match.groups()))
+                xdo('mousemove', '--window', window, *aim)
                 def capture(name):
                     subprocess.run(['import', '-display', env['DISPLAY'], '-window', window,
                                     str(output / f'{name}.png')], check=True, timeout=20)
@@ -132,25 +133,49 @@ def run_case(binary, output, case, audio=False, audio_source=None):
                 audit_audio_route('before')
                 capture('before')
                 with (output / 'video.log').open('w') as vlog:
-                    video = subprocess.Popen(['ffmpeg', '-y', '-f', 'x11grab', '-framerate', '60',
+                    progress_path = output / 'video-progress.txt'
+                    progress_path.unlink(missing_ok=True)
+                    video = subprocess.Popen(['ffmpeg', '-y', '-progress', str(progress_path),
+                                              '-stats_period', '0.1', '-f', 'x11grab', '-framerate', '60',
                                               '-video_size', '1280x720', '-i', env['DISPLAY'] + '+0,0',
                                               *(['-f', 'pulse', '-i', audio_source] if audio and audio_source else []),
-                                              '-t', '7', *(['-c:a', 'aac'] if audio and audio_source else []), '-c:v', 'libx264', '-preset', 'ultrafast',
+                                              '-t', '10' if case == 'pixelfx-summon' else '7', *(['-c:a', 'aac'] if audio and audio_source else []), '-c:v', 'libx264', '-preset', 'ultrafast',
                                               '-crf', '20', '-pix_fmt', 'yuv420p', str(output / 'contact.mp4')],
                                              stdout=vlog, stderr=vlog)
-                    time.sleep(.35)
+                    for _ in range(100):
+                        if video.poll() is not None:
+                            raise RuntimeError('Video capture ended before its first encoded frame')
+                        if progress_path.exists():
+                            encoded = re.findall(r'^frame=(\d+)$', progress_path.read_text(), re.MULTILINE)
+                            if encoded and int(encoded[-1]) >= 1:
+                                break
+                        time.sleep(.1)
+                    else:
+                        raise RuntimeError('Video capture produced no encoded frame')
+                    (output / 'video-ready.json').write_text(json.dumps(dict(
+                        encoded_frames=int(encoded[-1]),
+                        seconds_since_launch=time.monotonic() - capture_started)))
+                    time.sleep(.3)
                     def click(button=1):
                         xdo('mousedown', button)
                         time.sleep(.06)
                         xdo('mouseup', button)
                     if case == 'feel-empty':
-                        xdo('mousemove', '--window', window, 1100, 130)
+                        xdo('mousemove', '--window', window, 900, 400)
                         click()
                         for key in ('e', 'q', 'r'):
                             time.sleep(.6)
                             xdo('key', key)
-                    elif case in ('feel-heavy', 'feel-multi'):
+                    elif case == 'pixelfx-heavy-whiff':
+                        xdo('keydown', 's')
+                        time.sleep(.2)
                         xdo('key', 'r')
+                        time.sleep(.45)
+                        xdo('keyup', 's')
+                    elif case in ('feel-heavy', 'feel-multi', 'pixelfx-heavy', 'pixelfx-heavy-empty', 'pixelfx-summon'):
+                        xdo('key', 'r')
+                    elif case == 'pixelfx-frostnova':
+                        xdo('key', 'e')
                     elif case == 'feel-summon-isolation':
                         click()
                         time.sleep(.8)

@@ -162,6 +162,8 @@ pub struct GameAssets {
     pub scenery_ruin: Handle<WorldAsset>,
     pub sanctum_gate: Handle<WorldAsset>,
     pub stone_detail: Handle<Image>,
+    /// Slash, impact, fireball, frost nova and summoning flipbooks.
+    pub pixelfx_sheets: [Handle<Image>; 5],
     pub ui_main_menu: Handle<Image>,
     pub ui_panel_frame: Handle<Image>,
     pub ui_slot_frame: Handle<Image>,
@@ -463,6 +465,14 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         scenery_ruin: asset_server.load("models/scenery_ruin.glb#Scene0"),
         sanctum_gate: asset_server.load("models/sanctum_gate.glb#Scene0"),
         stone_detail: load_repeating_texture(&asset_server, "textures/materials/stone-detail.jpg"),
+        pixelfx_sheets: ["slash", "heavy_impact", "fireball", "frost_nova", "summon"].map(|name| {
+            asset_server
+                .load_builder()
+                .with_settings(|settings: &mut ImageLoaderSettings| {
+                    settings.sampler = ImageSampler::nearest();
+                })
+                .load(format!("vfx/pixelfx/{name}.png"))
+        }),
         ui_main_menu: asset_server.load("images/generated/ui/main-menu-reliquary-v2.png"),
         ui_panel_frame: asset_server.load("images/generated/ui/panel-frame-reliquary.png"),
         ui_slot_frame: asset_server.load("images/generated/ui/slot-frame-reliquary.png"),
@@ -689,6 +699,11 @@ fn collect_visual_asset_handles(assets: &GameAssets) -> Vec<UntypedHandle> {
         assets.ashen_road_albedo.clone().untyped(),
         assets.hollow_road_albedo.clone().untyped(),
         assets.stone_detail.clone().untyped(),
+        assets.pixelfx_sheets[0].clone().untyped(),
+        assets.pixelfx_sheets[1].clone().untyped(),
+        assets.pixelfx_sheets[2].clone().untyped(),
+        assets.pixelfx_sheets[3].clone().untyped(),
+        assets.pixelfx_sheets[4].clone().untyped(),
         assets.ui_main_menu.clone().untyped(),
         assets.ui_panel_frame.clone().untyped(),
         assets.ui_slot_frame.clone().untyped(),

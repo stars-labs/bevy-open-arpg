@@ -231,6 +231,14 @@ fn reconcile(
         } else {
             tuning.spirit_health
         };
+        if session.transition_dead_secs <= 0.0 {
+            commands.write_message(pixelfx::PixelFx::at(
+                pixelfx::Kind::Summon,
+                hero.translation + formation(slot, bone) + Vec3::Y * 0.22,
+                Vec3::Z,
+                3.2,
+            ));
+        }
         commands
             .spawn((
                 Minion,
@@ -705,7 +713,12 @@ fn behavior(
                 state.rebirth = false;
                 position.rotation = Quat::IDENTITY;
                 position.translation = hero.translation + formation(state.slot, state.bone);
-                flash(&mut commands, &art, position.translation, 1.2, renewed);
+                commands.write_message(pixelfx::PixelFx::at(
+                    pixelfx::Kind::Summon,
+                    position.translation + Vec3::Y * 0.22,
+                    Vec3::Z,
+                    3.2,
+                ));
                 if renewed {
                     damage.floating.write(FloatingCombatTextEvent {
                         text: if *language == crate::ui::localization::UiLanguage::Chinese {

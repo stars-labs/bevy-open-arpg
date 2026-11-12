@@ -123,6 +123,19 @@ fn chapter_runtime_assets_exist() {
         "assets/models/treasure_imp.glb",
         "assets/models/vampiric_siphon.glb",
         "assets/models/void_impact.glb",
+        "assets/vfx/pixelfx/slash.png",
+        "assets/vfx/pixelfx/slash.json",
+        "assets/vfx/pixelfx/heavy_impact.png",
+        "assets/vfx/pixelfx/heavy_impact.json",
+        "assets/vfx/pixelfx/fireball.png",
+        "assets/vfx/pixelfx/fireball.json",
+        "assets/vfx/pixelfx/frost_nova.png",
+        "assets/vfx/pixelfx/frost_nova.json",
+        "assets/vfx/pixelfx/summon.png",
+        "assets/vfx/pixelfx/summon.json",
+        "assets/vfx/pixelfx/manifest.ron",
+        "assets/vfx/pixelfx/LICENSE",
+        "assets/vfx/pixelfx/NOTICE.md",
         "assets/audio/hit.wav",
         "assets/audio/swing_air.wav",
         "assets/audio/contact_steel.wav",
@@ -193,8 +206,13 @@ fn webgpu_runtime_avoids_transparent_pbr_materials() {
 }
 
 #[test]
-fn generated_ui_pngs_have_expected_ihdr() {
+fn generated_ui_and_effect_pngs_have_expected_ihdr() {
     for (path, expected_width, expected_height) in [
+        ("assets/vfx/pixelfx/slash.png", 544, 520),
+        ("assets/vfx/pixelfx/heavy_impact.png", 640, 528),
+        ("assets/vfx/pixelfx/fireball.png", 544, 504),
+        ("assets/vfx/pixelfx/frost_nova.png", 1792, 1536),
+        ("assets/vfx/pixelfx/summon.png", 1408, 1392),
         (
             "assets/images/generated/ui/class-portrait-soulbinder.png",
             768,

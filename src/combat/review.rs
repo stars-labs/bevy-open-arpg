@@ -73,7 +73,7 @@ fn prepare(
     case.elapsed += time.delta_secs();
     // Isolate real player/minion contact from the automatic story companion.
     // Remove its player-side behavior input before fixture enemies are positioned.
-    if case.name.starts_with("feel-") {
+    if case.name.starts_with("feel-") || case.name.starts_with("pixelfx-") {
         for entity in &companion_bonds {
             commands
                 .entity(entity)
@@ -172,8 +172,10 @@ fn prepare(
         _ => {}
     }
     let feel_case = case.name.starts_with("feel-");
-    let soulbinder_case =
-        case.name.starts_with("soulbinder-") || case.name == "feel-summon-isolation";
+    let pixelfx_case = case.name.starts_with("pixelfx-");
+    let soulbinder_case = case.name.starts_with("soulbinder-")
+        || case.name == "feel-summon-isolation"
+        || case.name == "pixelfx-summon";
     if soulbinder_case {
         if let Ok(mut summon_talents) = summon_talents.single_mut() {
             *summon_talents = summons::SummonTalents::default();
@@ -202,7 +204,10 @@ fn prepare(
         if case.name == "soulbinder-bulwark" {
             loadout.alt[SkillSlot::Area.index()] = true;
         }
-        if case.name == "soulbinder-sacrifice" {
+        if matches!(
+            case.name.as_str(),
+            "soulbinder-sacrifice" | "pixelfx-summon"
+        ) {
             loadout.alt[SkillSlot::Finisher.index()] = true;
         }
     }
@@ -234,13 +239,13 @@ fn prepare(
     damage.0 = 0.0;
     health.current = health.max;
     // Every first-tier skill must be castable; nothing else here reads the level.
-    level.level = level
-        .level
-        .max(if visual_case || soulbinder_case || feel_case {
+    level.level = level.level.max(
+        if visual_case || soulbinder_case || feel_case || pixelfx_case {
             6
         } else {
             3
-        });
+        },
+    );
     if matches!(
         case.name.as_str(),
         "soulbinder-tree"
@@ -258,9 +263,19 @@ fn prepare(
             4
         };
     }
+    if pixelfx_case {
+        info!(
+            "PIXELFX_REVIEW_LOADOUT {} class={:?} level={} area_alt={} finisher_alt={}",
+            case.name,
+            selected.0,
+            level.level,
+            loadout.alt[SkillSlot::Area.index()],
+            loadout.alt[SkillSlot::Finisher.index()]
+        );
+    }
     let mut pack_member = 0;
     for (entity, mut transform, mut enemy, mut health) in &mut enemies {
-        if case.name == "feel-empty" {
+        if matches!(case.name.as_str(), "feel-empty" | "pixelfx-heavy-empty") {
             commands.entity(entity).despawn();
             continue;
         }
@@ -277,8 +292,10 @@ fn prepare(
             .equipped(&loadout, visual_slot)
             .0
             .movement;
-        let distance = if case.name == "feel-ranged-hit" {
+        let distance = if matches!(case.name.as_str(), "feel-ranged-hit" | "pixelfx-fireball") {
             5.0
+        } else if case.name == "pixelfx-frostnova" {
+            2.8
         } else if case.name == "feel-edge-hit" {
             2.1
         } else if soulbinder_case {
@@ -328,7 +345,7 @@ fn prepare(
             );
         }
     }
-    if case.name == "feel-empty" {
+    if matches!(case.name.as_str(), "feel-empty" | "pixelfx-heavy-empty") {
         info!("COMBAT_REVIEW_READY {} 1100 130", case.name);
     }
     case.target = Some(target);
@@ -369,7 +386,7 @@ fn record(
         return;
     };
     let target_state = enemies.get(target).ok().or_else(|| {
-        if case.name.starts_with("feel-") {
+        if case.name.starts_with("feel-") || case.name.starts_with("pixelfx-") {
             None
         } else {
             enemies.iter().next()
@@ -387,11 +404,14 @@ fn record(
             level.level, talents.points, tree.bone, tree.spirit
         );
     }
-    if target_health < 500.0 && !case.name.starts_with("feel-") {
+    if target_health < 500.0
+        && !case.name.starts_with("feel-")
+        && !case.name.starts_with("pixelfx-")
+    {
         intent.target = None;
     }
     case.recorded += 1;
-    if case.name.starts_with("feel-") {
+    if case.name.starts_with("feel-") || case.name.starts_with("pixelfx-") {
         for event in contacts.read() {
             info!(
                 "COMBAT_FEEL_CONTACT {} {:.5} {:?} {} {:.4} {:.4}",
