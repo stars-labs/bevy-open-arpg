@@ -717,6 +717,10 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
             file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
             #[cfg(target_arch = "wasm32")]
             file_path: "assets".to_string(),
+            // No asset ships a `.meta` sidecar; without this every HTTP asset
+            // load first probes `<asset>.meta` and logs a 404 console error.
+            #[cfg(target_arch = "wasm32")]
+            meta_check: bevy::asset::AssetMetaCheck::Never,
             #[cfg(not(target_arch = "wasm32"))]
             processed_file_path: format!("{}/imported_assets/Default", env!("CARGO_MANIFEST_DIR")),
             watch_for_changes_override: open_arpg_watch_for_changes_override(),
