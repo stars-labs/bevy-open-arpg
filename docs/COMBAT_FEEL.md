@@ -31,7 +31,7 @@
 
 ## 验收证据
 
-2026-11-05，当前源码：格式、默认原生check、全目标全功能严格Clippy、全功能原生构建、wasm32/WebGPU check通过。`cargo test --locked --all-features` 共904项通过（877单元+27集成），包含30/60/144FPS与250ms长帧的停顿积分、闪避距离、输入缓存、局部暂停隔离、相机恢复及读档清理。第二章120帧无窗口冒烟退出0；保留已有ICU4X日语分词警告，不能称为无警告日志。日志为 `target/feel-*.log`。完整Web发布包构建通过（`bash scripts/build_web.sh`，release构建21分51秒，build id `0d2d117468a127b2`）；生成的wasm约33MB、gzip约12MB。未推送、部署或进行浏览器运行验收。
+2026-11-05，当前源码：格式、默认原生check、全目标全功能严格Clippy、全功能原生构建、wasm32/WebGPU check通过。`cargo test --locked --all-features` 共904项通过（877单元+27集成），包含30/60/144FPS与250ms长帧的停顿积分、闪避距离、输入缓存、局部暂停隔离、相机恢复及读档清理。第二章120帧无窗口冒烟退出0；保留已有ICU4X日语分词警告，不能称为无警告日志。日志为 `target/feel-*.log`。完整Web发布包构建通过（`bash scripts/build_web.sh`，release构建21分51秒，build id `0d2d117468a127b2`）；生成的wasm约33MB、gzip约12MB。当时未推送、部署或进行浏览器运行验收；浏览器验收于2026-11-13补做，见下文“浏览器验收”。
 
 最终实机证据目录：`target/validation/combat-feel/final-v2/`。每场保存binary哈希、真实OS输入时间、逐帧数据、接触/震动事件、录像、截图、进程/GPU采样和音频路由。11场录制均退出0、世界速度始终1。
 
@@ -56,3 +56,20 @@
 旧版基线为 `target/validation/combat-feel/baseline/focus-0/`，binary SHA256 `d15dda124886dec9fdde8613b404e34832d2aa234d35b3b840a8af4dcb0dea81`。命中时世界速度最低0.09；旧基线包含同伴自动伤害，不能拿总生命差直接比较玩家DPS。旧录制约3.77Hz、中间首轮11–13Hz，帧率变化原因未证明，不归因本次优化。中间版本 `first-review/` 与音频检查失败的首批 `final/` 均不替代最终证据。
 
 本轮验证覆盖手感机制与代表性出手，不构成整章平衡、全部职业技能组合或长时间游玩的完成声明。
+
+## 浏览器验收（2026-11-13）
+
+对象是 `bash scripts/build_web.sh` 生成的发布包（build id `650dfec4ca379a67`），本地 HTTP 服务，Google Chrome 156 无头模式，由 Playwright 发送真实键鼠事件。脚本、截图、录像与控制台记录在 `target/validation/web-acceptance/`（`harness/accept.sh` 可重跑）。
+
+| 项目 | 结果 |
+| --- | --- |
+| WebGPU 适配器 | AMD（`--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan --use-webgpu-power-preference=force-low-power`）通过。NVIDIA RTX 3070 适配器在本机无头 Chrome 中 `VK_ERROR_OUT_OF_DEVICE_MEMORY` / DeviceLost；一个只清屏的最小 WebGPU 页面同样丢失设备，因此是本机 Chrome/Dawn 与 NVIDIA 的环境问题，不是游戏内存占用（游戏到失败时只申请了约157MB纹理与缓冲）。仅 `--enable-unsafe-webgpu` 得到 SwiftShader 软件适配器，未用于验收 |
+| 加载与进入 | 主菜单约8秒出现；回车进入职业选择，再回车进入第一章。1280×720 下菜单、职业选择、HUD 均正常渲染 |
+| 灰誓卫士近战 | 右键移动接近敌人，左键连击：出现目标锁定圈与刀光，敌人倒地，目标计数 0/3→1/3，怒气 60→78，拾取战利品日志出现。Shift 闪避显示“闪避”并进入冷却 |
+| 烬语者 | R 技能在落点出现符文，魔能 120→84 并进入冷却 |
+| 控制台 | 三次最终运行均为0条 error / pageerror / panic。修复前每次加载有153条 `.meta` 404（见下） |
+| 音频 | `AudioContext` 状态为 `running`；无头环境无法试听，接触音与剑风未在浏览器中逐条确认 |
+
+本轮修复的仅 Web 问题：Bevy 在 HTTP 下为每个资源先探测 `<资源>.meta`，仓库不提供这些文件，导致每次加载153条404控制台错误。wasm 构建现在设置 `AssetMetaCheck::Never`。
+
+**没有在浏览器中验证的内容**：卡刀、拖刀与震屏的毫秒级时序（25fps 录屏与截图只能确认命中、刀光、击杀和资源变化，精度仍由原生系统测试与原生实捕支持）；暴击/重击/破防的强度差异；Q/E 技能（1级未解锁）与需要目标的 R 裂地斩命中；烬语者普攻火球在本次脚本中没有拍到弹体；骨弦游猎与缚魂使；移动端。844×390 视口下右侧工具栏与小地图、罗盘重叠，HUD 目前只适配桌面尺寸。

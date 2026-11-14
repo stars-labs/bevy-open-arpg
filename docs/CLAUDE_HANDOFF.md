@@ -1,10 +1,18 @@
 # Claude Code 交接：Bevy Open ARPG
 
-更新时间：2026-11-05。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
+更新时间：2026-11-13。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
 
 ## 本轮战斗手感（2026-11-05）
 
 按响应、节奏、反馈、容错实现了局部卡刀/拖刀、短输入缓存、收招衔接、闪避取消与定向位移、材质接触音与剑风分离、克制的相机震动和读档清理。参数位于 `assets/data/combat_feel.ron`；完整规则、验收边界与11场真实输入证据见 [COMBAT_FEEL.md](COMBAT_FEEL.md)。本轮904项测试、严格Clippy、原生与wasm检查、第二章120帧冒烟通过；最终实捕11场全局速度恒1，隔离音频有输出且无外来流。完整Web发布构建通过（build id `0d2d117468a127b2`），本轮以 `feat: refine combat rhythm and local hit feedback` 提交。录像与日志保留于target；未推送、部署或进行浏览器验收。
+
+## 浏览器验收与画面打磨（2026-11-13）
+
+Web 发布包（build id `650dfec4ca379a67`）已在无头 Chrome 156 / AMD WebGPU 中实际进入战斗并验收，结果与未验证范围见 [COMBAT_FEEL.md](COMBAT_FEEL.md) 的“浏览器验收”。NVIDIA 适配器在本机无头 Chrome 中连最小清屏页面都会丢失设备，属于环境问题。wasm 构建关闭了 `.meta` 探测，控制台不再有404。
+
+画面：主角身边改为暖色火光池，环境光与月光转冷转暗，暗角加强，后期只做色彩饱和（分段对比度会把暗场景压成全黑，已由测试禁止）。主角补光不再是体积光，否则原生雾中会出现悬浮光球。敌人血条随相机偏航保持水平。章节横幅居中并移到剧情面板下方。前后对比在 `target/validation/polish/`（`compare-*.png`）。908项测试、严格Clippy、原生与wasm检查、第二章120帧冒烟通过；未推送或部署。
+
+仍然薄弱：地面只有一张平铺贴图，道路是硬边色块；844×390 等矮视口下右侧工具栏与小地图重叠。
 
 ## 当前实现与边界
 

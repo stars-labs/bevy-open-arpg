@@ -26,4 +26,4 @@
 
 格式、严格全目标全功能Clippy、907项测试、原生默认及全功能检查、wasm32/WebGPU检查、第二章120帧启动均通过。完整Web发布构建通过，构建标识为 `2e85e2990b2d8e61`。Chromium 156 / AMD WebGPU 中通过正常菜单进入烬语者，实际释放火球，逐帧截图可见弹体动画，控制台无渲染ERROR或shader错误。证据为 `target/validation/pixelfx/web-fireball-sequence.png` 与 `web-amd-fireball-console.json`。
 
-浏览器兼容性仍有一项限制。NVIDIA 浏览器后端在本地新版本与线上旧版本均出现 `VK_ERROR_OUT_OF_DEVICE_MEMORY` 和 DeviceLost，原因尚未定位。本轮浏览器验证通过独立测试浏览器的低功耗适配器启动参数选择AMD完成，生产配置未作变更。五种效果的完整技能验证在原生Vulkan完成。
+浏览器兼容性仍有一项限制。NVIDIA 浏览器后端在本地新版本与线上旧版本均出现 `VK_ERROR_OUT_OF_DEVICE_MEMORY` 和 DeviceLost，2026-11-13 定位为本机环境问题：只清屏的最小 WebGPU 页面在同一适配器上同样丢失设备，与游戏资源无关（见 `docs/COMBAT_FEEL.md` 的浏览器验收）。本轮浏览器验证通过独立测试浏览器的低功耗适配器启动参数选择AMD完成，生产配置未作变更。五种效果的完整技能验证在原生Vulkan完成。
