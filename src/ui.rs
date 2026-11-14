@@ -437,6 +437,267 @@ enum GearSlotText {
 #[derive(Resource, Default, Debug, Clone, Copy)]
 pub struct UiPointerCapture(pub bool);
 
+/// The one viewport classification every HUD layout branch reads, so desktop
+/// and phone layouts cannot drift apart system by system.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HudViewport {
+    #[default]
+    Desktop,
+    /// A short, wide screen (phone held sideways).
+    Landscape,
+    /// A narrow screen (phone held upright).
+    Portrait,
+}
+
+impl HudViewport {
+    pub(crate) fn classify(width: f32, height: f32) -> Self {
+        if width < 600.0 {
+            Self::Portrait
+        } else if height < 520.0 {
+            Self::Landscape
+        } else {
+            Self::Desktop
+        }
+    }
+
+    pub(crate) fn compact(self) -> bool {
+        self != Self::Desktop
+    }
+}
+
+fn track_hud_viewport(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut viewport: ResMut<HudViewport>,
+) {
+    if let Ok(window) = windows.single() {
+        viewport.set_if_neq(HudViewport::classify(window.width(), window.height()));
+    }
+}
+
+/// The floating HUD panels that move when the viewport class changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudAnchor {
+    Objective,
+    Boss,
+    BuffBar,
+    Log,
+    Story,
+    Compass,
+    RewardToast,
+    SkillFeedback,
+    LootBanner,
+    StreakBanner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct HudAnchorRect {
+    left: Val,
+    right: Val,
+    top: Val,
+    bottom: Val,
+    width: f32,
+}
+
+const HUD_MARGIN: f32 = 18.0;
+/// Width of the minimap column including its gap to the next panel.
+const MINIMAP_COLUMN: f32 = HUD_MARGIN + MINIMAP_WIDTH + 8.0;
+const COMPACT_COMPASS_WIDTH: f32 = 180.0;
+
+/// Where each floating panel sits. Landscape keeps the top-right for the minimap
+/// and puts the compass beside it; portrait stacks everything under the minimap.
+fn hud_anchor_rect(anchor: HudAnchor, viewport: HudViewport, width: f32) -> HudAnchorRect {
+    // Centered panels never exceed the viewport, so long lines wrap instead of
+    // running off both edges.
+    let centered = |top: f32, panel_width: f32| {
+        let panel_width = panel_width.min(width - 16.0).max(120.0);
+        HudAnchorRect {
+            left: Val::Px((width - panel_width) * 0.5),
+            right: Val::Auto,
+            top: Val::Px(top),
+            bottom: Val::Auto,
+            width: panel_width,
+        }
+    };
+    let centered_above = |bottom: f32, panel_width: f32| {
+        let panel_width = panel_width.min(width - 16.0).max(120.0);
+        HudAnchorRect {
+            left: Val::Px((width - panel_width) * 0.5),
+            right: Val::Auto,
+            top: Val::Auto,
+            bottom: Val::Px(bottom),
+            width: panel_width,
+        }
+    };
+    let left_top = |left: f32, top: f32, panel_width: f32| HudAnchorRect {
+        left: Val::Px(left),
+        right: Val::Auto,
+        top: Val::Px(top),
+        bottom: Val::Auto,
+        width: panel_width,
+    };
+    let right_top = |right: f32, top: f32, panel_width: f32| HudAnchorRect {
+        left: Val::Auto,
+        right: Val::Px(right),
+        top: Val::Px(top),
+        bottom: Val::Auto,
+        width: panel_width,
+    };
+    let left_bottom = |left: f32, bottom: f32, panel_width: f32| HudAnchorRect {
+        left: Val::Px(left),
+        right: Val::Auto,
+        top: Val::Auto,
+        bottom: Val::Px(bottom),
+        width: panel_width,
+    };
+    let console = hud_layout::console_top(viewport, width);
+    // Transient banners stack above the console; in portrait they also clear
+    // the navigation dock that sits on the console's shoulder.
+    let banners = console
+        + if viewport == HudViewport::Portrait {
+            96.0
+        } else {
+            8.0
+        };
+    match anchor {
+        HudAnchor::RewardToast => return centered(164.0, 700.0),
+        HudAnchor::SkillFeedback => return centered_above(banners, 540.0),
+        HudAnchor::LootBanner => return centered_above(banners + 40.0, 560.0),
+        HudAnchor::StreakBanner => return centered_above(banners + 82.0, 620.0),
+        _ => {}
+    }
+    // Every remaining `_` arm below is the compass.
+    match viewport {
+        HudViewport::Desktop => match anchor {
+            HudAnchor::Objective => centered(8.0, 700.0),
+            HudAnchor::Boss => centered(38.0, 560.0),
+            HudAnchor::BuffBar => centered(126.0, 700.0),
+            HudAnchor::Log => left_bottom(24.0, 204.0, 360.0),
+            HudAnchor::Story => left_top(24.0, 46.0, 430.0),
+            _ => right_top(HUD_MARGIN, 158.0, 224.0),
+        },
+        HudViewport::Landscape => {
+            // Centered panels stay clear of the minimap column on both sides.
+            let middle = (width - 2.0 * MINIMAP_COLUMN).max(160.0);
+            let story = (width - MINIMAP_COLUMN - COMPACT_COMPASS_WIDTH - 8.0 - 24.0 - 8.0)
+                .clamp(160.0, 430.0);
+            match anchor {
+                HudAnchor::Objective => centered(8.0, middle.min(700.0)),
+                HudAnchor::Boss => centered(38.0, middle.min(560.0)),
+                HudAnchor::BuffBar => centered(126.0, middle.min(700.0)),
+                HudAnchor::Log => left_bottom(24.0, console + 6.0, 320.0),
+                HudAnchor::Story => left_top(24.0, 46.0, story),
+                _ => right_top(MINIMAP_COLUMN, 44.0, COMPACT_COMPASS_WIDTH),
+            }
+        }
+        HudViewport::Portrait => {
+            let beside_map = (width - MINIMAP_COLUMN - 8.0).max(120.0);
+            let full = (width - 24.0).max(120.0);
+            match anchor {
+                HudAnchor::Objective => left_top(8.0, 8.0, beside_map),
+                HudAnchor::BuffBar => left_top(8.0, 70.0, beside_map),
+                HudAnchor::Boss => centered(206.0, full.min(560.0)),
+                HudAnchor::Story => left_top(12.0, 270.0, full.min(430.0)),
+                HudAnchor::Log => left_bottom(
+                    12.0,
+                    console + 6.0,
+                    (full - navigation::DOCK_WIDTH - 8.0).max(120.0),
+                ),
+                _ => right_top(HUD_MARGIN, 158.0, MINIMAP_WIDTH),
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn layout_hud_anchors(
+    viewport: Res<HudViewport>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut panels: Query<
+        (
+            &mut Node,
+            Has<ObjectiveText>,
+            Has<BossHudPanel>,
+            Has<BuffBarText>,
+            Has<LogText>,
+            Has<StoryCommsText>,
+            (
+                Has<RewardToastPanel>,
+                Has<SkillFeedbackText>,
+                Has<LootPickupBannerText>,
+                Has<CombatStreakBannerText>,
+            ),
+        ),
+        Or<(
+            With<ObjectiveText>,
+            With<BossHudPanel>,
+            With<BuffBarText>,
+            With<LogText>,
+            With<StoryCommsText>,
+            With<ObjectiveCompassPanel>,
+            With<RewardToastPanel>,
+            With<SkillFeedbackText>,
+            With<LootPickupBannerText>,
+            With<CombatStreakBannerText>,
+        )>,
+    >,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    for (mut node, objective, boss, buffs, log, story, (toast, feedback, loot, streak)) in
+        &mut panels
+    {
+        let anchor = if objective {
+            HudAnchor::Objective
+        } else if boss {
+            HudAnchor::Boss
+        } else if buffs {
+            HudAnchor::BuffBar
+        } else if log {
+            HudAnchor::Log
+        } else if story {
+            HudAnchor::Story
+        } else if toast {
+            HudAnchor::RewardToast
+        } else if feedback {
+            HudAnchor::SkillFeedback
+        } else if loot {
+            HudAnchor::LootBanner
+        } else if streak {
+            HudAnchor::StreakBanner
+        } else {
+            HudAnchor::Compass
+        };
+        let rect = hud_anchor_rect(anchor, *viewport, window.width());
+        let mut placed = node.clone();
+        placed.margin = UiRect::ZERO;
+        if anchor == HudAnchor::Objective {
+            // The objective frame style owns this panel's width and top (it
+            // narrows in combat); the viewport only caps and positions it.
+            let shown = match placed.width {
+                Val::Px(style_width) => style_width.min(rect.width),
+                _ => rect.width,
+            };
+            placed.max_width = Val::Px(rect.width);
+            placed.right = Val::Auto;
+            placed.left = match rect.left {
+                Val::Px(left) => Val::Px(left + (rect.width - shown) * 0.5),
+                other => other,
+            };
+            if *viewport == HudViewport::Portrait {
+                placed.left = rect.left;
+            }
+        } else {
+            placed.left = rect.left;
+            placed.right = rect.right;
+            placed.top = rect.top;
+            placed.bottom = rect.bottom;
+            placed.width = Val::Px(rect.width);
+        }
+        node.set_if_neq(placed);
+    }
+}
+
 /// One paper-doll gear box in the inventory panel (weapon + armor slots).
 #[derive(Component, Debug, Clone, Copy, Eq, PartialEq)]
 struct PaperDollSlot(GearSlot);
@@ -2340,13 +2601,28 @@ impl Plugin for HudPlugin {
                 update_talent_tree_hud,
                 panels::scroll_panels,
                 panels::close_panels,
-                hud_layout::fit_bottom_console,
                 hud_layout::update_utility_tooltips,
                 hud_layout::update_skill_tooltips,
             )
                 .run_if(in_state(GameState::InGame)),
         )
         .init_resource::<UiPointerCapture>()
+        .init_resource::<HudViewport>()
+        .add_systems(
+            Update,
+            (
+                track_hud_viewport,
+                (layout_hud_anchors, hud_layout::fit_bottom_console)
+                    .run_if(in_state(GameState::InGame)),
+            )
+                .chain(),
+        )
+        .add_systems(
+            PreUpdate,
+            hud_layout::press_console_slots
+                .after(bevy::ui::UiSystems::Focus)
+                .run_if(in_state(GameState::InGame)),
+        )
         .add_systems(
             PreUpdate,
             update_ui_pointer_capture
@@ -5403,11 +5679,11 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     top: Val::Px(8.0),
                     width: Val::Px(700.0),
                     min_height: Val::Px(24.0),
-                    margin: UiRect::left(Val::Px(-350.0)),
                     padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -5434,7 +5710,6 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                         left: Val::Percent(50.0),
                         width: Val::Px(560.0),
                         height: Val::Px(56.0),
-                        margin: UiRect::left(Val::Px(-280.0)),
                         padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                         border: UiRect::all(Val::Px(2.0)),
                         display: Display::None,
@@ -5490,7 +5765,6 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                     top: Val::Px(126.0),
                     left: Val::Percent(50.0),
                     width: Val::Px(700.0),
-                    margin: UiRect::left(Val::Px(-350.0)),
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
@@ -5605,10 +5879,10 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     bottom: Val::Px(238.0),
                     width: Val::Px(560.0),
-                    margin: UiRect::left(Val::Px(-280.0)),
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
@@ -5624,11 +5898,11 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Percent(50.0),
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
                         top: Val::Px(164.0),
                         width: Val::Px(700.0),
                         min_height: Val::Px(44.0),
-                        margin: UiRect::left(Val::Px(-340.0)),
                         padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                         border: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
@@ -5656,10 +5930,10 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     bottom: Val::Px(198.0),
                     width: Val::Px(540.0),
-                    margin: UiRect::left(Val::Px(-270.0)),
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
@@ -5674,10 +5948,10 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
                     bottom: Val::Px(280.0),
                     width: Val::Px(620.0),
-                    margin: UiRect::left(Val::Px(-310.0)),
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
@@ -7658,7 +7932,6 @@ fn update_objective_frame(frames: &mut ObjectiveFrameQuery, combat_focus: bool, 
         node.width = Val::Px(style.width);
         node.top = Val::Px(style.top);
         node.min_height = Val::Px(style.min_height);
-        node.margin = UiRect::left(Val::Px(-style.width * 0.5));
         node.padding = UiRect::axes(Val::Px(style.padding_x), Val::Px(style.padding_y));
         *background = BackgroundColor(style.background_color);
         *border = BorderColor::all(style.border_color);
@@ -10517,6 +10790,67 @@ fn minimap_interactable_style(role: MinimapInteractableRole) -> (f32, Color) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn px(value: Val) -> f32 {
+        match value {
+            Val::Px(px) => px,
+            other => panic!("expected pixels, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn viewport_classes_follow_the_short_or_narrow_edge() {
+        assert_eq!(HudViewport::classify(1280.0, 720.0), HudViewport::Desktop);
+        assert_eq!(HudViewport::classify(844.0, 390.0), HudViewport::Landscape);
+        assert_eq!(HudViewport::classify(390.0, 844.0), HudViewport::Portrait);
+        assert!(!HudViewport::Desktop.compact());
+    }
+
+    #[test]
+    fn landscape_phone_keeps_compass_story_and_minimap_apart() {
+        for width in [844.0, 667.0] {
+            let viewport = HudViewport::classify(width, 390.0);
+            let story = hud_anchor_rect(HudAnchor::Story, viewport, width);
+            let compass = hud_anchor_rect(HudAnchor::Compass, viewport, width);
+            let story_right = px(story.left) + story.width;
+            let compass_left = width - px(compass.right) - compass.width;
+            assert!(
+                story_right <= compass_left,
+                "{width}: story overlaps compass"
+            );
+            // The compass ends where the minimap column begins.
+            assert!(px(compass.right) >= MINIMAP_COLUMN);
+            let objective = hud_anchor_rect(HudAnchor::Objective, viewport, width);
+            assert!(px(objective.left) + objective.width <= width - MINIMAP_COLUMN);
+        }
+    }
+
+    #[test]
+    fn portrait_phone_panels_fit_inside_the_viewport() {
+        let width = 390.0;
+        let viewport = HudViewport::classify(width, 844.0);
+        for anchor in [
+            HudAnchor::Objective,
+            HudAnchor::Boss,
+            HudAnchor::BuffBar,
+            HudAnchor::Log,
+            HudAnchor::Story,
+            HudAnchor::Compass,
+        ] {
+            let rect = hud_anchor_rect(anchor, viewport, width);
+            assert!(
+                rect.width <= width - 16.0,
+                "{anchor:?} wider than the screen"
+            );
+        }
+        let objective = hud_anchor_rect(HudAnchor::Objective, viewport, width);
+        assert!(px(objective.left) + objective.width <= width - MINIMAP_COLUMN);
+        // The compass hangs under the minimap, the story under the compass.
+        let compass = hud_anchor_rect(HudAnchor::Compass, viewport, width);
+        let story = hud_anchor_rect(HudAnchor::Story, viewport, width);
+        assert!(px(compass.top) >= HUD_MARGIN + MINIMAP_HEIGHT);
+        assert!(px(story.top) > px(compass.top));
+    }
 
     fn test_hud_skills() -> HudSkills {
         HudSkills::new(

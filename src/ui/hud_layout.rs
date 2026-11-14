@@ -7,26 +7,143 @@ const CONSOLE_HEIGHT: f32 = 184.0;
 const ORB_SIZE: f32 = 170.0;
 const APERTURE_SIZE: f32 = 100.0;
 const ORB_INSET: f32 = 12.0;
+const SKILL_BAR_WIDTH: f32 = 606.0;
+const STRIP_CARD_HEIGHT: f32 = 42.0;
+/// Smallest on-screen edge of anything meant to be tapped.
+const TOUCH_TARGET: f32 = 46.0;
+// Stacked portrait orbs must leave the middle free for the utility strip.
+const _: () = assert!(SKILL_BAR_WIDTH - 2.0 * ORB_SIZE >= 208.0);
 
 #[derive(Component)]
 pub(super) struct BottomConsole;
 
+#[derive(Component)]
+pub(super) struct ConsoleOrb {
+    health: bool,
+}
+
+#[derive(Component)]
+pub(super) struct StatusStrip;
+
+/// Scales the console to the viewport. A portrait screen is too narrow for
+/// orb + skills + orb in one row, so the orbs stack above the skill bar there.
 pub(super) fn fit_bottom_console(
+    viewport: Res<HudViewport>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut consoles: Query<&mut UiTransform, With<BottomConsole>>,
+    mut strips: Query<&mut UiTransform, (With<StatusStrip>, Without<BottomConsole>)>,
+    mut orbs: Query<(&ConsoleOrb, &mut Node)>,
 ) {
     let Ok(window) = windows.single() else {
         return;
     };
-    let scale = console_scale(window.width());
+    let scale = console_scale(*viewport, window.width());
     for mut transform in &mut consoles {
         transform.scale = Vec2::splat(scale);
         transform.translation = Val2::px(0.0, CONSOLE_HEIGHT * (1.0 - scale) * 0.5);
     }
+    let strip = strip_scale(*viewport, scale);
+    for mut transform in &mut strips {
+        transform.scale = Vec2::splat(strip);
+        // Grow upward from the strip's bottom edge.
+        transform.translation = Val2::px(0.0, -STRIP_CARD_HEIGHT * (strip - 1.0) * 0.5);
+    }
+    let (inset, bottom) = orb_placement(*viewport, strip);
+    for (orb, mut node) in &mut orbs {
+        let mut placed = node.clone();
+        placed.bottom = Val::Px(bottom);
+        if orb.health {
+            placed.left = Val::Px(inset);
+        } else {
+            placed.right = Val::Px(inset);
+        }
+        node.set_if_neq(placed);
+    }
 }
 
-fn console_scale(viewport_width: f32) -> f32 {
-    ((viewport_width - 24.0).max(1.0) / CONSOLE_WIDTH).min(1.0)
+fn console_scale(viewport: HudViewport, viewport_width: f32) -> f32 {
+    let (margin, content) = match viewport {
+        HudViewport::Portrait => (12.0, SKILL_BAR_WIDTH),
+        HudViewport::Desktop | HudViewport::Landscape => (24.0, CONSOLE_WIDTH),
+    };
+    ((viewport_width - margin).max(1.0) / content).min(1.0)
+}
+
+/// Utility cards are small art; on touch layouts they grow to a tappable size.
+fn strip_scale(viewport: HudViewport, console_scale: f32) -> f32 {
+    if viewport.compact() {
+        (TOUCH_TARGET / (STRIP_CARD_HEIGHT * console_scale)).max(1.0)
+    } else {
+        1.0
+    }
+}
+
+/// Orb inset from the console edge and height above its bottom, in console units.
+fn orb_placement(viewport: HudViewport, strip_scale: f32) -> (f32, f32) {
+    match viewport {
+        HudViewport::Portrait => (
+            (CONSOLE_WIDTH - SKILL_BAR_WIDTH) * 0.5,
+            121.0 + STRIP_CARD_HEIGHT * strip_scale + 6.0,
+        ),
+        HudViewport::Desktop | HudViewport::Landscape => (ORB_INSET, 16.0),
+    }
+}
+
+/// On-screen height the console occupies above the window's bottom edge.
+pub(super) fn console_top(viewport: HudViewport, viewport_width: f32) -> f32 {
+    let scale = console_scale(viewport, viewport_width);
+    let (_, orb_bottom) = orb_placement(viewport, strip_scale(viewport, scale));
+    4.0 + (orb_bottom + ORB_SIZE) * scale
+}
+
+/// Tapping a skill or utility slot presses its key, so the console is usable
+/// without a keyboard. Runs before gameplay reads the keyboard this frame.
+pub(super) fn press_console_slots(
+    slots: Query<(Ref<Interaction>, &SkillSlotFrame)>,
+    utilities: Query<(Ref<Interaction>, &UtilitySlot)>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut held: Local<Vec<KeyCode>>,
+) {
+    for key in held.drain(..) {
+        keyboard.release(key);
+    }
+    let skills = slots
+        .iter()
+        .filter(|(interaction, _)| {
+            interaction.is_changed() && **interaction == Interaction::Pressed
+        })
+        .filter_map(|(_, frame)| skill_slot_key(frame.0));
+    let items = utilities
+        .iter()
+        .filter(|(interaction, _)| {
+            interaction.is_changed() && **interaction == Interaction::Pressed
+        })
+        .map(|(_, slot)| utility_slot_key(slot.0));
+    for key in skills.chain(items) {
+        keyboard.press(key);
+        held.push(key);
+    }
+}
+
+/// The basic strike has no key: it is aimed by clicking the world.
+fn skill_slot_key(slot: SkillSlotText) -> Option<KeyCode> {
+    match slot {
+        SkillSlotText::Strike => None,
+        SkillSlotText::Finisher => Some(crate::class::SkillSlot::Finisher.key()),
+        SkillSlotText::Mobility => Some(crate::class::SkillSlot::Mobility.key()),
+        SkillSlotText::Area => Some(crate::class::SkillSlot::Area.key()),
+        SkillSlotText::Surge => Some(KeyCode::KeyV),
+        SkillSlotText::Evade => Some(KeyCode::ShiftLeft),
+    }
+}
+
+fn utility_slot_key(slot: CompactUtilityText) -> KeyCode {
+    match slot {
+        CompactUtilityText::Potion => KeyCode::KeyF,
+        CompactUtilityText::Elixir => KeyCode::KeyG,
+        CompactUtilityText::Portal => KeyCode::KeyT,
+        CompactUtilityText::Interact => KeyCode::Space,
+    }
 }
 
 pub(super) fn spawn_bottom_hud(parent: &mut ChildSpawnerCommands, asset_server: &AssetServer) {
@@ -122,8 +239,8 @@ pub(super) fn spawn_bottom_hud(parent: &mut ChildSpawnerCommands, asset_server: 
                             BorderColor::all(Color::srgba(0.92, 0.74, 0.42, 0.62)),
                             BackgroundColor(Color::srgba(0.055, 0.047, 0.058, 0.92)),
                             slot_frame_image_node(asset_server),
+                            Button,
                             SkillSlotFrame(slot),
-                            Interaction::default(),
                         ))
                         .with_children(|slot_node| {
                             slot_node.spawn((
@@ -308,6 +425,15 @@ pub(super) fn update_skill_tooltips(
     }
 }
 
+/// What each orb measures; the number inside it carries the current value.
+fn orb_tooltip_text(health: bool) -> &'static str {
+    if health {
+        "Health\nDrink a potion [F] before it runs dry"
+    } else {
+        "Class resource\nSpent by your Q, E and R skills"
+    }
+}
+
 /// Name, key, cost line and the equipped rune for one class skill.
 pub(super) fn skill_tooltip_text(
     skill: &crate::class::SkillDef,
@@ -340,24 +466,54 @@ fn spawn_orb(parent: &mut ChildSpawnerCommands, assets: &AssetServer, health: bo
         ResourceOrbFrame::Fury
     };
     parent
-        .spawn((Node {
-            position_type: PositionType::Absolute,
-            left: if health {
-                Val::Px(ORB_INSET)
-            } else {
-                Val::Auto
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: if health {
+                    Val::Px(ORB_INSET)
+                } else {
+                    Val::Auto
+                },
+                right: if health {
+                    Val::Auto
+                } else {
+                    Val::Px(ORB_INSET)
+                },
+                bottom: Val::Px(16.0),
+                width: Val::Px(ORB_SIZE),
+                height: Val::Px(ORB_SIZE),
+                ..default()
             },
-            right: if health {
-                Val::Auto
-            } else {
-                Val::Px(ORB_INSET)
-            },
-            bottom: Val::Px(16.0),
-            width: Val::Px(ORB_SIZE),
-            height: Val::Px(ORB_SIZE),
-            ..default()
-        },))
+            ConsoleOrb { health },
+            Interaction::default(),
+            UtilityHover,
+        ))
         .with_children(|orb| {
+            orb.spawn((
+                Text::new(orb_tooltip_text(health)),
+                TextFont {
+                    font: assets.load(UI_FONT_REGULAR).into(),
+                    font_size: FontSize::Px(14.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.93, 0.85, 0.71)),
+                BackgroundColor(Color::srgba(0.025, 0.021, 0.019, 0.97)),
+                BorderColor::all(Color::srgba(0.61, 0.46, 0.27, 0.9)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(ORB_SIZE - 6.0),
+                    left: if health { Val::Px(0.0) } else { Val::Auto },
+                    right: if health { Val::Auto } else { Val::Px(0.0) },
+                    width: Val::Px(220.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    display: Display::None,
+                    ..default()
+                },
+                ZIndex(30),
+                UtilityTooltip,
+                Pickable::IGNORE,
+            ));
             orb.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -535,6 +691,9 @@ pub(super) struct UtilityTooltip;
 #[derive(Component)]
 pub(super) struct UtilityHover;
 
+#[derive(Component)]
+pub(super) struct UtilitySlot(CompactUtilityText);
+
 pub(super) fn update_utility_tooltips(
     buttons: Query<(&Interaction, &Children), With<UtilityHover>>,
     mut tips: Query<&mut Node, With<UtilityTooltip>>,
@@ -554,17 +713,21 @@ pub(super) fn update_utility_tooltips(
 
 fn spawn_status_strip(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
     parent
-        .spawn((Node {
-            position_type: PositionType::Absolute,
-            left: Val::Percent(50.0),
-            bottom: Val::Px(121.0),
-            width: Val::Px(208.0),
-            height: Val::Px(42.0),
-            margin: UiRect::left(Val::Px(-104.0)),
-            column_gap: Val::Px(12.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                bottom: Val::Px(121.0),
+                width: Val::Px(208.0),
+                height: Val::Px(STRIP_CARD_HEIGHT),
+                margin: UiRect::left(Val::Px(-104.0)),
+                column_gap: Val::Px(12.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            StatusStrip,
+            UiTransform::default(),
+        ))
         .with_children(|strip| {
             for (slot, key) in [
                 (CompactUtilityText::Potion, "F"),
@@ -574,11 +737,12 @@ fn spawn_status_strip(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
             ] {
                 strip
                     .spawn((
-                        Interaction::default(),
+                        Button,
                         UtilityHover,
+                        UtilitySlot(slot),
                         Node {
                             width: Val::Px(40.0),
-                            height: Val::Px(42.0),
+                            height: Val::Px(STRIP_CARD_HEIGHT),
                             flex_shrink: 0.0,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -712,7 +876,7 @@ mod tests {
     #[test]
     fn console_keeps_orbs_in_shared_coordinates_at_both_desktop_sizes() {
         for width in [1280.0, 2048.0] {
-            let scale = console_scale(width);
+            let scale = console_scale(HudViewport::Desktop, width);
             let left = (width - CONSOLE_WIDTH * scale) * 0.5;
             let right_orb = left + (CONSOLE_WIDTH - ORB_INSET - ORB_SIZE) * scale;
             assert!(left + ORB_INSET * scale >= left);
@@ -722,7 +886,53 @@ mod tests {
             assert!(left + (ORB_INSET + ORB_SIZE) * scale < skill_left);
             assert_eq!(scale, 1.0);
         }
-        assert!(CONSOLE_WIDTH * console_scale(600.0) <= 576.0);
+        assert!(CONSOLE_WIDTH * console_scale(HudViewport::Desktop, 600.0) <= 576.0);
+    }
+
+    #[test]
+    fn compact_consoles_keep_every_tappable_slot_touch_sized() {
+        for (width, height) in [
+            (844.0, 390.0),
+            (667.0, 375.0),
+            (390.0, 844.0),
+            (360.0, 740.0),
+        ] {
+            let viewport = HudViewport::classify(width, height);
+            assert!(viewport.compact());
+            let scale = console_scale(viewport, width);
+            // Skill slots are 90x78 console units.
+            assert!(
+                78.0 * scale >= 44.0,
+                "{width}x{height}: skill slot too small"
+            );
+            let strip = strip_scale(viewport, scale);
+            assert!(STRIP_CARD_HEIGHT * strip * scale >= TOUCH_TARGET - 0.01);
+            // The enlarged strip still fits between or below the orbs.
+            assert!(208.0 * strip <= SKILL_BAR_WIDTH);
+            assert!(console_top(viewport, width) < height * 0.5);
+        }
+    }
+
+    #[test]
+    fn portrait_console_stacks_orbs_above_the_skill_bar_inside_the_viewport() {
+        let width = 390.0;
+        let viewport = HudViewport::classify(width, 844.0);
+        assert_eq!(viewport, HudViewport::Portrait);
+        let scale = console_scale(viewport, width);
+        let strip = strip_scale(viewport, scale);
+        let (inset, bottom) = orb_placement(viewport, strip);
+        let console_left = (width - CONSOLE_WIDTH * scale) * 0.5;
+        assert!(console_left + inset * scale >= 0.0);
+        assert!(console_left + (CONSOLE_WIDTH - inset) * scale <= width);
+        assert!(bottom >= 121.0 + STRIP_CARD_HEIGHT * strip);
+    }
+
+    #[test]
+    fn only_keyed_slots_inject_a_key() {
+        assert_eq!(skill_slot_key(SkillSlotText::Strike), None);
+        assert_eq!(skill_slot_key(SkillSlotText::Mobility), Some(KeyCode::KeyQ));
+        assert_eq!(skill_slot_key(SkillSlotText::Finisher), Some(KeyCode::KeyR));
+        assert_eq!(utility_slot_key(CompactUtilityText::Potion), KeyCode::KeyF);
     }
 
     #[test]

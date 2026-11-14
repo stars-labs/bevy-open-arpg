@@ -1,7 +1,7 @@
 //! Compact, discoverable access to the pack, talents, and journal.
 
 use super::{
-    HudUi,
+    HudUi, HudViewport,
     icons::{UiIcon, ui_icon},
 };
 use crate::{BuildOpen, GameState, InventoryOpen, JournalOpen, RunStats};
@@ -14,7 +14,8 @@ impl Plugin for HudNavigationPlugin {
         app.add_systems(OnEnter(GameState::InGame), spawn_navigation)
             .add_systems(
                 Update,
-                (interact_navigation, update_counters).run_if(in_state(GameState::InGame)),
+                (interact_navigation, update_counters, place_navigation)
+                    .run_if(in_state(GameState::InGame)),
             );
     }
 }
@@ -56,10 +57,61 @@ impl NavigationAction {
 struct NavigationTooltip;
 
 #[derive(Component)]
+struct NavigationDock;
+
+pub(super) const DOCK_WIDTH: f32 = 150.0;
+
+/// Desktop and portrait park the dock above the console; a landscape phone has
+/// no room there, so it hangs directly under the minimap instead.
+fn dock_position(viewport: HudViewport, viewport_width: f32) -> (Val, Val) {
+    match viewport {
+        HudViewport::Desktop => (Val::Auto, Val::Px(192.0)),
+        HudViewport::Landscape => (
+            Val::Px(super::HUD_MARGIN + super::MINIMAP_HEIGHT + 4.0),
+            Val::Auto,
+        ),
+        HudViewport::Portrait => (
+            Val::Auto,
+            Val::Px(super::hud_layout::console_top(viewport, viewport_width) + 6.0),
+        ),
+    }
+}
+
+fn place_navigation(
+    viewport: Res<HudViewport>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut docks: Query<&mut Node, With<NavigationDock>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let (top, bottom) = dock_position(*viewport, window.width());
+    for mut node in &mut docks {
+        let mut placed = node.clone();
+        placed.top = top;
+        placed.bottom = bottom;
+        node.set_if_neq(placed);
+    }
+}
+
+#[derive(Component, Clone, Copy)]
 enum Counter {
     Gold,
     Kills,
 }
+
+impl Counter {
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::Gold => "Gold\nCollected this run",
+            Self::Kills => "Kills\nEnemies slain this run",
+        }
+    }
+}
+
+/// The hoverable icon-and-number pair; the number itself carries [`Counter`].
+#[derive(Component)]
+struct CounterTip(Counter);
 
 fn spawn_navigation(mut commands: Commands, assets: Res<AssetServer>) {
     commands
@@ -68,7 +120,7 @@ fn spawn_navigation(mut commands: Commands, assets: Res<AssetServer>) {
                 position_type: PositionType::Absolute,
                 right: Val::Px(18.0),
                 bottom: Val::Px(192.0),
-                width: Val::Px(150.0),
+                width: Val::Px(DOCK_WIDTH),
                 max_width: Val::Percent(40.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(4.0),
@@ -78,6 +130,7 @@ fn spawn_navigation(mut commands: Commands, assets: Res<AssetServer>) {
             BackgroundColor(Color::srgba(0.025, 0.021, 0.019, 0.42)),
             GlobalZIndex(20),
             HudUi,
+            NavigationDock,
         ))
         .with_children(|panel| {
             panel
@@ -143,32 +196,36 @@ fn spawn_navigation(mut commands: Commands, assets: Res<AssetServer>) {
                         (UiIcon::Gold, Counter::Gold),
                         (UiIcon::Skull, Counter::Kills),
                     ] {
-                        row.spawn((Node {
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(3.0),
-                            ..default()
-                        },))
-                            .with_children(|stat| {
-                                stat.spawn((
-                                    ui_icon(&assets, icon),
-                                    Node {
-                                        width: Val::Px(21.0),
-                                        height: Val::Px(21.0),
-                                        ..default()
-                                    },
-                                    Pickable::IGNORE,
-                                ));
-                                stat.spawn((
-                                    Text::new("0"),
-                                    TextFont {
-                                        font_size: FontSize::Px(12.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.85, 0.74, 0.55)),
-                                    counter,
-                                    Pickable::IGNORE,
-                                ));
-                            });
+                        row.spawn((
+                            Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(3.0),
+                                ..default()
+                            },
+                            Interaction::default(),
+                            CounterTip(counter),
+                        ))
+                        .with_children(|stat| {
+                            stat.spawn((
+                                ui_icon(&assets, icon),
+                                Node {
+                                    width: Val::Px(21.0),
+                                    height: Val::Px(21.0),
+                                    ..default()
+                                },
+                                Pickable::IGNORE,
+                            ));
+                            stat.spawn((
+                                Text::new("0"),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.85, 0.74, 0.55)),
+                                counter,
+                                Pickable::IGNORE,
+                            ));
+                        });
                     }
                 });
             panel.spawn((
@@ -204,6 +261,7 @@ fn interact_navigation(
         &mut BorderColor,
         &mut BackgroundColor,
     )>,
+    counters: Query<(&Interaction, &CounterTip)>,
     mut tooltip: Query<(&mut Node, &mut Text), With<NavigationTooltip>>,
     mut inventory: ResMut<InventoryOpen>,
     mut build: ResMut<BuildOpen>,
@@ -243,6 +301,11 @@ fn interact_navigation(
             }
         }
     }
+    for (interaction, tip) in &counters {
+        if *interaction != Interaction::None {
+            hovered = Some(tip.0.tooltip());
+        }
+    }
     for (mut node, mut text) in &mut tooltip {
         node.display = if hovered.is_some() {
             Display::Flex
@@ -269,5 +332,25 @@ fn update_counters(stats: Res<RunStats>, mut counters: Query<(&Counter, &mut Tex
         if text.0 != label {
             **text = label;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn landscape_dock_sits_between_the_minimap_and_the_console() {
+        let (width, height) = (844.0, 390.0);
+        let viewport = HudViewport::classify(width, height);
+        let (top, bottom) = dock_position(viewport, width);
+        assert_eq!(bottom, Val::Auto);
+        let Val::Px(top) = top else {
+            panic!("landscape dock is anchored from the top");
+        };
+        assert!(top >= super::super::HUD_MARGIN + super::super::MINIMAP_HEIGHT);
+        // 4 padding + 50 button + 4 gap + 21 counters + 4 padding.
+        let dock_bottom = top + 83.0;
+        assert!(dock_bottom <= height - super::super::hud_layout::console_top(viewport, width));
     }
 }
