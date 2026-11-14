@@ -982,6 +982,8 @@ fn play_web_sound_cues(
     }
     for playback in cues {
         let cue = playback.cue;
+        #[cfg(feature = "combat_review")]
+        info!("WEB_AUDIO_CUE {cue:?} gain={:.3}", playback.gain);
         let source: Handle<bevy::audio::AudioSource> =
             asset_server.load(format!("audio/{}", sound_cue_file(cue)));
         commands.spawn((

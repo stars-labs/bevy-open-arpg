@@ -93,6 +93,8 @@ rodio = { version = "0.22.2", default-features = false, features = ["playback", 
 # wasm32-unknown-unknown (paired with RUSTFLAGS --cfg getrandom_backend="wasm_js"
 # in scripts/build_web.sh).
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# Only the validation bundle reads `?review=<case>` from the page URL.
+web-sys = { version = "0.3", features = ["Window", "Location"], optional = true }
 
 [features]
 default = ["native"]
@@ -118,7 +120,11 @@ native = [
     "bevy/pbr_specular_textures",
     "bevy/pbr_transmission_textures",
 ]
+# Scripted combat fixture plus per-frame telemetry in the log (the browser
+# console on web). Validation builds only: `WEB_REVIEW=1 bash scripts/build_web.sh`.
+combat_review = ["dep:web-sys"]
 dev_tools = [
+    "combat_review",
     "bevy/debug",
     "bevy/bevy_dev_tools",
     "bevy/bevy_camera_controller",

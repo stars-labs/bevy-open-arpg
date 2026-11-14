@@ -127,7 +127,14 @@ for feature in \
   fi
 done
 
-cargo build --release --locked --target wasm32-unknown-unknown --no-default-features --features webgpu
+# WEB_REVIEW=1 adds the scripted combat fixture and console telemetry used by the
+# browser acceptance harness. Never deploy that bundle.
+web_features="webgpu"
+if [ "${WEB_REVIEW:-0}" = "1" ]; then
+  web_features="webgpu,combat_review"
+  echo ">> VALIDATION bundle (combat_review): do not deploy" >&2
+fi
+cargo build --release --locked --target wasm32-unknown-unknown --no-default-features --features "$web_features"
 
 rm -rf web/pkg web/assets
 mkdir -p web/pkg

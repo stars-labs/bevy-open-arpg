@@ -1,6 +1,32 @@
-//! Explicit native/dev-only combat comparison fixture. Never enabled in normal play.
+//! Explicit validation-only combat comparison fixture. Never enabled in normal play:
+//! it needs the `combat_review` feature and a case named by the launcher
+//! (`BEVY_OPEN_ARPG_COMBAT_REVIEW` natively, `?review=<case>` in the page URL on web).
+//! Telemetry goes to the log, which is the browser console on web.
 use super::*;
+use crate::enemy::BossStagger;
 use crate::player::{DamageBonus, PlayerLevel};
+use std::sync::OnceLock;
+
+/// The requested fixture case, read once.
+pub(super) fn case_name() -> Option<&'static str> {
+    static CASE: OnceLock<Option<String>> = OnceLock::new();
+    CASE.get_or_init(read_case).as_deref()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_case() -> Option<String> {
+    std::env::var("BEVY_OPEN_ARPG_COMBAT_REVIEW").ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_case() -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("review="))
+        .map(str::to_owned)
+}
 
 #[derive(Resource)]
 struct ReviewCase {
@@ -15,11 +41,11 @@ struct ReviewCase {
 }
 
 pub(super) fn install(app: &mut App) {
-    let Ok(name) = std::env::var("BEVY_OPEN_ARPG_COMBAT_REVIEW") else {
+    let Some(name) = case_name() else {
         return;
     };
     app.insert_resource(ReviewCase {
-        name,
+        name: name.to_owned(),
         elapsed: 0.0,
         initialized: false,
         target: None,
@@ -57,7 +83,13 @@ fn prepare(
         (With<Player>, Without<summons::Minion>),
     >,
     mut enemies: Query<
-        (Entity, &mut Transform, &mut Enemy, &mut Health),
+        (
+            Entity,
+            &mut Transform,
+            &mut Enemy,
+            &mut Health,
+            Option<&mut BossStagger>,
+        ),
         (With<Enemy>, Without<Player>, Without<summons::Minion>),
     >,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
@@ -130,7 +162,8 @@ fn prepare(
     else {
         return;
     };
-    if case.name == "soulbinder-boss" && !enemies.iter().any(|entry| entry.2.id == "keeper") {
+    let boss_case = matches!(case.name.as_str(), "soulbinder-boss" | "feel-boss-break");
+    if boss_case && !enemies.iter().any(|entry| entry.2.id == "keeper") {
         if !case.boss_requested {
             commands.write_message(crate::chapter::SpawnBoss);
             case.boss_requested = true;
@@ -140,7 +173,7 @@ fn prepare(
     let Some(target) = enemies
         .iter()
         .filter(|entry| {
-            let wanted = if case.name == "soulbinder-boss" {
+            let wanted = if boss_case {
                 "keeper"
             } else if case.name == "soulbinder-projectile" {
                 "cultist"
@@ -274,7 +307,14 @@ fn prepare(
         );
     }
     let mut pack_member = 0;
-    for (entity, mut transform, mut enemy, mut health) in &mut enemies {
+    for (entity, mut transform, mut enemy, mut health, stagger) in &mut enemies {
+        // One point short of the threshold: the next real hit breaks the guard.
+        if case.name == "feel-boss-break"
+            && entity == target
+            && let Some(mut stagger) = stagger
+        {
+            stagger.meter = stagger.threshold - 1.0;
+        }
         if matches!(case.name.as_str(), "feel-empty" | "pixelfx-heavy-empty") {
             commands.entity(entity).despawn();
             continue;
@@ -376,6 +416,9 @@ fn record(
     heroes: Query<Entity, With<Player>>,
     mut contacts: MessageReader<crate::feedback::HitStopEvent>,
     mut shakes: MessageReader<crate::feedback::ScreenShakeEvent>,
+    mut flashes: MessageReader<presentation::ContactFeedback>,
+    mut swing_sounds: MessageReader<crate::feedback::SwingSoundEvent>,
+    mut contact_sounds: MessageReader<crate::feedback::ContactSoundEvent>,
     minions: Query<(Entity, &Transform, &summons::SummonVitality), With<summons::Minion>>,
     enemies: Query<(Entity, &Enemy, &Transform, &Health), (With<Enemy>, Without<Player>)>,
 ) {
@@ -430,6 +473,35 @@ fn record(
                 time.elapsed_secs_f64(),
                 event.intensity,
                 event.duration_secs
+            );
+        }
+        for event in flashes.read() {
+            info!(
+                "COMBAT_FEEL_FLASH {} {:.5} {:?} {:.4} {} {} {:?}",
+                case.name,
+                time.elapsed_secs_f64(),
+                event.target,
+                event.strength,
+                event.critical,
+                event.killed,
+                event.skill.map(|cast| cast.slot)
+            );
+        }
+        for event in swing_sounds.read() {
+            info!(
+                "COMBAT_FEEL_SOUND {} {:.5} swing heavy={}",
+                case.name,
+                time.elapsed_secs_f64(),
+                event.heavy
+            );
+        }
+        for event in contact_sounds.read() {
+            info!(
+                "COMBAT_FEEL_SOUND {} {:.5} contact {:?} {:.4}",
+                case.name,
+                time.elapsed_secs_f64(),
+                event.kind,
+                event.strength
             );
         }
         let hero_scale = heroes

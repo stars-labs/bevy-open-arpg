@@ -2,7 +2,7 @@ pub(crate) mod feel;
 mod pixelfx;
 mod presentation;
 mod ranged;
-#[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+#[cfg(feature = "combat_review")]
 mod review;
 mod skill_vfx;
 mod skill_vfx_art;
@@ -834,7 +834,7 @@ pub enum CombatSet {
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
+        #[cfg(feature = "combat_review")]
         {
             review::install(app);
         }
@@ -977,13 +977,12 @@ fn player_attacks(
         * unbowed_multiplier(class.passive, &player_health);
     let damage_bonus = total_damage_bonus(bonus, equipment, charm);
     let crit_chance = (total_crit_chance(equipment, charm) + talents.crit_bonus()).min(0.60);
-    #[cfg(all(feature = "dev_tools", not(target_arch = "wasm32")))]
-    let crit_chance =
-        if std::env::var("BEVY_OPEN_ARPG_COMBAT_REVIEW").is_ok_and(|v| v == "feel-critical") {
-            1.0
-        } else {
-            crit_chance
-        };
+    #[cfg(feature = "combat_review")]
+    let crit_chance = if review::case_name() == Some("feel-critical") {
+        1.0
+    } else {
+        crit_chance
+    };
     let legendary_powers = LegendaryPowerSet::new(equipment.legendary_power, codex.attuned);
     let long_shot = long_shot_passive(class.passive);
     let basic_reach = class.basic.strike.reach();
