@@ -6,8 +6,8 @@ use crate::{
     enemy::SpawnWildernessEncounter,
     not_paused,
     player::Player,
+    terrain::{self, value_noise},
 };
-use bevy::math::Affine2;
 use bevy::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,8 +18,8 @@ pub const CHUNK_UNLOAD_RADIUS: i64 = 4;
 pub const MAX_CHUNKS_PER_FRAME: usize = 4;
 
 const DEFAULT_WORLD_SEED: u64 = 0xA55E_4F52_5047_2026;
-const GROUND_Y: f32 = -0.10;
-const GROUND_THICKNESS: f32 = 0.18;
+/// Height of the ground surface; roads and clearings layer just above it.
+const GROUND_Y: f32 = -0.03;
 const DECORATION_MARGIN: f32 = 2.25;
 const STORY_ROAD_CLEARANCE: f32 = 5.25;
 
@@ -81,8 +81,8 @@ struct LoadedProceduralChunks {
 
 #[derive(Resource)]
 struct ProceduralWorldAssets {
-    ground_mesh: Handle<Mesh>,
-    ground_materials: [Handle<StandardMaterial>; 4],
+    ground_material: Handle<StandardMaterial>,
+    ground_palette: [LinearRgba; 4],
     rock: Handle<WorldAsset>,
     dead_tree: Handle<WorldAsset>,
     crystal: Handle<WorldAsset>,
@@ -128,7 +128,6 @@ impl Plugin for ProceduralWorldPlugin {
 
 fn setup_procedural_world(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<GameAssets>,
     active_chapter: Res<ActiveChapter>,
@@ -138,26 +137,20 @@ fn setup_procedural_world(
         ChapterId::AshenReliquary => assets.ashen_ground_albedo.clone(),
         ChapterId::HollowBastion => assets.hollow_ground_albedo.clone(),
     };
-    let ground_mesh = meshes.add(Cuboid::new(
-        CHUNK_SIZE + 0.08,
-        GROUND_THICKNESS,
-        CHUNK_SIZE + 0.08,
-    ));
-    let ground_materials = palette.ground.map(|base_color| {
-        materials.add(StandardMaterial {
-            base_color,
-            base_color_texture: Some(ground_texture.clone()),
-            uv_transform: Affine2::from_scale(Vec2::splat(12.0)),
-            alpha_mode: AlphaMode::Opaque,
-            perceptual_roughness: 0.97,
-            reflectance: 0.18,
-            ..default()
-        })
+    // One white material: biome tint and mottling live in each chunk's vertex
+    // colors, so neighbouring chunks blend instead of meeting at a hard seam.
+    let ground_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(ground_texture),
+        alpha_mode: AlphaMode::Opaque,
+        perceptual_roughness: 0.97,
+        reflectance: 0.18,
+        ..default()
     });
 
     commands.insert_resource(ProceduralWorldAssets {
-        ground_mesh,
-        ground_materials,
+        ground_material,
+        ground_palette: palette.ground.map(|color| color.to_linear()),
         rock: assets.scenery_rock.clone(),
         dead_tree: assets.scenery_dead_tree.clone(),
         crystal: assets.scenery_crystal.clone(),
@@ -169,12 +162,14 @@ fn setup_procedural_world(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_procedural_chunks(
     mut commands: Commands,
     player: Query<&Transform, With<Player>>,
     active_chapter: Res<ActiveChapter>,
     world_seed: Res<ProceduralWorldSeed>,
     assets: Res<ProceduralWorldAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedProceduralChunks>,
     mut encounter_events: MessageWriter<SpawnWildernessEncounter>,
 ) {
@@ -202,6 +197,7 @@ fn stream_procedural_chunks(
     for coord in select_chunks_to_load(player_chunk, &loaded_coords) {
         let entity = spawn_chunk(
             &mut commands,
+            &mut meshes,
             &assets,
             active_chapter.0,
             world_seed.0,
@@ -222,6 +218,7 @@ fn stream_procedural_chunks(
 
 fn spawn_chunk(
     commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
     assets: &ProceduralWorldAssets,
     chapter: ChapterId,
     world_seed: u64,
@@ -229,6 +226,23 @@ fn spawn_chunk(
 ) -> Entity {
     let plan = generate_chunk_plan(world_seed, chapter, coord);
     let center = coord.center();
+    let ground = meshes.add(terrain::ground_chunk_mesh(
+        Vec2::new(center.x, center.z),
+        CHUNK_SIZE,
+        |world| {
+            terrain::ground_color(
+                world_seed,
+                &assets.ground_palette,
+                biome_value(
+                    world_seed,
+                    chapter,
+                    world.x / CHUNK_SIZE - 0.5,
+                    world.y / CHUNK_SIZE - 0.5,
+                ),
+                world,
+            )
+        },
+    ));
     let root = commands
         .spawn((
             ProceduralChunk {
@@ -244,8 +258,8 @@ fn spawn_chunk(
 
     commands.entity(root).with_children(|parent| {
         parent.spawn((
-            Mesh3d(assets.ground_mesh.clone()),
-            MeshMaterial3d(assets.ground_materials[plan.ground_material].clone()),
+            Mesh3d(ground),
+            MeshMaterial3d(assets.ground_material.clone()),
             Transform::from_xyz(0.0, GROUND_Y, 0.0),
             OutdoorScenery,
             Name::new("Opaque Procedural Ground"),
@@ -434,51 +448,25 @@ fn decoration_kind_for_biome(biome: usize, roll: usize) -> DecorationKind {
 }
 
 fn biome_index(world_seed: u64, chapter: ChapterId, coord: ChunkCoord) -> usize {
+    biome_value(world_seed, chapter, coord.x as f32, coord.z as f32)
+        .floor()
+        .clamp(0.0, 3.0) as usize
+}
+
+/// Continuous biome field in chunk units (`0..4`); integer chunk coordinates
+/// give the value that picks that chunk's decorations.
+fn biome_value(world_seed: u64, chapter: ChapterId, x: f32, z: f32) -> f32 {
     let chapter_salt: u64 = match chapter {
         ChapterId::AshenReliquary => 0x4153_4845_4E5F_4249,
         ChapterId::HollowBastion => 0x484F_4C4C_4F57_4249,
     };
-    let x = coord.x as f32;
-    let z = coord.z as f32;
     let broad = value_noise(world_seed ^ chapter_salt, x / 4.8, z / 4.8);
     let detail = value_noise(
         world_seed ^ chapter_salt.rotate_left(23),
         (x + 19.0) / 2.35,
         (z - 31.0) / 2.35,
     );
-    ((broad * 0.72 + detail * 0.28) * 4.0)
-        .floor()
-        .clamp(0.0, 3.0) as usize
-}
-
-fn value_noise(seed: u64, x: f32, z: f32) -> f32 {
-    let x_floor = x.floor();
-    let z_floor = z.floor();
-    let x0 = x_floor as i64;
-    let z0 = z_floor as i64;
-    let tx = smoothstep(x - x_floor);
-    let tz = smoothstep(z - z_floor);
-    let n00 = lattice_value(seed, x0, z0);
-    let n10 = lattice_value(seed, x0 + 1, z0);
-    let n01 = lattice_value(seed, x0, z0 + 1);
-    let n11 = lattice_value(seed, x0 + 1, z0 + 1);
-    let north = n00 + (n10 - n00) * tx;
-    let south = n01 + (n11 - n01) * tx;
-    north + (south - north) * tz
-}
-
-fn lattice_value(seed: u64, x: i64, z: i64) -> f32 {
-    let hash = SplitMix64::mix(
-        seed ^ (x as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
-            ^ (z as u64)
-                .rotate_left(32)
-                .wrapping_mul(0xA5A3_564E_27F8_864D),
-    );
-    ((hash >> 40) as f32) * (1.0 / 16_777_216.0)
-}
-
-fn smoothstep(value: f32) -> f32 {
-    value * value * (3.0 - 2.0 * value)
+    (broad * 0.72 + detail * 0.28) * 4.0
 }
 
 fn is_story_clearance(chapter: ChapterId, point: Vec2) -> bool {
@@ -556,10 +544,8 @@ impl SplitMix64 {
         Self { state: seed }
     }
 
-    fn mix(mut value: u64) -> u64 {
-        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        value ^ (value >> 31)
+    fn mix(value: u64) -> u64 {
+        terrain::mix(value)
     }
 
     fn next_u64(&mut self) -> u64 {

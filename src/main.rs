@@ -25,6 +25,7 @@ mod rift;
 mod save;
 mod story;
 mod story_content;
+mod terrain;
 mod ui;
 
 use assets::GameAssetsPlugin;

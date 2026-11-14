@@ -11,8 +11,8 @@ use crate::{
         Barrier, ElixirBuff, Equipment, Evade, FortuneBuff, Fury, Health, Player, PotionBelt,
         apply_player_damage_with_evade, fortune_gold_reward, mitigated_damage, total_armor,
     },
+    terrain,
 };
-use bevy::math::Affine2;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -412,23 +412,30 @@ fn spawn_dungeon(
         ChapterId::HollowBastion => (Color::srgb(0.66, 0.84, 0.88), Color::srgb(0.76, 0.88, 0.92)),
     };
 
-    let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let clearing_mesh = meshes.add(Cylinder::new(1.0, 1.0));
+    // Clearings and roads are cutout overlays on the ground: vertex alpha runs
+    // to zero along a ragged edge and the mask discards it. (The WebGPU build
+    // has no alpha-blended PBR pipeline.)
     let highland_material = materials.add(StandardMaterial {
         base_color: highland_color,
         base_color_texture: Some(highland_texture),
-        uv_transform: Affine2::from_scale(Vec2::splat(3.6)),
         perceptual_roughness: 0.94,
+        alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
     let road_material = materials.add(StandardMaterial {
         base_color: road_color,
         base_color_texture: Some(road_texture),
-        uv_transform: Affine2::from_scale(Vec2::new(3.0, 10.0)),
         perceptual_roughness: 0.91,
+        alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
+    let overlay_origin = layout.camp;
+    let overlay_seed = match chapter {
+        ChapterId::AshenReliquary => 0x4153_4845,
+        ChapterId::HollowBastion => 0x484F_4C4C,
+    };
 
+    let mut clearings = terrain::SurfaceBuffers::default();
     for (index, (position, radius)) in [
         (layout.camp, Vec2::new(12.0, 9.0)),
         (layout.cache, Vec2::new(10.0, 8.0)),
@@ -439,18 +446,27 @@ fn spawn_dungeon(
     .into_iter()
     .enumerate()
     {
-        commands.spawn((
-            Mesh3d(clearing_mesh.clone()),
-            MeshMaterial3d(highland_material.clone()),
-            Transform::from_xyz(position.x, -0.035 - index as f32 * 0.001, position.z)
-                .with_scale(Vec3::new(radius.x, 0.08, radius.y)),
-            DungeonEntity,
-            Name::new("Outdoor Landmark Clearing"),
-        ));
+        terrain::append_clearing(
+            &mut clearings,
+            overlay_origin,
+            position,
+            // The rim fades out, so the solid part matches the old disc.
+            radius * 1.25,
+            overlay_seed + index as u64,
+        );
     }
+    commands.spawn((
+        Mesh3d(meshes.add(clearings.into_mesh())),
+        MeshMaterial3d(highland_material),
+        Transform::from_xyz(overlay_origin.x, CLEARING_Y, overlay_origin.z),
+        bevy::light::NotShadowCaster,
+        DungeonEntity,
+        Name::new("Outdoor Landmark Clearings"),
+    ));
 
     let gate_approach = chapter_world_position(chapter, Vec3::new(0.0, 0.0, -7.5));
     let fortune_position = chapter_world_position(chapter, Vec3::new(8.6, 0.0, -5.8));
+    let mut roads = terrain::SurfaceBuffers::default();
     for (index, (from, to, width)) in [
         (layout.player_spawn, layout.camp, 4.8),
         (layout.camp, layout.weapon_shrine, 4.4),
@@ -463,16 +479,23 @@ fn spawn_dungeon(
     .into_iter()
     .enumerate()
     {
-        spawn_outdoor_road(
-            &mut commands,
-            &unit_cube,
-            &road_material,
+        terrain::append_road(
+            &mut roads,
+            overlay_origin,
             from,
             to,
             width,
-            index,
+            overlay_seed ^ (index as u64 + 1).wrapping_mul(0x9E37_79B9),
         );
     }
+    commands.spawn((
+        Mesh3d(meshes.add(roads.into_mesh())),
+        MeshMaterial3d(road_material),
+        Transform::from_xyz(overlay_origin.x, ROAD_Y, overlay_origin.z),
+        bevy::light::NotShadowCaster,
+        DungeonEntity,
+        Name::new("Weathered Outdoor Roads"),
+    ));
 
     // Carved seal pillars share the gate's lifetime and gameplay boundary.
     let gate_emissive = match chapter {
@@ -718,31 +741,9 @@ fn spawn_dungeon(
     );
 }
 
-fn spawn_outdoor_road(
-    commands: &mut Commands,
-    mesh: &Handle<Mesh>,
-    material: &Handle<StandardMaterial>,
-    from: Vec3,
-    to: Vec3,
-    width: f32,
-    index: usize,
-) {
-    let delta = to - from;
-    let length = Vec2::new(delta.x, delta.z).length();
-    if length <= f32::EPSILON {
-        return;
-    }
-    let yaw = delta.x.atan2(delta.z);
-    commands.spawn((
-        Mesh3d(mesh.clone()),
-        MeshMaterial3d(material.clone()),
-        Transform::from_translation((from + to) * 0.5 + Vec3::Y * 0.015)
-            .with_rotation(Quat::from_rotation_y(yaw))
-            .with_scale(Vec3::new(width, 0.07, length)),
-        DungeonEntity,
-        Name::new(format!("Weathered Outdoor Road {index}")),
-    ));
-}
+/// Overlay heights: above the ground surface, below the heroes' feet.
+const CLEARING_Y: f32 = -0.012;
+const ROAD_Y: f32 = 0.004;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
