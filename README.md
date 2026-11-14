@@ -28,7 +28,7 @@ Right-click moves; left-click attacks. The interface defaults to Simplified Chin
 
 Combat feel is tuned around input response, attack phases, actor-local contact pauses, material-specific sound and bounded input forgiveness. Implementation and current validation evidence are tracked in [Combat Feel](docs/COMBAT_FEEL.md). Five dark-fantasy PixelFX animations accompany sword attacks, heavy impacts, fireballs, frost nova and spirit appearances. [Asset generation and verification](docs/PIXELFX.md).
 
-All 907 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
+All 908 unit and integration tests pass. Native recordings cover the 21 original skill variants and 17 Soulbinder scenarios; see [the handoff](docs/CLAUDE_HANDOFF.md) for evidence and remaining work.
 
 ## Running
 

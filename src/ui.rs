@@ -5557,16 +5557,24 @@ fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(116.0),
+                    // Below the story panel (top 46, wraps to ~3 lines) so
+                    // the banner never prints across it.
+                    top: Val::Px(148.0),
                     left: Val::Px(0.0),
                     width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
                     ..default()
                 },
                 Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(24.0),
                     ..default()
+                },
+                // The node spans the window, so the text itself must be
+                // centred; otherwise it hugs the left screen edge.
+                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+                TextShadow {
+                    offset: Vec2::new(1.5, 2.0),
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.85),
                 },
                 TextColor(Color::srgb(1.0, 0.76, 0.28)),
                 ChapterBannerText,

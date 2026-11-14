@@ -92,6 +92,7 @@ use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
 use bevy::render::settings::{
     Backends, InstanceFlags, RenderCreation, WgpuSettings, WgpuSettingsPriority,
 };
+use bevy::render::view::{ColorGrading, ColorGradingGlobal};
 use bevy::settings::{
     ReflectSettingsGroup, SaveSettingsDeferred, SaveSettingsSync, SettingsGroup, SettingsPlugin,
 };
@@ -1519,8 +1520,10 @@ fn setup_camera_and_light(
     #[cfg(feature = "dev_tools")] free_camera: Res<DebugFreeCamera>,
 ) {
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.16, 0.12, 0.20),
-        brightness: 90.0,
+        // Cool, dim fill: shadows fall toward blue-black so the hero's warm
+        // torch pool carries the frame instead of a flat brown wash.
+        color: Color::srgb(0.10, 0.12, 0.20),
+        brightness: 72.0,
         affects_lightmapped_meshes: true,
     });
 
@@ -1562,17 +1565,18 @@ fn setup_camera_and_light(
     ));
     camera.insert((
         DistanceFog {
-            color: Color::srgba(0.05, 0.035, 0.075, 0.62),
-            directional_light_color: Color::srgba(0.72, 0.34, 0.18, 0.24),
+            color: Color::srgba(0.020, 0.022, 0.040, 0.78),
+            directional_light_color: Color::srgba(0.42, 0.50, 0.78, 0.20),
             directional_light_exponent: 28.0,
             falloff: FogFalloff::Linear {
-                start: 24.0,
-                end: 104.0,
+                start: 28.0,
+                end: 90.0,
             },
         },
         open_arpg_depth_of_field(),
         open_arpg_vignette(),
         open_arpg_chromatic_aberration(),
+        open_arpg_color_grading(),
     ));
     // Volumetric fog renders a solid black frame on WebGPU (bisected via
     // headless Chrome); the web build keeps distance fog only.
@@ -1590,7 +1594,8 @@ fn setup_camera_and_light(
 
     commands.spawn((
         DirectionalLight {
-            illuminance: 9_000.0,
+            color: Color::srgb(0.62, 0.72, 1.0),
+            illuminance: 6_400.0,
             shadow_maps_enabled: true,
             contact_shadows_enabled: true,
             // PCSS is native-only (its WGSL breaks on WebGPU); the field only
@@ -1606,20 +1611,23 @@ fn setup_camera_and_light(
 
     commands.spawn((
         PointLight {
-            intensity: 900.0,
-            range: 18.0,
+            // Lumens: ~7k lux under the hero, fading to moonlight by ~12 m.
+            intensity: 4_200_000.0,
+            range: 20.0,
             radius: 1.1,
-            color: Color::srgb(1.0, 0.42, 0.16),
+            color: Color::srgb(1.0, 0.70, 0.44),
             shadow_maps_enabled: true,
             contact_shadows_enabled: true,
             #[cfg(feature = "native")]
             soft_shadows_enabled: true,
             ..default()
         },
-        VolumetricLight,
-        Transform::from_xyz(0.0, 4.0, -3.0),
+        // Not a VolumetricLight: at this intensity the native fog volume
+        // scatters it into a glowing orb hanging beside the hero.
+        // Camera-side of the hero so the faces the player sees are lit.
+        Transform::from_xyz(-1.6, 4.6, 2.4),
         OpenWorldEnvironmentFollower {
-            offset: Vec3::new(0.0, 4.0, -3.0),
+            offset: Vec3::new(-1.6, 4.6, 2.4),
         },
         Name::new("Infernal Fill Light"),
     ));
@@ -1693,13 +1701,25 @@ fn open_arpg_depth_of_field() -> DepthOfField {
 
 fn open_arpg_vignette() -> Vignette {
     Vignette {
-        intensity: 0.32,
-        radius: 0.92,
-        smoothness: 3.4,
+        intensity: 0.52,
+        radius: 0.84,
+        smoothness: 2.6,
         roundness: 0.88,
         color: Color::srgb(0.025, 0.012, 0.035),
         edge_compensation: 0.82,
         center: Vec2::new(0.5, 0.53),
+    }
+}
+
+fn open_arpg_color_grading() -> ColorGrading {
+    // Section contrast pivots in scene-linear space and crushes this dim
+    // scene to black, so the grade only enriches colour after tonemapping.
+    ColorGrading {
+        global: ColorGradingGlobal {
+            post_saturation: 1.14,
+            ..default()
+        },
+        ..default()
     }
 }
 
@@ -2895,9 +2915,17 @@ mod tests {
         assert!(depth.max_circle_of_confusion_diameter <= 10.0);
 
         let vignette = open_arpg_vignette();
-        assert!((0.25..=0.4).contains(&vignette.intensity));
-        assert!(vignette.radius >= 0.9);
+        // Strong enough to frame the hero's torch pool, never a tunnel.
+        assert!((0.45..=0.6).contains(&vignette.intensity));
+        assert!(vignette.radius >= 0.8);
         assert_eq!(vignette.center, Vec2::new(0.5, 0.53));
+
+        // Scene-linear section contrast crushed the dim world to black; the
+        // grade may only adjust colour after tonemapping.
+        let grading = open_arpg_color_grading();
+        assert!((1.0..=1.25).contains(&grading.global.post_saturation));
+        assert_eq!(grading.shadows, ColorGrading::default().shadows);
+        assert_eq!(grading.midtones, ColorGrading::default().midtones);
 
         let chromatic = open_arpg_chromatic_aberration();
         assert!(chromatic.intensity > 0.0);

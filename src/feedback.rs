@@ -362,9 +362,14 @@ type EnemyBarQuery<'w, 's> = Query<
         &'static Health,
         &'static Enemy,
         &'static EnemyHealthBar,
+        &'static Transform,
         Option<&'static Chilled>,
         Option<&'static Staggered>,
         Option<&'static BossPhase>,
+    ),
+    (
+        Without<EnemyHealthBarFill>,
+        Without<EnemyHealthBarBackground>,
     ),
 >;
 
@@ -389,11 +394,22 @@ type EnemyBarFillQuery<'w, 's> = Query<
 type EnemyBarBackgroundQuery<'w, 's> = Query<
     'w,
     's,
-    &'static mut Visibility,
+    (&'static mut Transform, &'static mut Visibility),
     (
         With<EnemyHealthBarBackground>,
         Without<EnemyHealthBarFill>,
         Without<EnemyNameplate>,
+    ),
+>;
+
+type EnemyBarCameraQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static Transform,
+    (
+        With<Camera3d>,
+        Without<EnemyHealthBarFill>,
+        Without<EnemyHealthBarBackground>,
     ),
 >;
 
@@ -1731,14 +1747,26 @@ fn enemy_bar_fill_thickness_scale(ratio: f32, enemy: &Enemy, staggered: Option<&
     low_health * priority * stagger
 }
 
+/// Local rotation that keeps an enemy's health bar level on screen: the bar
+/// follows the camera's yaw instead of spinning with the enemy's facing, so
+/// it never reads as a slanted or edge-on sliver.
+fn enemy_bar_local_rotation(enemy_rotation: Quat, camera_rotation: Quat) -> Quat {
+    let camera_right = camera_rotation * Vec3::X;
+    let camera_yaw = (-camera_right.z).atan2(camera_right.x);
+    enemy_rotation.inverse() * Quat::from_rotation_y(camera_yaw)
+}
+
 fn update_enemy_health_bars(
     mut materials: ResMut<Assets<StandardMaterial>>,
     hover: Res<EnemyHoverTarget>,
     enemies: EnemyBarQuery,
     mut fills: EnemyBarFillQuery,
     mut backgrounds: EnemyBarBackgroundQuery,
+    camera: EnemyBarCameraQuery,
 ) {
-    for (entity, health, enemy, bar, chilled, staggered, boss_phase) in &enemies {
+    let camera_rotation = camera.single().map_or(Quat::IDENTITY, |t| t.rotation);
+    for (entity, health, enemy, bar, enemy_transform, chilled, staggered, boss_phase) in &enemies {
+        let bar_rotation = enemy_bar_local_rotation(enemy_transform.rotation, camera_rotation);
         let Ok((mut fill_transform, material, mut fill_visibility)) = fills.get_mut(bar.fill)
         else {
             continue;
@@ -1755,9 +1783,17 @@ fn update_enemy_health_bars(
         .visibility();
         fill_transform.scale.x = bar.base_width * ratio;
         fill_transform.scale.y = enemy_bar_fill_thickness_scale(ratio, enemy, staggered);
-        fill_transform.translation.x = -0.43 * bar.base_width * (1.0 - ratio);
+        // The fill drains toward the bar's left edge, measured along the
+        // camera-facing bar axis rather than the enemy's own facing.
+        let drain = bar_rotation * Vec3::X * (-0.43 * bar.base_width * (1.0 - ratio));
+        fill_transform.translation.x = drain.x;
+        fill_transform.translation.z = drain.z;
+        fill_transform.rotation = bar_rotation;
         *fill_visibility = visibility;
-        if let Ok(mut background_visibility) = backgrounds.get_mut(bar.background) {
+        if let Ok((mut background_transform, mut background_visibility)) =
+            backgrounds.get_mut(bar.background)
+        {
+            background_transform.rotation = bar_rotation;
             *background_visibility = visibility;
         }
         let color = enemy_health_fill_color(ratio, enemy, chilled, staggered, boss_phase);
@@ -3688,6 +3724,21 @@ mod tests {
 
         assert_eq!(summary, "react: save Shift, leave circle, strafe beam");
         assert!(!summary.contains("move out"));
+    }
+
+    #[test]
+    fn enemy_health_bar_stays_level_with_the_camera_for_any_enemy_facing() {
+        let camera_rotation = Transform::from_xyz(-9.0, 12.0, 13.0)
+            .looking_at(Vec3::ZERO, Vec3::Y)
+            .rotation;
+        let camera_right = camera_rotation * Vec3::X;
+        for enemy_yaw in [0.0, 0.7, 2.4, -1.9] {
+            let enemy_rotation = Quat::from_rotation_y(enemy_yaw);
+            let world_bar_axis = enemy_rotation
+                * enemy_bar_local_rotation(enemy_rotation, camera_rotation)
+                * Vec3::X;
+            assert!(world_bar_axis.dot(camera_right) > 0.999, "yaw {enemy_yaw}");
+        }
     }
 
     #[test]

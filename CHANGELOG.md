@@ -1,5 +1,9 @@
 # Changelog
 
+- Relight the world around a warm torch pool on the hero with cool moonlit falloff, a stronger vignette and richer colour; keep enemy health bars level with the camera instead of rotating with each enemy; centre the chapter banner below the story panel.
+
+- Stop the web build from requesting a missing `.meta` file for every asset, which logged 153 console errors on each load.
+
 - Add dark-fantasy PixelFX flipbooks for sword swings, heavy impacts, fireballs, frost nova and spirit appearances, synchronized with live attacks and summon rebirth.
 
 - Make combat contact pauses local to the actors, sharpen attack recovery and dodge response, remove empty-cast camera shake, and layer material impacts with restrained audio variation.
