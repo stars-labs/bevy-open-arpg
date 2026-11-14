@@ -1,11 +1,21 @@
 //! Keep the authored enemy visible through its fall instead of replacing it with a primitive.
-use crate::{GameState, enemy::Enemy, not_paused, player::Health};
+use crate::{
+    GameState,
+    chapter::{ActiveChapter, ChapterId},
+    enemy::Enemy,
+    not_paused,
+    player::Health,
+};
 use bevy::prelude::*;
 
 const FALL_SECONDS: f32 = 0.48;
 const REST_SECONDS: f32 = 3.0;
 const SINK_SECONDS: f32 = 1.2;
 const CORPSE_SECONDS: f32 = FALL_SECONDS + REST_SECONDS + SINK_SECONDS;
+/// Motes released as the body drops, then again as the ground reclaims it.
+const FALL_MOTES: u32 = 6;
+const SINK_MOTES: u32 = 12;
+const GOLDEN_ANGLE: f32 = 2.399_963;
 
 /// Runtime UI and affix decorations must not remain attached to a fallen body.
 #[derive(Component)]
@@ -15,6 +25,24 @@ pub(crate) struct DeathDecoration;
 struct FallenEnemy {
     timer: Timer,
     initial: Transform,
+    /// How many of the two mote bursts have been released.
+    bursts: u8,
+}
+
+/// A small glowing ember that rises from a body and shrinks to nothing.
+#[derive(Component, Debug, Clone, Copy)]
+struct DeathMote {
+    origin: Vec3,
+    drift: Vec3,
+    age: f32,
+    life: f32,
+    size: f32,
+}
+
+#[derive(Resource)]
+struct DeathMoteAssets {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
 }
 
 pub(crate) struct EnemyDeathPlugin;
@@ -23,8 +51,15 @@ impl Plugin for EnemyDeathPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            animate_fallen_enemies.run_if(in_state(GameState::InGame).and_then(not_paused)),
+            (
+                animate_fallen_enemies,
+                release_death_motes,
+                animate_death_motes,
+            )
+                .chain()
+                .run_if(in_state(GameState::InGame).and_then(not_paused)),
         )
+        .add_systems(OnEnter(GameState::InGame), setup_death_motes)
         .add_systems(OnExit(GameState::InGame), cleanup_fallen_enemies);
     }
 }
@@ -58,8 +93,113 @@ pub(crate) fn begin_enemy_death(commands: &mut Commands, entity: Entity, initial
             .insert(FallenEnemy {
                 timer: Timer::from_seconds(CORPSE_SECONDS, TimerMode::Once),
                 initial,
+                bursts: 0,
             });
     });
+}
+
+fn setup_death_motes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    chapter: Res<ActiveChapter>,
+) {
+    // Emissive well above 1.0 so the bloom pass turns each mote into a spark.
+    let glow = match chapter.0 {
+        ChapterId::AshenReliquary => LinearRgba::rgb(7.0, 2.2, 0.5),
+        ChapterId::HollowBastion => LinearRgba::rgb(0.7, 4.2, 6.0),
+    };
+    commands.insert_resource(DeathMoteAssets {
+        mesh: meshes.add(Sphere::new(0.5).mesh().ico(1).expect("valid icosphere")),
+        material: materials.add(StandardMaterial {
+            base_color: Color::BLACK,
+            emissive: glow,
+            perceptual_roughness: 1.0,
+            ..default()
+        }),
+    });
+}
+
+/// Burst `burst` (0 = falling, 1 = sinking) for a body at `origin`. Positions
+/// come from the body's own coordinates, so a replay shows the same embers.
+fn death_motes(origin: Vec3, burst: u8) -> impl Iterator<Item = DeathMote> {
+    let count = if burst == 0 { FALL_MOTES } else { SINK_MOTES };
+    let phase = origin.x * 1.7 + origin.z * 2.3 + burst as f32;
+    (0..count).map(move |index| {
+        let step = index as f32 / count as f32;
+        let angle = phase + index as f32 * GOLDEN_ANGLE;
+        let ring = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let (spread, rise, life) = if burst == 0 {
+            (0.35 + 0.35 * step, 0.9 + 0.5 * step, 0.55 + 0.25 * step)
+        } else {
+            (0.25 + 0.55 * step, 1.3 + 0.9 * step, 0.9 + 0.5 * step)
+        };
+        DeathMote {
+            origin: origin + ring * spread * 0.6 + Vec3::Y * 0.25,
+            drift: ring * spread * 0.5 + Vec3::Y * rise,
+            // Staggered starts read as a stream rather than a single pop.
+            age: -step * if burst == 0 { 0.12 } else { 0.7 },
+            life,
+            size: 0.07 + 0.05 * ((index * 7) % 5) as f32 / 4.0,
+        }
+    })
+}
+
+/// Position and scale over a mote's life: it eases upward and swells briefly
+/// before shrinking away. Opaque geometry, so nothing ever flashes the screen.
+fn mote_pose(mote: &DeathMote) -> (Vec3, f32) {
+    let progress = (mote.age / mote.life).clamp(0.0, 1.0);
+    let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+    let envelope = (progress * 6.0).min(1.0) * (1.0 - progress);
+    (mote.origin + mote.drift * eased, mote.size * envelope)
+}
+
+fn release_death_motes(
+    mut commands: Commands,
+    assets: Option<Res<DeathMoteAssets>>,
+    mut enemies: Query<&mut FallenEnemy>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    for mut corpse in &mut enemies {
+        let elapsed = corpse.timer.elapsed_secs();
+        let due = if elapsed >= FALL_SECONDS + REST_SECONDS {
+            2
+        } else {
+            1
+        };
+        while corpse.bursts < due {
+            for mote in death_motes(corpse.initial.translation, corpse.bursts) {
+                commands.spawn((
+                    Mesh3d(assets.mesh.clone()),
+                    MeshMaterial3d(assets.material.clone()),
+                    Transform::from_translation(mote.origin).with_scale(Vec3::ZERO),
+                    bevy::light::NotShadowCaster,
+                    mote,
+                    Name::new("Death Ember"),
+                ));
+            }
+            corpse.bursts += 1;
+        }
+    }
+}
+
+fn animate_death_motes(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut motes: Query<(Entity, &mut DeathMote, &mut Transform)>,
+) {
+    for (entity, mut mote, mut transform) in &mut motes {
+        mote.age += time.delta_secs();
+        if mote.age >= mote.life {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+        let (position, scale) = mote_pose(&mote);
+        transform.translation = position;
+        transform.scale = Vec3::splat(scale);
+    }
 }
 
 fn corpse_pose(initial: Transform, elapsed: f32) -> Transform {
@@ -91,8 +231,12 @@ fn animate_fallen_enemies(
     }
 }
 
-fn cleanup_fallen_enemies(mut commands: Commands, enemies: Query<Entity, With<FallenEnemy>>) {
-    for entity in &enemies {
+fn cleanup_fallen_enemies(
+    mut commands: Commands,
+    enemies: Query<Entity, With<FallenEnemy>>,
+    motes: Query<Entity, With<DeathMote>>,
+) {
+    for entity in enemies.iter().chain(&motes) {
         commands.entity(entity).try_despawn();
     }
 }
@@ -179,6 +323,7 @@ mod tests {
                 FallenEnemy {
                     timer: Timer::from_seconds(CORPSE_SECONDS, TimerMode::Once),
                     initial: Transform::IDENTITY,
+                    bursts: 0,
                 },
             ))
             .id();
@@ -189,5 +334,70 @@ mod tests {
         app.update();
         assert!(app.world().get_entity(corpse).is_err());
         assert!(app.world().get_entity(child).is_err());
+    }
+
+    #[test]
+    fn death_motes_rise_from_the_body_and_end_at_zero_size() {
+        let origin = Vec3::new(3.0, 0.0, -2.0);
+        for burst in [0, 1] {
+            let motes: Vec<_> = death_motes(origin, burst).collect();
+            assert_eq!(
+                motes.len() as u32,
+                if burst == 0 { FALL_MOTES } else { SINK_MOTES }
+            );
+            for mut mote in motes {
+                assert!(mote.origin.distance(origin) < 1.0);
+                mote.age = 0.0;
+                assert_eq!(mote_pose(&mote).1, 0.0);
+                mote.age = mote.life * 0.4;
+                let (mid, size) = mote_pose(&mote);
+                assert!(size > 0.0 && size <= mote.size);
+                mote.age = mote.life;
+                let (end, size) = mote_pose(&mote);
+                assert_eq!(size, 0.0);
+                assert!(end.y > mid.y && mid.y > mote.origin.y);
+            }
+        }
+        // The same body always sheds the same embers.
+        let first: Vec<_> = death_motes(origin, 1).map(|mote| mote.drift).collect();
+        let second: Vec<_> = death_motes(origin, 1).map(|mote| mote.drift).collect();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn each_body_releases_one_burst_falling_and_one_sinking() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .insert_resource(DeathMoteAssets {
+                mesh: Handle::default(),
+                material: Handle::default(),
+            })
+            .add_systems(
+                Update,
+                (animate_fallen_enemies, release_death_motes).chain(),
+            );
+        app.world_mut().spawn((
+            Transform::IDENTITY,
+            FallenEnemy {
+                timer: Timer::from_seconds(CORPSE_SECONDS, TimerMode::Once),
+                initial: Transform::IDENTITY,
+                bursts: 0,
+            },
+        ));
+        let count = |app: &mut App| {
+            app.world_mut()
+                .query::<&DeathMote>()
+                .iter(app.world())
+                .count() as u32
+        };
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), FALL_MOTES);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(FALL_SECONDS + REST_SECONDS + 0.05));
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), FALL_MOTES + SINK_MOTES);
     }
 }
