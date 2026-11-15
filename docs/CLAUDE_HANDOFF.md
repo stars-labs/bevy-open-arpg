@@ -1,6 +1,6 @@
 # Claude Code 交接：Bevy Open ARPG
 
-更新时间：2026-11-13。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
+更新时间：2026-11-15。仓库：`/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg`。
 
 ## 本轮战斗手感（2026-11-05）
 
@@ -12,7 +12,17 @@ Web 发布包（build id `650dfec4ca379a67`）已在无头 Chrome 156 / AMD WebG
 
 画面：主角身边改为暖色火光池，环境光与月光转冷转暗，暗角加强，后期只做色彩饱和（分段对比度会把暗场景压成全黑，已由测试禁止）。主角补光不再是体积光，否则原生雾中会出现悬浮光球。敌人血条随相机偏航保持水平。章节横幅居中并移到剧情面板下方。前后对比在 `target/validation/polish/`（`compare-*.png`）。908项测试、严格Clippy、原生与wasm检查、第二章120帧冒烟通过；未推送或部署。
 
-仍然薄弱：地面只有一张平铺贴图，道路是硬边色块；844×390 等矮视口下右侧工具栏与小地图重叠。
+当时薄弱的两项（地面平铺与道路硬边、844×390 下工具栏与小地图重叠）已在第二轮处理，见下一节。
+
+## 第二轮：浏览器遥测、移动端 HUD 与地表（2026-11-15）
+
+验证夹具改由独立的 `combat_review` 特性控制（`dev_tools` 包含它），Web 验证包用 `WEB_REVIEW=1 bash scripts/build_web.sh` 构建并从 `?review=<case>` 读取场景；正式 Web 包不含它。浏览器中四档命中的事件载荷、Q/E/R、四个职业和接触音输出电平的结果与未验证项见 [COMBAT_FEEL.md](COMBAT_FEEL.md) 的“浏览器验收第二轮”。
+
+HUD 由 `HudViewport` 统一区分桌面/横屏/竖屏；技能格和道具格可点击。触屏移动与普攻未实现。
+
+地表：`src/terrain.rs` 生成逐顶点着色的地块（相邻地块取同一连续噪声场，不再是四种纯色方块）以及轮廓不规则的道路、空地覆盖网格。**不要用 `AlphaMode::Blend` 或带顶点透明度的 `AlphaMode::Mask`**：前者在 WebGPU 包里没有管线（`tests/asset_manifest.rs` 有守卫），后者的深度预通道不读顶点色，会在道路边缘留下黑带。敌人倒地和下沉时各释放一组自发光余烬。后处理（HDR、TonyMcMapface、Bloom、SMAA、SSAO、雾、暗角）本轮未改。922 项测试通过。
+
+多个代理共用 `~/.cargo/bin` 时 `wasm-bindgen` 版本会被互相覆盖；本轮把 0.2.126 装在 `target/r2/tools/` 并放到 PATH 最前。
 
 ## 当前实现与边界
 
@@ -99,7 +109,7 @@ Web 发布包（build id `650dfec4ca379a67`）已在无头 Chrome 156 / AMD WebG
 | `tools/ui/capture_soulbinder.py` | 召唤职业真实键鼠输入、录像与遥测断言 |
 | `tools/ui/capture_combat_growth.py`、`verify_combat_growth.py` | 技能/成长场景与逐帧断言 |
 
-验证准备场景仅用于 native + `dev_tools`，正常运行不设置 `BEVY_OPEN_ARPG_COMBAT_REVIEW`。不要把固定验证装备、敌人生命或关闭暴击的设置带入正常玩法。
+验证准备场景仅在启用 `combat_review` 特性时编译（原生 `dev_tools` 或 Web 验证包），正常运行不设置 `BEVY_OPEN_ARPG_COMBAT_REVIEW`，正式 Web 包不含该特性。不要把固定验证装备、敌人生命或关闭暴击的设置带入正常玩法。
 
 ## 继续工作的优先顺序
 
