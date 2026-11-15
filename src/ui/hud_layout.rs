@@ -97,11 +97,17 @@ pub(super) fn console_top(viewport: HudViewport, viewport_width: f32) -> f32 {
 }
 
 /// Tapping a skill or utility slot presses its key, so the console is usable
-/// without a keyboard. Runs before gameplay reads the keyboard this frame.
+/// without a keyboard. Runs before gameplay reads input this frame.
+///
+/// Slots are deliberately not `Button`s: hovering a button sets
+/// `UiPointerCapture`, which suspends all combat input, and a cursor resting on
+/// the skill bar must not swallow Q/E/R. Instead the click that pressed the
+/// slot is withdrawn from the mouse so it cannot also start a basic attack.
 pub(super) fn press_console_slots(
     slots: Query<(Ref<Interaction>, &SkillSlotFrame)>,
     utilities: Query<(Ref<Interaction>, &UtilitySlot)>,
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut held: Local<Vec<KeyCode>>,
 ) {
     for key in held.drain(..) {
@@ -122,6 +128,9 @@ pub(super) fn press_console_slots(
     for key in skills.chain(items) {
         keyboard.press(key);
         held.push(key);
+    }
+    if !held.is_empty() {
+        mouse.reset(MouseButton::Left);
     }
 }
 
@@ -239,7 +248,7 @@ pub(super) fn spawn_bottom_hud(parent: &mut ChildSpawnerCommands, asset_server: 
                             BorderColor::all(Color::srgba(0.92, 0.74, 0.42, 0.62)),
                             BackgroundColor(Color::srgba(0.055, 0.047, 0.058, 0.92)),
                             slot_frame_image_node(asset_server),
-                            Button,
+                            Interaction::default(),
                             SkillSlotFrame(slot),
                         ))
                         .with_children(|slot_node| {
@@ -737,7 +746,7 @@ fn spawn_status_strip(parent: &mut ChildSpawnerCommands, assets: &AssetServer) {
             ] {
                 strip
                     .spawn((
-                        Button,
+                        Interaction::default(),
                         UtilityHover,
                         UtilitySlot(slot),
                         Node {
