@@ -412,21 +412,18 @@ fn spawn_dungeon(
         ChapterId::HollowBastion => (Color::srgb(0.66, 0.84, 0.88), Color::srgb(0.76, 0.88, 0.92)),
     };
 
-    // Clearings and roads are cutout overlays on the ground: vertex alpha runs
-    // to zero along a ragged edge and the mask discards it. (The WebGPU build
-    // has no alpha-blended PBR pipeline.)
+    // Clearings and roads are opaque overlays just above the ground; their
+    // irregular outline is in the mesh itself (see `terrain`).
     let highland_material = materials.add(StandardMaterial {
         base_color: highland_color,
         base_color_texture: Some(highland_texture),
         perceptual_roughness: 0.94,
-        alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
     let road_material = materials.add(StandardMaterial {
         base_color: road_color,
         base_color_texture: Some(road_texture),
         perceptual_roughness: 0.91,
-        alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
     let overlay_origin = layout.camp;
@@ -450,8 +447,7 @@ fn spawn_dungeon(
             &mut clearings,
             overlay_origin,
             position,
-            // The rim fades out, so the solid part matches the old disc.
-            radius * 1.25,
+            radius,
             overlay_seed + index as u64,
         );
     }

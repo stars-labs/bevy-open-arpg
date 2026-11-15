@@ -3,9 +3,10 @@
 //! Everything here is plain mesh data so the same look ships on native and
 //! WebGPU without a custom shader. Vertex colors carry the variation: chunks
 //! sample one continuous world-space field (no seams between tiles), roads and
-//! clearings darken toward a ragged alpha-masked edge. Alpha *blending* is not
-//! available: the WebGPU build has no transparent PBR pipeline, so the edge is
-//! a cutout whose outline wanders at two scales instead of a straight block.
+//! clearings are opaque overlays whose outline wanders at two scales instead
+//! of running straight. No alpha: the WebGPU build has no transparent PBR
+//! pipeline, and alpha-masked vertex colors are ignored by the depth prepass,
+//! which leaves black bands where the mask discards.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -20,8 +21,6 @@ pub const GROUND_TEXTURE_SPAN: f32 = 4.0;
 const ROAD_TEXTURE_SPAN: f32 = 3.2;
 const CLEARING_TEXTURE_SPAN: f32 = 6.5;
 const ROAD_ROW_SPACING: f32 = 0.5;
-/// Width of the masked band outside the paved core.
-pub const ROAD_FEATHER: f32 = 0.8;
 /// Width of the darkening band just inside the edge.
 const ROAD_SHOULDER: f32 = 0.9;
 /// Slow meander plus stone-to-stone raggedness of the edge line.
@@ -30,7 +29,7 @@ const ROAD_EDGE_CHIP: f32 = 0.30;
 /// Brightness at the edge: a little dirt over the outermost stones. Much darker
 /// reads as a black outline around the road.
 const EDGE_SHADE: f32 = 0.84;
-const CLEARING_SEGMENTS: usize = 48;
+const CLEARING_SEGMENTS: usize = 96;
 
 #[derive(Default)]
 pub struct SurfaceBuffers {
@@ -147,10 +146,11 @@ pub fn ground_chunk_mesh(center: Vec2, size: f32, color: impl Fn(Vec2) -> [f32; 
     surface.into_mesh()
 }
 
-/// Appends a road ribbon from `from` to `to`. The paved core is `width` wide;
-/// both edges wander, darken, and drop to zero alpha over [`ROAD_FEATHER`], and
-/// each end is a faded cap so consecutive ribbons overlap without a joint. Vertices
-/// are relative to `origin`; texture coordinates are world-planar.
+/// Appends a road ribbon from `from` to `to`, nominally `width` wide. The
+/// silhouette itself is irregular: both edges meander and chip stone by stone,
+/// the outermost stones are dirt-darkened, and each end tapers to a rounded
+/// cap so consecutive ribbons overlap without a joint. Vertices are relative
+/// to `origin`; texture coordinates are world-planar.
 pub fn append_road(
     surface: &mut SurfaceBuffers,
     origin: Vec3,
@@ -170,39 +170,39 @@ pub fn append_road(
     let half = width * 0.5;
     let cap = half;
     let rows = ((length + 2.0 * cap) / ROAD_ROW_SPACING).ceil().max(1.0) as usize;
-    let mut previous: Option<[u32; 6]> = None;
+    let mut previous: Option<[u32; 4]> = None;
     for row in 0..=rows {
         let distance = -cap + (length + 2.0 * cap) * row as f32 / rows as f32;
-        let end_fade =
-            smoothstep((distance + cap) / cap).min(smoothstep((length + cap - distance) / cap));
+        // Circular taper: full width between the endpoints, zero at each tip.
+        let overshoot = (-distance).max(distance - length).max(0.0) / cap;
+        let taper = (1.0 - overshoot * overshoot).max(0.0).sqrt();
         let wobble = |salt: u64| {
             (value_noise(seed ^ salt, distance / 3.0, 0.0) - 0.5) * 2.0 * ROAD_EDGE_WOBBLE
                 + (value_noise(seed ^ salt.rotate_left(17), distance / 0.6, 7.0) - 0.5)
                     * 2.0
                     * ROAD_EDGE_CHIP
         };
-        let left = -half + wobble(0x6C65_6674);
-        let right = half + wobble(0x7269_6768);
+        let left = (-half + wobble(0x6C65_6674)) * taper;
+        let right = (half + wobble(0x7269_6768)) * taper;
+        let shoulder = ROAD_SHOULDER.min(half * 0.5) * taper;
         let wear = 0.86 + 0.18 * value_noise(seed ^ 0x7765_6172, distance / 5.0, 0.0);
         let edge = wear * EDGE_SHADE;
         let columns = [
-            (left - ROAD_FEATHER, edge, 0.0),
-            (left, edge, end_fade),
-            (left + ROAD_SHOULDER, wear, end_fade),
-            (right - ROAD_SHOULDER, wear, end_fade),
-            (right, edge, end_fade),
-            (right + ROAD_FEATHER, edge, 0.0),
+            (left, edge),
+            (left + shoulder, wear),
+            (right - shoulder, wear),
+            (right, edge),
         ];
-        let current = columns.map(|(lateral, shade, alpha)| {
+        let current = columns.map(|(lateral, shade)| {
             let world = start + along * distance + across * lateral;
             surface.push(
                 Vec3::new(world.x - origin.x, 0.0, world.y - origin.z),
                 world / ROAD_TEXTURE_SPAN,
-                [shade, shade, shade, alpha],
+                [shade, shade, shade, 1.0],
             )
         });
         if let Some(previous) = previous {
-            for column in 0..5 {
+            for column in 0..3 {
                 surface.quad(
                     previous[column],
                     previous[column + 1],
@@ -215,7 +215,7 @@ pub fn append_road(
     }
 }
 
-/// Appends an elliptical clearing whose rim wanders and fades to transparent.
+/// Appends an elliptical clearing with a wandering, chipped, dirt-darkened rim.
 pub fn append_clearing(
     surface: &mut SurfaceBuffers,
     origin: Vec3,
@@ -252,7 +252,7 @@ pub fn append_clearing(
             surface,
             center_xz + direction * radius * (rim + chip),
             shade * EDGE_SHADE,
-            0.0,
+            1.0,
         );
         let current = [inner, outer];
         if let Some(previous) = previous {
@@ -336,55 +336,61 @@ mod tests {
     }
 
     #[test]
-    fn road_core_is_opaque_and_every_outer_edge_is_transparent() {
+    fn road_outline_wanders_and_both_ends_taper_to_a_point() {
         let mut surface = SurfaceBuffers::default();
         let (from, to, width) = (Vec3::new(2.0, 0.0, 1.0), Vec3::new(30.0, 0.0, -12.0), 4.4);
         append_road(&mut surface, Vec3::ZERO, from, to, width, 11);
         let along = (to - from).normalize();
         let across = Vec3::new(along.z, 0.0, -along.x);
-        let mut opaque = 0;
-        for (position, color) in surface.positions.iter().zip(&surface.colors) {
-            let offset = Vec3::from_array(*position) - from;
-            let lateral = offset.dot(across).abs();
-            let distance = offset.dot(along);
-            if lateral > width * 0.5 + ROAD_EDGE_WOBBLE + ROAD_EDGE_CHIP + 0.01 {
-                assert_eq!(color[3], 0.0, "hard edge at lateral {lateral}");
-            }
-            if distance < -width * 0.5 + 0.01
-                || distance > (to - from).length() + width * 0.5 - 0.01
-            {
-                assert_eq!(color[3], 0.0, "hard end cap at {distance}");
-            }
-            if color[3] == 1.0 {
-                opaque += 1;
-                assert!(lateral <= width * 0.5 + ROAD_EDGE_WOBBLE + ROAD_EDGE_CHIP + 0.01);
-            }
+        let length = (to - from).length();
+        // Column 0 of every row is the left edge.
+        let left_edge: Vec<(f32, f32)> = surface
+            .positions
+            .chunks(4)
+            .map(|row| {
+                let offset = Vec3::from_array(row[0]) - from;
+                (offset.dot(along), offset.dot(across))
+            })
+            .collect();
+        let body: Vec<f32> = left_edge
+            .iter()
+            .filter(|(distance, _)| (0.0..=length).contains(distance))
+            .map(|(_, lateral)| *lateral)
+            .collect();
+        let spread = body.iter().cloned().fold(f32::MIN, f32::max)
+            - body.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread > 0.25, "road edge is a straight line: {spread}");
+        for lateral in &body {
+            assert!((lateral + width * 0.5).abs() <= ROAD_EDGE_WOBBLE + ROAD_EDGE_CHIP + 0.01);
         }
-        assert!(opaque > 20, "road has no solid core");
+        let (first, last) = (left_edge[0], left_edge[left_edge.len() - 1]);
+        assert!(first.1.abs() < 0.01 && last.1.abs() < 0.01, "blunt end cap");
+        assert!(surface.colors.iter().all(|color| color[3] == 1.0));
         assert!(up_facing(&surface));
     }
 
     #[test]
-    fn clearing_rim_is_transparent_and_closed() {
+    fn clearing_rim_is_closed_irregular_and_opaque() {
         let mut surface = SurfaceBuffers::default();
-        append_clearing(
-            &mut surface,
-            Vec3::ZERO,
-            Vec3::new(5.0, 0.0, 5.0),
-            Vec2::new(12.0, 9.0),
-            5,
-        );
+        let (center, radius) = (Vec3::new(5.0, 0.0, 5.0), Vec2::new(12.0, 9.0));
+        append_clearing(&mut surface, Vec3::ZERO, center, radius, 5);
         assert_eq!(surface.positions.len(), 1 + 2 * CLEARING_SEGMENTS);
         // hub fan + ring quads, including the closing segment.
         assert_eq!(surface.indices.len(), CLEARING_SEGMENTS * 9);
-        let rim_alpha: Vec<f32> = surface
-            .colors
+        let rim: Vec<f32> = surface
+            .positions
             .iter()
             .skip(2)
             .step_by(2)
-            .map(|c| c[3])
+            .map(|position| {
+                let offset = Vec3::from_array(*position) - center;
+                Vec2::new(offset.x / radius.x, offset.z / radius.y).length()
+            })
             .collect();
-        assert!(rim_alpha.iter().all(|alpha| *alpha == 0.0));
+        let spread = rim.iter().cloned().fold(f32::MIN, f32::max)
+            - rim.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread > 0.05, "clearing is a perfect ellipse: {spread}");
+        assert!(surface.colors.iter().all(|color| color[3] == 1.0));
         assert!(up_facing(&surface));
     }
 }
