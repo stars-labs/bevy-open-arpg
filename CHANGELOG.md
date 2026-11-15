@@ -1,5 +1,7 @@
 # Changelog
 
+- Give the web build a real home-screen icon and web app manifest, so "Add to Home Screen" on iPhone and Android shows the ember-and-sword emblem under the name "Open ARPG" and opens full screen instead of a letter tile.
+
 - Fit the HUD to phone screens: on a landscape phone the navigation dock hangs under the minimap and the compass sits beside it; on a portrait phone the orbs stack above the skill bar so every slot stays touch-sized. Skill and utility slots can be clicked or tapped, and the orbs and gold/kill counters have tooltips. Touch movement and attacks are not implemented yet.
 
 - Blend ground colour continuously across the world instead of one flat tint per tile, give roads and clearings irregular worn edges, and release chapter-tinted embers when an enemy falls and when its body sinks.
