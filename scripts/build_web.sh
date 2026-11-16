@@ -25,6 +25,10 @@ fi
 #   "WebAssembly.Table.grow(): failed to grow table by 4"
 # in __wbindgen_init_externref_table. Pin the CLI to the crate version from
 # Cargo.lock (auto-install if the available one doesn't match).
+engine_fingerprint="$(python3 tools/web_engine_inputs.py)"
+# Generated distribution directories only; launcher source is retained.
+rm -rf web/pkg web/assets web/_resources web/_releases
+build_engine() {
 WASM_BINDGEN_VERSION="${WASM_BINDGEN_VERSION:-$(
   awk '/^name = "wasm-bindgen"$/ {getline; print; exit}' Cargo.lock |
     sed -E 's/.*"([0-9.]+)".*/\1/'
@@ -36,23 +40,35 @@ wasm_bindgen_version_ok() {
 }
 
 resolve_wasm_bindgen() {
-  local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-  local cargo_bin="$cargo_home/bin/wasm-bindgen"
-  if [ -x "$cargo_bin" ] && wasm_bindgen_version_ok "$cargo_bin"; then
-    printf '%s\n' "$cargo_bin"
+  # Several local games pin different CLI releases. Never execute a mutable
+  # shared cargo-bin path after a long compile: another build may replace it.
+  local tool_root="$ROOT/target/web-tools/wasm-bindgen-$WASM_BINDGEN_VERSION"
+  local pinned="$tool_root/bin/wasm-bindgen"
+  if [ -x "$pinned" ] && wasm_bindgen_version_ok "$pinned"; then
+    printf '%s\n' "$pinned"
     return
   fi
-  if command -v wasm-bindgen >/dev/null 2>&1; then
-    local path_bin
-    path_bin="$(command -v wasm-bindgen)"
-    if wasm_bindgen_version_ok "$path_bin"; then
-      printf '%s\n' "$path_bin"
+  local path_bin
+  path_bin="$(command -v wasm-bindgen || true)"
+  if [ -n "$path_bin" ] && wasm_bindgen_version_ok "$path_bin"; then
+    path_bin="$(readlink -f "$path_bin")"
+    case "$path_bin" in
+      /nix/store/*) printf '%s\n' "$path_bin"; return ;;
+    esac
+  fi
+  local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin/wasm-bindgen"
+  if [ -x "$cargo_bin" ] && wasm_bindgen_version_ok "$cargo_bin"; then
+    mkdir -p "$tool_root/bin"
+    cp "$cargo_bin" "$pinned"
+    if wasm_bindgen_version_ok "$pinned"; then
+      printf '%s\n' "$pinned"
       return
     fi
   fi
-  echo ">> installing wasm-bindgen-cli ${WASM_BINDGEN_VERSION}" >&2
-  cargo install -q --locked wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}"
-  printf '%s\n' "$cargo_bin"
+  echo ">> installing isolated wasm-bindgen-cli ${WASM_BINDGEN_VERSION}" >&2
+  cargo install -q --locked --root "$tool_root" wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}"
+  wasm_bindgen_version_ok "$pinned" || return 1
+  printf '%s\n' "$pinned"
 }
 
 WASM_BINDGEN_BIN="$(resolve_wasm_bindgen)"
@@ -138,6 +154,7 @@ cargo build --release --locked --target wasm32-unknown-unknown --no-default-feat
 
 rm -rf web/pkg web/assets
 mkdir -p web/pkg
+wasm_bindgen_version_ok "$WASM_BINDGEN_BIN" || { echo "Pinned wasm-bindgen version changed" >&2; exit 1; }
 "$WASM_BINDGEN_BIN" \
   --target web \
   --out-dir web/pkg \
@@ -178,7 +195,15 @@ fi
 
 # Precompressed copy the loader streams with a real progress bar (GitHub Pages
 # serves the .gz verbatim, so bytes-received == the actual transfer).
-gzip -9 -kf web/pkg/bevy_open_arpg_bg.wasm
+gzip -n -9 -kf web/pkg/bevy_open_arpg_bg.wasm
+
+}
+if [ "${WEB_REVIEW:-0}" = "0" ] && [ -z "${RUSTFLAGS:-}" ] &&
+  python3 tools/reuse_web_engine.py --base-url "${WASM_REUSE_BASE_URL:-https://stars-labs.github.io/bevy-open-arpg/}" --output web --fingerprint "$engine_fingerprint"; then
+  echo 'Compiled inputs unchanged; verified published engine reused.'
+else
+  build_engine
+fi
 
 BUILD_ID="$(scripts/stamp_web_build_id.py \
   web/index.html \
@@ -187,3 +212,20 @@ BUILD_ID="$(scripts/stamp_web_build_id.py \
 echo "Stamped web build id: ${BUILD_ID}"
 
 cp -R assets web/assets
+python3 - "$engine_fingerprint" <<'RECEIPT'
+import hashlib,json,pathlib,subprocess,sys
+sys.path.insert(0,'tools')
+from web_engine_inputs import fingerprint
+if fingerprint(pathlib.Path.cwd())[0] != sys.argv[1]:
+    raise SystemExit('Compiled inputs changed during build; rebuild before publishing')
+wasm=pathlib.Path('web/pkg/bevy_open_arpg_bg.wasm')
+pathlib.Path('web/build.json').write_text(json.dumps({
+    'revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+    'engine_inputs_sha256':sys.argv[1],
+    'wasm_sha256':hashlib.sha256(wasm.read_bytes()).hexdigest(),
+    'wasm_bytes':wasm.stat().st_size,
+    'validation':bool(int(__import__('os').environ.get('WEB_REVIEW','0'))),
+},indent=2)+'\n')
+RECEIPT
+python3 tools/generate_web_manifest.py web --revision "$(git rev-parse HEAD)" --template tools/sw-template.js
+python3 tools/retain_web_releases.py web --base-url "${WASM_REUSE_BASE_URL:-https://stars-labs.github.io/bevy-open-arpg/}" > web/update-size-report.json

@@ -609,9 +609,12 @@ pub(super) fn close_panels(
 
 pub(super) fn scroll_panels(
     mut wheel: MessageReader<MouseWheel>,
+    touches: Res<Touches>,
+    mut drag: Local<Option<(u64, Entity, Vec2)>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut panels: Query<
         (
+            Entity,
             &Node,
             &ComputedNode,
             &UiGlobalTransform,
@@ -625,21 +628,48 @@ pub(super) fn scroll_panels(
         .map(|event| {
             event.y
                 * if event.unit == MouseScrollUnit::Line {
-                    36.0
+                    36.
                 } else {
-                    1.0
+                    1.
                 }
         })
         .sum();
-    let Some(cursor) = windows.single().ok().and_then(cursor_physical_position) else {
+    let Ok(window) = windows.single() else {
+        *drag = None;
         return;
     };
-    for (style, node, transform, mut scroll) in &mut panels {
-        if style.display == Display::None || !node_under_cursor(node, transform, cursor) {
+    if drag.is_none() {
+        for touch in touches.iter_just_pressed() {
+            let physical = touch.start_position() * window.scale_factor();
+            if let Some((entity, ..)) = panels.iter().find(|(_, style, node, transform, _)| {
+                style.display != Display::None && node_under_cursor(node, transform, physical)
+            }) {
+                *drag = Some((touch.id(), entity, touch.position()));
+                break;
+            }
+        }
+    }
+    let movement = drag.and_then(|(id, entity, last)| {
+        touches
+            .get_pressed(id)
+            .map(|t| (id, entity, t.position(), t.position().y - last.y))
+    });
+    *drag = movement.map(|(id, entity, p, _)| (id, entity, p));
+    let cursor = cursor_physical_position(window);
+    for (entity, style, node, transform, mut scroll) in &mut panels {
+        if style.display == Display::None {
             continue;
         }
-        let max = ((node.content_size.y - node.size.y) * node.inverse_scale_factor).max(0.0);
-        scroll.0.y = (scroll.0.y - delta).clamp(0.0, max);
+        let wheel_delta = if cursor.is_some_and(|p| node_under_cursor(node, transform, p)) {
+            delta
+        } else {
+            0.
+        };
+        let touch_delta = movement
+            .filter(|(_, target, _, _)| *target == entity)
+            .map_or(0., |(_, _, _, dy)| dy);
+        let max = ((node.content_size.y - node.size.y) * node.inverse_scale_factor).max(0.);
+        scroll.0.y = (scroll.0.y - wheel_delta - touch_delta).clamp(0., max);
     }
 }
 

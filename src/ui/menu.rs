@@ -76,7 +76,13 @@ pub(super) struct MenuHintText;
 #[derive(Component)]
 pub(super) struct MenuEmber(usize);
 #[derive(Component)]
-struct MenuTitle;
+pub(super) struct MenuTitle(f32);
+#[derive(Component)]
+pub(super) struct MenuDecoration;
+#[derive(Component)]
+pub(super) struct MenuButtonIcon;
+#[derive(Component)]
+pub(super) struct MenuShortcut;
 #[derive(Component)]
 pub(super) struct MenuContent;
 #[derive(Component)]
@@ -161,6 +167,7 @@ fn menu_button(
         .with_children(|button| {
             button.spawn((
                 ui_icon(assets, icon),
+                MenuButtonIcon,
                 Node {
                     width: Val::Px(38.0),
                     height: Val::Px(38.0),
@@ -189,6 +196,7 @@ fn menu_button(
             }
             button.spawn((
                 lettering(assets, key, 12.0, true, GOLD),
+                MenuShortcut,
                 Node {
                     padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
                     border: UiRect::all(Val::Px(1.0)),
@@ -280,13 +288,16 @@ pub(super) fn spawn_main_menu(
             ))
             .with_children(|panel| {
                 panel
-                    .spawn((Node {
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(12.0),
-                        height: Val::Px(40.0),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },))
+                    .spawn((
+                        MenuDecoration,
+                        Node {
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(12.0),
+                            height: Val::Px(40.0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ))
                     .with_children(|brand| {
                         brand.spawn((
                             ui_icon(asset_server, UiIcon::Difficulty),
@@ -306,7 +317,7 @@ pub(super) fn spawn_main_menu(
                     });
                 panel.spawn((
                     lettering(asset_server, "SHADOW", 50.0, true, IVORY),
-                    MenuTitle,
+                    MenuTitle(50.0),
                     Node {
                         margin: UiRect::bottom(Val::Px(-16.0)),
                         ..default()
@@ -314,9 +325,11 @@ pub(super) fn spawn_main_menu(
                 ));
                 panel.spawn((
                     lettering(asset_server, "RELIQUARY", 42.0, true, GOLD),
-                    MenuTitle,
+                    MenuTitle(42.0),
+                    Node::default(),
                 ));
                 panel.spawn((
+                    MenuDecoration,
                     Node {
                         width: Val::Percent(88.0),
                         height: Val::Px(1.0),
@@ -332,12 +345,16 @@ pub(super) fn spawn_main_menu(
                         ],
                     )),
                 ));
-                panel.spawn(lettering(
-                    asset_server,
-                    "Beyond the gates, the embers remember.",
-                    21.0,
-                    false,
-                    IVORY,
+                panel.spawn((
+                    MenuDecoration,
+                    Node::default(),
+                    lettering(
+                        asset_server,
+                        "Beyond the gates, the embers remember.",
+                        21.0,
+                        false,
+                        IVORY,
+                    ),
                 ));
                 panel.spawn((
                     lettering(
@@ -347,6 +364,7 @@ pub(super) fn spawn_main_menu(
                         true,
                         MUTED,
                     ),
+                    MenuDecoration,
                     Node {
                         margin: UiRect::bottom(Val::Px(12.0)),
                         ..default()
@@ -399,6 +417,7 @@ pub(super) fn spawn_main_menu(
                 panel.spawn((
                     lettering(asset_server, legacy_title(records), 16.0, false, MUTED),
                     MenuProfileText,
+                    MenuDecoration,
                     Node {
                         margin: UiRect::top(Val::Px(8.0)),
                         ..default()
@@ -413,6 +432,7 @@ pub(super) fn spawn_main_menu(
                         MUTED,
                     ),
                     MenuHintText,
+                    MenuDecoration,
                     Node {
                         min_height: Val::Px(50.0),
                         width: Val::Percent(100.0),
@@ -546,11 +566,24 @@ pub(super) fn menu_button_feedback(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(super) fn animate_menu(
     time: Res<Time>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut embers: Query<(&MenuEmber, &mut Node, &mut BackgroundColor), Without<MenuContent>>,
-    mut content: Query<&mut Node, (With<MenuContent>, Without<MenuEmber>)>,
+    mut layout: Query<
+        (
+            &mut Node,
+            Option<&MenuContent>,
+            Option<&MenuDecoration>,
+            Option<&MenuAction>,
+            Option<&MenuButtonIcon>,
+            Option<&MenuTitle>,
+            Option<&MenuShortcut>,
+        ),
+        Without<MenuEmber>,
+    >,
+    mut titles: Query<(&MenuTitle, &mut TextFont)>,
 ) {
     let t = time.elapsed_secs();
     for (ember, mut node, mut color) in &mut embers {
@@ -567,16 +600,66 @@ pub(super) fn animate_menu(
     }
     if let Ok(window) = windows.single() {
         let narrow = window.width() < 760.0;
-        for mut node in &mut content {
-            node.left = Val::Percent(7.0);
-            node.max_width = Val::Percent(if narrow { 86.0 } else { 43.0 });
-            node.top = Val::Px(if window.height() < 720.0 {
-                16.0
-            } else {
-                window.height() * 0.08
-            });
-            node.bottom = Val::Px(16.0);
-            node.row_gap = Val::Px(if window.height() < 720.0 { 7.0 } else { 12.0 });
+        let compact = window.height() < 600.0;
+        for (mut node, content, decoration, action, icon, title, shortcut) in &mut layout {
+            if content.is_some() {
+                node.left = Val::Percent(7.0);
+                node.max_width = Val::Percent(if narrow {
+                    86.0
+                } else if compact {
+                    58.0
+                } else {
+                    43.0
+                });
+                node.top = Val::Px(if window.height() < 720.0 {
+                    16.0
+                } else {
+                    window.height() * 0.08
+                });
+                node.bottom = Val::Px(16.0);
+                node.row_gap = Val::Px(if compact {
+                    6.0
+                } else if window.height() < 720.0 {
+                    7.0
+                } else {
+                    12.0
+                });
+                node.justify_content = if compact {
+                    JustifyContent::FlexStart
+                } else {
+                    JustifyContent::Center
+                };
+            }
+            if decoration.is_some() || shortcut.is_some() {
+                node.display = if compact {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+            if let Some(action) = action {
+                node.min_height = Val::Px(if compact {
+                    48.0
+                } else if *action == MenuAction::Begin {
+                    66.0
+                } else {
+                    48.0
+                });
+            }
+            if icon.is_some() {
+                node.width = Val::Px(if compact { 30.0 } else { 38.0 });
+                node.height = node.width;
+            }
+            if let Some(title) = title {
+                node.margin.bottom = Val::Px(if title.0 == 50.0 && !compact {
+                    -16.0
+                } else {
+                    0.0
+                });
+            }
+        }
+        for (title, mut font) in &mut titles {
+            font.font_size = FontSize::Px(if compact { title.0 * 0.6 } else { title.0 });
         }
     }
 }

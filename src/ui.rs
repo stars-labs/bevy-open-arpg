@@ -1,3 +1,4 @@
+pub(crate) mod touch_movement;
 use crate::class::{ClassCatalog, ClassDef, SelectedClass, SkillLoadout, SkillSlot};
 #[cfg(test)]
 use crate::player::EmberParagon;
@@ -2506,6 +2507,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        touch_movement::install(app);
         app.add_plugins((
             theme::ReliquaryThemePlugin,
             progression::ProgressionFeedbackPlugin,
@@ -2745,9 +2747,9 @@ fn update_loading_screen(
         let stage = if summary.ready() {
             "Assets loaded. Entering main menu..."
         } else if progress.timed_out {
-            "Asset loading timeout; continuing with available resources."
+            "Loading is taking longer than expected. Please wait."
         } else if summary.settled() {
-            "Some assets failed, continuing with remaining resources."
+            "Required resources could not load. Restart to retry."
         } else if summary.failed > 0 {
             "Some assets failed, waiting for remaining..."
         } else {
@@ -2765,7 +2767,7 @@ fn update_loading_screen(
             progress.elapsed_secs(),
         );
     } else if progress.timed_out {
-        status = "Loading timed out; using fallback assets where available.".to_string();
+        status = "Still waiting for required resources.".to_string();
     }
 
     for mut text in &mut status_query {

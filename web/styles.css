@@ -1,26 +1,22 @@
-html,
-body {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  background: #070303;
-}
-
-#bevy-canvas {
-  display: block;
-  width: 100vw;
-  height: 100vh;
-}
-
-#unsupported {
-  position: fixed;
-  inset: 16px auto auto 16px;
-  max-width: 360px;
-  padding: 12px 14px;
-  border: 1px solid #e58d44;
-  border-radius: 6px;
-  color: #f5e6ce;
-  background: rgba(18, 10, 8, 0.92);
-  font: 14px system-ui, sans-serif;
-}
+:root {color-scheme:dark;font-family:system-ui,sans-serif;color:#f0dcc8;background:#140806}
+* {box-sizing:border-box}
+html,body {width:100%;height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+#bevy-canvas {display:block;width:100%!important;height:100%!important;outline:none;touch-action:none}
+#loading {position:fixed;inset:0;z-index:30;overflow:auto;display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:12px;padding:max(18px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));background:radial-gradient(ellipse at 50% 25%,#392016,#140806 70%);text-align:center}
+[hidden] {display:none!important}
+#language-switch {align-self:flex-end;display:flex;gap:4px}
+button {font:inherit;min-height:44px;border:1px solid #bd874a;border-radius:8px;background:#291710;color:#f0dcc8;padding:10px 18px;cursor:pointer;touch-action:manipulation}
+button:focus-visible {outline:2px solid #fff;outline-offset:3px}
+button[aria-pressed=true],#start {background:#e4af69;color:#211009}
+button:disabled {opacity:.6;cursor:wait}
+.rune {width:96px;height:96px;object-fit:contain}
+h1 {font-size:clamp(24px,5vw,48px);letter-spacing:.14em;margin:0}
+p {margin:0;line-height:1.5}
+#intro {color:#c8a789;max-width:580px}
+#status {min-height:24px;font-size:14px}
+#cache-card,#install-card {width:min(540px,100%)}
+#cache-card,#downloads-dialog,#install-card,#install-dialog {background:#21130e;border-color:#966943}
+#cache-status {color:#dcc3a8}
+#downloads-dialog::backdrop,#install-dialog::backdrop {background:#000b}
+@media(max-height:500px) and (orientation:landscape){#loading{gap:7px;padding-top:8px;padding-bottom:8px}.rune{display:none}#language-switch{position:absolute;right:max(16px,env(safe-area-inset-right));top:8px}h1{font-size:26px}#intro{max-width:70%;font-size:13px}#cache-card{margin:0}#install-card{margin:0}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}

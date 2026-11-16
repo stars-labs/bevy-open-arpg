@@ -3987,6 +3987,7 @@ struct PlayerVisualQueries<'w, 's> {
 
 #[allow(clippy::too_many_arguments)]
 fn player_movement(
+    touch: Option<Res<crate::ui::touch_movement::TouchMovement>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     time: Res<Time>,
@@ -4012,7 +4013,9 @@ fn player_movement(
         return;
     };
 
-    let axis = keyboard_move_axis(&keyboard) + gamepad_move_axis(&gamepads);
+    let axis = keyboard_move_axis(&keyboard)
+        + gamepad_move_axis(&gamepads)
+        + touch.as_ref().map_or(Vec3::ZERO, |t| t.axis);
 
     let (direction, reached_click_target) = movement_direction(
         axis,
@@ -5755,7 +5758,9 @@ type EvadeActivationQuery<'w, 's> = Query<
     With<Player>,
 >;
 
+#[allow(clippy::too_many_arguments)]
 fn use_evade(
+    touch: Option<Res<crate::ui::touch_movement::TouchMovement>>,
     time: Res<Time>,
     mut buffered_secs: Local<f32>,
     mut click_move: ResMut<ClickMoveTarget>,
@@ -5784,7 +5789,9 @@ fn use_evade(
     }
     *buffered_secs = 0.0;
     drive.0 = evade_direction(
-        keyboard_move_axis(&keyboard) + gamepad_move_axis(&gamepads),
+        keyboard_move_axis(&keyboard)
+            + gamepad_move_axis(&gamepads)
+            + touch.as_ref().map_or(Vec3::ZERO, |t| t.axis),
         transform.translation,
         click_move.position,
         animation.facing_direction(),

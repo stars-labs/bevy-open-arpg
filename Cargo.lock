@@ -576,6 +576,7 @@ dependencies = [
  "bevy",
  "bevy_render",
  "getrandom 0.4.3",
+ "js-sys",
  "rand",
  "rodio",
  "ron",

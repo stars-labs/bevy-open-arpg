@@ -1419,3 +1419,8 @@ Class resource	职业资源
 Spent by your Q, E and R skills	释放 Q、E、R 技能时消耗
 Collected this run	本局收集
 Enemies slain this run	本局击杀的敌人
+
+Downloads & offline play	下载与离线游玩
+Loading is taking longer than expected. Please wait.	加载时间比预期更长，请稍候。
+Required resources could not load. Restart to retry.	必要资源加载失败，请重新启动后重试。
+Still waiting for required resources.	仍在等待必要资源。

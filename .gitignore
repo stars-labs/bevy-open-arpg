@@ -17,3 +17,12 @@ trace-*.json
 
 # Blender/Python generator caches
 __pycache__/
+
+# Content-addressed web distribution metadata
+/web/sw.js
+/web/_resources/
+/web/_releases/
+/web/asset-manifest.json
+/web/release-index.json
+/web/build.json
+/web/update-size-report.json

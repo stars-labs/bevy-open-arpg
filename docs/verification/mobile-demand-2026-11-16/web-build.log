@@ -1,0 +1,9 @@
+warning: Git tree '/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg' is dirty
+evaluation warning: stdenv.isLinux is deprecated, use stdenv.hostPlatform.isLinux instead
+Published engine reuse unavailable; rebuilding: HTTP Error 404: Not Found
+>> wasm-bindgen crate version: 0.2.126
+>> wasm-opt: wasm-opt version 130 (version_130)
+    Blocking waiting for file lock on package cache
+   Compiling bevy-open-arpg v0.1.0 (/home/freeman.xiong/Documents/github/stars-labs/bevy-open-arpg)
+    Finished `release` profile [optimized] target(s) in 17m 59s
+Stamped web build id: f2c3af6019db1489

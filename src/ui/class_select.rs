@@ -25,6 +25,8 @@ enum ClassLayoutElement {
     Card,
     Portrait,
     Viewport,
+    Actions,
+    Action,
 }
 #[derive(Component, Clone, Copy)]
 struct ClassCard(HeroClass);
@@ -192,10 +194,15 @@ fn spawn_class_select(
                     }
                 });
             modal
-                .spawn(Node {
-                    column_gap: Val::Px(14.0),
-                    ..default()
-                })
+                .spawn((
+                    ClassLayoutElement::Actions,
+                    Node {
+                        column_gap: Val::Px(14.0),
+                        row_gap: Val::Px(8.0),
+                        max_width: Val::Percent(100.0),
+                        ..default()
+                    },
+                ))
                 .with_children(|buttons| {
                     for (action, marker, primary) in [
                         (ClassSelectAction::Confirm, ClassText::Confirm, true),
@@ -205,6 +212,7 @@ fn spawn_class_select(
                             .spawn((
                                 Button,
                                 action,
+                                ClassLayoutElement::Action,
                                 Node {
                                     padding: UiRect::axes(Val::Px(26.0), Val::Px(10.0)),
                                     border: UiRect::all(Val::Px(1.0)),
@@ -275,12 +283,8 @@ fn interact_class_select(
     }
     for (interaction, card) in &cards {
         if *interaction == Interaction::Pressed {
-            if state.focus == card.0 {
-                selected.0 = card.0;
-                begin.write(BeginDescent);
-                state.open = false;
-                return;
-            }
+            // A card chooses the preview only. Starting on press would launch a
+            // descent when a finger begins scrolling the already focused card.
             state.focus = card.0;
         }
     }
@@ -420,7 +424,7 @@ fn update_class_select(
                         .single()
                         .is_ok_and(|w| w.width() < 1200.0 || w.height() < 700.0)
                     {
-                        "← → 切换 · 回车确认 · 滚轮浏览 · Esc 返回"
+                        "点选职业 · 滑动浏览 · 下方确认"
                     } else {
                         "← → 切换 · 回车确认 · Esc 返回"
                     }
@@ -430,7 +434,7 @@ fn update_class_select(
                         .single()
                         .is_ok_and(|w| w.width() < 1200.0 || w.height() < 700.0)
                     {
-                        "← → switch · Enter to confirm · Scroll to browse · Esc to go back"
+                        "Tap a class · Swipe to browse · Confirm below"
                     } else {
                         "← → switch · Enter to confirm · Esc to go back"
                     }
@@ -472,9 +476,20 @@ fn update_class_select(
 fn resize_class_select(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut elements: Query<(&ClassLayoutElement, &mut Node)>,
+    mut fonts: Query<(&ClassText, &mut TextFont)>,
 ) {
     let Ok(window) = windows.single() else { return };
-    let width = ((window.width() - 84.0) / 4.0).clamp(180.0, 272.0);
+    let narrow = window.width() < 600.0;
+    let width = if narrow {
+        (window.width() - 60.0).max(160.0)
+    } else {
+        ((window.width() - 84.0) / 4.0).clamp(180.0, 272.0)
+    };
+    for (marker, mut font) in &mut fonts {
+        if matches!(marker, ClassText::Title) {
+            font.font_size = FontSize::Px(if narrow { 24.0 } else { 34.0 });
+        }
+    }
     for (element, mut node) in &mut elements {
         match element {
             ClassLayoutElement::Card => node.width = Val::Px(width),
@@ -482,7 +497,31 @@ fn resize_class_select(
                 node.height = Val::Px((window.height() * 0.24).clamp(120.0, 230.0))
             }
             ClassLayoutElement::Viewport => {
-                node.max_height = Val::Px((window.height() - 200.0).max(160.0))
+                node.max_height =
+                    Val::Px((window.height() - if narrow { 260.0 } else { 200.0 }).max(160.0))
+            }
+            ClassLayoutElement::Actions => {
+                node.flex_direction = if narrow {
+                    FlexDirection::Column
+                } else {
+                    FlexDirection::Row
+                };
+                node.width = if narrow {
+                    Val::Percent(100.0)
+                } else {
+                    Val::Auto
+                };
+            }
+            ClassLayoutElement::Action => {
+                node.width = if narrow {
+                    Val::Percent(100.0)
+                } else {
+                    Val::Auto
+                };
+                node.min_height = Val::Px(44.0);
+                node.justify_content = JustifyContent::Center;
+                node.padding =
+                    UiRect::axes(Val::Px(if narrow { 8.0 } else { 26.0 }), Val::Px(10.0));
             }
         }
     }
@@ -490,7 +529,13 @@ fn resize_class_select(
 fn scroll_class_select(
     state: Res<ClassSelectState>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
-    mut viewports: Query<(&ComputedNode, &mut ScrollPosition), With<ClassViewport>>,
+    touches: Res<Touches>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut drag: Local<Option<(u64, Vec2)>>,
+    mut viewports: Query<
+        (&ComputedNode, &UiGlobalTransform, &mut ScrollPosition),
+        With<ClassViewport>,
+    >,
 ) {
     let delta: f32 = wheel
         .read()
@@ -504,16 +549,62 @@ fn scroll_class_select(
         })
         .sum();
     if !state.open {
+        *drag = None;
         return;
     }
-    for (node, mut scroll) in &mut viewports {
+    let Ok(window) = windows.single() else {
+        *drag = None;
+        return;
+    };
+    if drag.is_none() {
+        for touch in touches.iter_just_pressed() {
+            if viewports.iter().any(|(node, transform, _)| {
+                node_under_cursor(node, transform, touch.position() * window.scale_factor())
+            }) {
+                *drag = Some((touch.id(), touch.position()));
+                break;
+            }
+        }
+    }
+    let movement = drag.and_then(|(id, last)| {
+        touches
+            .get_pressed(id)
+            .map(|touch| (id, touch.position(), touch.position().y - last.y))
+    });
+    *drag = movement.map(|(id, p, _)| (id, p));
+    let touch_delta = movement.map_or(0.0, |(_, _, dy)| dy);
+    for (node, _, mut scroll) in &mut viewports {
         let max = ((node.content_size.y - node.size.y) * node.inverse_scale_factor).max(0.0);
-        scroll.0.y = (scroll.0.y - delta).clamp(0.0, max);
+        scroll.0.y = (scroll.0.y - delta - touch_delta).clamp(0.0, max);
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressing_focused_card_does_not_launch_while_starting_a_scroll() {
+        let mut app = App::new();
+        app.insert_resource(ClassSelectState {
+            open: true,
+            focus: HeroClass::Warden,
+        })
+        .init_resource::<SelectedClass>()
+        .init_resource::<settings::SettingsPanelState>()
+        .init_resource::<ButtonInput<KeyCode>>()
+        .add_message::<BeginDescent>()
+        .add_systems(Update, interact_class_select);
+        app.world_mut()
+            .spawn((Interaction::Pressed, ClassCard(HeroClass::Warden)));
+        app.update();
+        assert!(app.world().resource::<ClassSelectState>().open);
+        assert_eq!(app.world().resource::<Messages<BeginDescent>>().len(), 0);
+        app.world_mut()
+            .spawn((Interaction::Pressed, ClassSelectAction::Confirm));
+        app.update();
+        assert!(!app.world().resource::<ClassSelectState>().open);
+        assert_eq!(app.world().resource::<Messages<BeginDescent>>().len(), 1);
+    }
 
     #[test]
     fn focus_wraps_around_the_four_classes() {

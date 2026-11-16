@@ -1,0 +1,7 @@
+{
+  "revision": "85319734dd6d503e082fac343d32682c52e687ad",
+  "engine_inputs_sha256": "0ebead6f2168da0c15a22493f79ecad76ddc70fc07983e612aff90815a8566aa",
+  "wasm_sha256": "ef1cf23d3ae6210cd035dd3970e24547532b62811704844d663bde1c120941fd",
+  "wasm_bytes": 34286162,
+  "validation": false
+}

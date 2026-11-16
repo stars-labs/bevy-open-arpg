@@ -27,6 +27,8 @@ mod story;
 mod story_content;
 mod terrain;
 mod ui;
+#[cfg(target_arch = "wasm32")]
+mod web_runtime;
 
 use assets::GameAssetsPlugin;
 use bestiary::BestiaryPlugin;
@@ -708,6 +710,8 @@ fn should_fallback_to_headless_smoke(config: OpenArpgRuntimeConfig, display_pres
 
 fn build_app(config: OpenArpgRuntimeConfig) -> App {
     let mut app = App::new();
+    #[cfg(target_arch = "wasm32")]
+    web_runtime::install(&mut app);
     let runtime_audio_enabled = config.audio_enabled && !config.headless_smoke;
     let mut default_plugins = DefaultPlugins
         .build()

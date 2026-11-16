@@ -520,6 +520,13 @@ fn finish_loading(
         next_state.set(GameState::MainMenu);
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    if !crate::web_runtime::combat_open() {
+        if crate::web_runtime::menu_ready(&asset_server, &assets) {
+            next_state.set(GameState::MainMenu);
+        }
+        return;
+    }
     let summary = game_assets_load_summary(&asset_server, &assets);
 
     if summary.ready() {
@@ -528,26 +535,9 @@ fn finish_loading(
         return;
     }
 
-    if summary.settled() {
-        warn!(
-            "asset loading settled but incomplete ({} failed / {} total). Entering MainMenu anyway.",
-            summary.failed, summary.total
-        );
-        next_state.set(GameState::MainMenu);
-        return;
-    }
-
+    // Failure/timeout remains a loading error; never enter a partial world.
     if loading_progress.finished() {
         loading_progress.timed_out = true;
-        warn!(
-            "asset loading timeout after {:.1}s ({} loaded, {} loading, {} failed). Entering MainMenu to avoid permanent splash.",
-            loading_progress.elapsed_secs(),
-            summary.loaded,
-            summary.loading + summary.not_loaded,
-            summary.failed
-        );
-        next_state.set(GameState::MainMenu);
-        return;
     }
     let pending = summary.loading + summary.not_loaded;
     if pending <= 3 || loading_progress.checks.is_multiple_of(60) {

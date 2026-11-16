@@ -10,6 +10,23 @@ pub(super) struct SettingsPanelPlugin;
 #[derive(Resource, Default)]
 pub(crate) struct SettingsPanelState {
     pub(crate) open: bool,
+    resume_on_close: bool,
+}
+impl SettingsPanelState {
+    fn show(&mut self, in_game: bool, pause: &mut PauseState) {
+        self.resume_on_close = in_game && !pause.paused;
+        if in_game {
+            pause.paused = true;
+        }
+        self.open = true;
+    }
+    fn dismiss(&mut self, pause: &mut PauseState) {
+        if self.resume_on_close {
+            pause.paused = false;
+        }
+        self.resume_on_close = false;
+        self.open = false;
+    }
 }
 
 #[derive(Component)]
@@ -22,6 +39,8 @@ struct SettingsModal;
 enum SettingsAction {
     Open,
     Close,
+    #[cfg(target_arch = "wasm32")]
+    Downloads,
     Language(UiLanguage),
 }
 
@@ -50,8 +69,8 @@ fn spawn_settings(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 right: Val::Px(20.0),
                 top: Val::Px(20.0),
-                width: Val::Px(40.0),
-                height: Val::Px(40.0),
+                width: Val::Px(44.0),
+                height: Val::Px(44.0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 border_radius: BorderRadius::all(Val::Px(5.0)),
@@ -145,8 +164,8 @@ fn spawn_settings(mut commands: Commands) {
                         width: Val::Px(480.0),
                         max_width: Val::Percent(92.0),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(20.0),
-                        padding: UiRect::all(Val::Px(28.0)),
+                        row_gap: Val::Px(8.0),
+                        padding: UiRect::all(Val::Px(16.0)),
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -162,13 +181,6 @@ fn spawn_settings(mut commands: Commands) {
                         },
                         TextColor(Color::srgb(0.95, 0.83, 0.62)),
                     ));
-                    panel.spawn((
-                        Text::new("Language"),
-                        TextFont {
-                            font_size: 20.0.into(),
-                            ..default()
-                        },
-                    ));
                     for (language, label) in [
                         (UiLanguage::Chinese, "简体中文"),
                         (UiLanguage::English, "English"),
@@ -179,7 +191,8 @@ fn spawn_settings(mut commands: Commands) {
                                 SettingsAction::Language(language),
                                 Node {
                                     width: Val::Percent(100.0),
-                                    padding: UiRect::all(Val::Px(14.0)),
+                                    min_height: Val::Px(44.0),
+                                    padding: UiRect::all(Val::Px(8.0)),
                                     border: UiRect::all(Val::Px(2.0)),
                                     ..default()
                                 },
@@ -195,14 +208,27 @@ fn spawn_settings(mut commands: Commands) {
                                 },
                             ));
                     }
-                    panel.spawn((
-                        Text::new("Changes apply immediately and are saved automatically."),
-                        TextFont {
-                            font_size: 14.0.into(),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.70, 0.66, 0.57)),
-                    ));
+                    #[cfg(target_arch = "wasm32")]
+                    panel
+                        .spawn((
+                            Button,
+                            SettingsAction::Downloads,
+                            Node {
+                                width: Val::Percent(100.),
+                                min_height: Val::Px(44.),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.09, 0.07, 0.05)),
+                        ))
+                        .with_child((
+                            Text::new("Downloads & offline play"),
+                            TextFont {
+                                font_size: 18.0.into(),
+                                ..default()
+                            },
+                        ));
                     panel
                         .spawn((
                             Button,
@@ -226,16 +252,23 @@ fn spawn_settings(mut commands: Commands) {
         });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn interact_settings(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    state: Res<State<GameState>>,
+    mut pause: ResMut<PauseState>,
     mut panel: ResMut<SettingsPanelState>,
     mut language: ResMut<UiLanguage>,
     mut preferences: ResMut<OpenArpgUserSettings>,
     buttons: Query<(&Interaction, &SettingsAction), Changed<Interaction>>,
 ) {
+    #[cfg(target_arch = "wasm32")]
+    if crate::web_runtime::downloads_open() {
+        return;
+    }
     if panel.open && keys.just_pressed(KeyCode::Escape) {
-        panel.open = false;
+        panel.dismiss(&mut pause);
         return;
     }
     for (interaction, action) in &buttons {
@@ -243,10 +276,14 @@ fn interact_settings(
             continue;
         }
         match action {
-            SettingsAction::Open => panel.open = true,
-            SettingsAction::Close => panel.open = false,
+            SettingsAction::Open => panel.show(*state.get() == GameState::InGame, &mut pause),
+            SettingsAction::Close => panel.dismiss(&mut pause),
+            #[cfg(target_arch = "wasm32")]
+            SettingsAction::Downloads => crate::web_runtime::open_downloads(),
             SettingsAction::Language(selected) => {
                 *language = *selected;
+                #[cfg(target_arch = "wasm32")]
+                crate::web_runtime::save_language(*selected);
                 preferences.language = match selected {
                     UiLanguage::Chinese => "zh-CN",
                     UiLanguage::English => "en",
@@ -261,7 +298,7 @@ fn interact_settings(
 #[allow(clippy::type_complexity)]
 fn update_settings(
     state: Res<State<GameState>>,
-    pause: Res<PauseState>,
+    mut pause: ResMut<PauseState>,
     mut panel: ResMut<SettingsPanelState>,
     language: Res<UiLanguage>,
     mut nodes: Query<
@@ -279,14 +316,14 @@ fn update_settings(
         Option<&mut BorderColor>,
     )>,
 ) {
-    let available =
-        *state.get() == GameState::MainMenu || (*state.get() == GameState::InGame && pause.paused);
+    let available = *state.get() == GameState::MainMenu || *state.get() == GameState::InGame;
     if !available {
-        panel.open = false;
+        panel.dismiss(&mut pause);
     }
     for (mut node, entry) in &mut nodes {
         let visible = if entry.is_some() {
             let in_game = *state.get() == GameState::InGame;
+            node.top = Val::Px(if in_game { 0.0 } else { 20.0 });
             node.left = if in_game { Val::Px(20.0) } else { Val::Auto };
             node.right = if in_game { Val::Auto } else { Val::Px(20.0) };
             available && !panel.open
@@ -329,5 +366,27 @@ fn update_settings(
         let in_game = *state.get() == GameState::InGame;
         node.left = if in_game { Val::Px(0.0) } else { Val::Auto };
         node.right = if in_game { Val::Auto } else { Val::Px(0.0) };
+    }
+}
+
+#[cfg(test)]
+mod mobile_pause_tests {
+    use super::*;
+    #[test]
+    fn settings_can_pause_and_resume_without_a_keyboard() {
+        let mut panel = SettingsPanelState::default();
+        let mut pause = PauseState::default();
+        panel.show(true, &mut pause);
+        assert!(panel.open && pause.paused);
+        panel.dismiss(&mut pause);
+        assert!(!panel.open && !pause.paused);
+    }
+    #[test]
+    fn closing_settings_preserves_an_existing_manual_pause() {
+        let mut panel = SettingsPanelState::default();
+        let mut pause = PauseState { paused: true };
+        panel.show(true, &mut pause);
+        panel.dismiss(&mut pause);
+        assert!(pause.paused);
     }
 }
