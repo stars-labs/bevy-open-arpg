@@ -17,6 +17,7 @@ fn fixture(bone: u32, spirit: u32) -> (App, Entity) {
         .insert_resource(Art {
             arc: default(),
             ring: default(),
+            streak: default(),
             idle_cyan: default(),
             cyan: default(),
             gold: default(),
@@ -28,7 +29,7 @@ fn fixture(bone: u32, spirit: u32) -> (App, Entity) {
         .add_message::<HitStopEvent>()
         .add_message::<SummonOrder>()
         .add_message::<pixelfx::PixelFx>()
-        .add_systems(Update, (orders, behavior).chain());
+        .add_systems(Update, (orders, behavior, ai::advance_waves).chain());
     let hero = app
         .world_mut()
         .spawn((
@@ -106,7 +107,14 @@ fn minion(app: &mut App, slot: usize, bone: bool, position: Vec3) -> Entity {
                 slot,
                 bone,
                 attack: None,
+                auto_target: None,
                 cooldown: 100.0,
+                lunge_cooldown: 100.0,
+                cleave_cooldown: 100.0,
+                wave_cooldown: 100.0,
+                taunt_cooldown: 100.0,
+                action_label: AutoAction::Idle,
+                action_banner_secs: 0.0,
                 phase: 0.0,
                 moving: false,
                 progress: 1.0,
@@ -280,4 +288,108 @@ fn flanking_volley_adds_exposure_without_replacing_equipped_bleed_rune() {
         app.world().get::<Burning>(target).is_some(),
         "the equipped rune must survive the talent's extra status"
     );
+}
+
+#[test]
+fn autonomous_hunt_acquires_unmarked_enemy_while_focus_stance_waits_for_mark() {
+    let (mut app, _) = fixture(0, 0);
+    let foe = enemy(&mut app, Vec3::new(0.0, 0.0, 6.0));
+    let pet = minion(&mut app, 0, false, Vec3::ZERO);
+    {
+        let mut s = app.world_mut().get_mut::<State>(pet).unwrap();
+        s.cooldown = 0.0;
+        s.lunge_cooldown = 0.0;
+    }
+    // Focus stance: must wait for player mark and not lunge or deal damage.
+    app.world_mut().resource_mut::<SummonStatus>().stance = SummonStance::Focus;
+    frames(&mut app, 3);
+    assert_eq!(health(&app, foe), 10_000.0);
+    assert!(app.world().get::<State>(pet).unwrap().auto_target.is_none());
+
+    // Hunt stance: immediately acquires unmarked foe, Phantom Lunges in, and strikes!
+    app.world_mut().resource_mut::<SummonStatus>().stance = SummonStance::Hunt;
+    frames(&mut app, 2);
+    assert!(health(&app, foe) < 10_000.0);
+    assert_eq!(
+        app.world().get::<State>(pet).unwrap().action_label,
+        AutoAction::Lunge
+    );
+    assert!(
+        app.world().get::<Transform>(pet).unwrap().translation.z > 4.0,
+        "Phantom Lunge should close the gap into melee reach"
+    );
+}
+
+#[test]
+fn autonomous_spectral_cleave_hits_multiple_nearby_enemies() {
+    let (mut app, _) = fixture(0, 0);
+    let a = enemy(&mut app, Vec3::new(1.2, 0.0, 0.0));
+    let b = enemy(&mut app, Vec3::new(-1.2, 0.0, 0.0));
+    let pet = minion(&mut app, 0, false, Vec3::ZERO);
+    {
+        let mut s = app.world_mut().get_mut::<State>(pet).unwrap();
+        s.cooldown = 0.0;
+        s.cleave_cooldown = 0.0;
+    }
+    frames(&mut app, 2);
+    assert!(health(&app, a) < 10_000.0);
+    assert!(health(&app, b) < 10_000.0);
+    assert_eq!(
+        app.world().get::<State>(pet).unwrap().action_label,
+        AutoAction::Cleave
+    );
+}
+
+#[test]
+fn autonomous_spectral_wave_pierces_mid_range_enemies_when_lunge_is_on_cooldown() {
+    let (mut app, _) = fixture(0, 0);
+    let front = enemy(&mut app, Vec3::new(0.0, 0.0, 4.5));
+    let back = enemy(&mut app, Vec3::new(0.0, 0.0, 6.5));
+    let pet = minion(&mut app, 0, false, Vec3::ZERO);
+    {
+        let mut s = app.world_mut().get_mut::<State>(pet).unwrap();
+        s.cooldown = 0.0;
+        s.lunge_cooldown = 10.0;
+        s.wave_cooldown = 0.0;
+    }
+    frames(&mut app, 45);
+    assert!(health(&app, front) < 10_000.0);
+    assert!(health(&app, back) < 10_000.0);
+    assert!(app.world().get::<State>(pet).unwrap().wave_cooldown > 0.0);
+}
+
+#[test]
+fn bone_guard_taunt_slam_shields_itself_and_dual_guards_split_unmarked_threats() {
+    let (mut app, _) = fixture(1, 0);
+    let threat_a = enemy(&mut app, Vec3::new(1.5, 0.0, 0.0));
+    let threat_b = enemy(&mut app, Vec3::new(-1.5, 0.0, 0.0));
+    let guard_a = minion(&mut app, 0, true, Vec3::new(1.0, 0.0, 0.0));
+    let guard_b = minion(&mut app, 1, true, Vec3::new(-1.0, 0.0, 0.0));
+    for guard in [guard_a, guard_b] {
+        let mut s = app.world_mut().get_mut::<State>(guard).unwrap();
+        s.cooldown = 0.0;
+        s.taunt_cooldown = 0.0;
+    }
+    frames(&mut app, 2);
+    assert!(health(&app, threat_a) < 10_000.0);
+    assert!(health(&app, threat_b) < 10_000.0);
+    assert!(
+        app.world()
+            .get::<SummonVitality>(guard_a)
+            .unwrap()
+            .guard_secs
+            > 0.0
+    );
+    assert_ne!(
+        app.world().get::<State>(guard_a).unwrap().auto_target,
+        app.world().get::<State>(guard_b).unwrap().auto_target,
+        "dual bone guards should spread across separate unmarked threats"
+    );
+}
+
+#[test]
+fn summon_stance_cycles_hunt_guard_focus() {
+    assert_eq!(SummonStance::Hunt.next(), SummonStance::Guard);
+    assert_eq!(SummonStance::Guard.next(), SummonStance::Focus);
+    assert_eq!(SummonStance::Focus.next(), SummonStance::Hunt);
 }

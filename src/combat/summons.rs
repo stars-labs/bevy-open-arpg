@@ -1,4 +1,5 @@
-//! Shipping Soulbinder controller: mark, command, contact and minion survival.
+//! Shipping Soulbinder controller: mark, command, autonomous AI, contact and minion survival.
+mod ai;
 mod depth;
 #[cfg(test)]
 mod depth_tests;
@@ -6,6 +7,7 @@ mod depth_tests;
 use super::{summon_logic::*, *};
 use crate::class::{HeroClass, Rune, SelectedClass, SummonCommand};
 use crate::player::{summon_limb_transform, summon_weapon_transform};
+use ai::{AutoAction, SummonStance, SummonWave};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use serde::{Deserialize, Serialize};
 
@@ -81,10 +83,35 @@ struct Tuning {
     siphon_amount: f32,
     siphon_cooldown: f32,
     relay_radius: f32,
+    auto_acquire_radius: f32,
+    guard_acquire_radius: f32,
+    threat_priority_radius: f32,
+    lunge_cooldown: f32,
+    lunge_min_range: f32,
+    lunge_max_range: f32,
+    lunge_damage_multiplier: f32,
+    lunge_impact: f32,
+    cleave_cooldown: f32,
+    cleave_radius: f32,
+    cleave_damage_multiplier: f32,
+    cleave_impact: f32,
+    wave_cooldown: f32,
+    wave_min_range: f32,
+    wave_max_range: f32,
+    wave_speed: f32,
+    wave_radius: f32,
+    wave_damage_multiplier: f32,
+    wave_impact: f32,
+    taunt_cooldown: f32,
+    taunt_radius: f32,
+    taunt_guard_secs: f32,
+    taunt_damage_multiplier: f32,
+    taunt_impact: f32,
 }
 #[derive(Resource, Default)]
 pub(crate) struct SummonStatus {
     pub marked: Option<Entity>,
+    pub stance: SummonStance,
     bond: Bond,
     overdrive: f32,
     guard: f32,
@@ -102,7 +129,14 @@ struct State {
     slot: usize,
     bone: bool,
     attack: Option<(Entity, f32, bool)>,
+    auto_target: Option<Entity>,
     cooldown: f32,
+    lunge_cooldown: f32,
+    cleave_cooldown: f32,
+    wave_cooldown: f32,
+    taunt_cooldown: f32,
+    action_label: AutoAction,
+    action_banner_secs: f32,
     phase: f32,
     moving: bool,
     progress: f32,
@@ -123,10 +157,13 @@ struct Marker;
 struct Aura;
 #[derive(Component)]
 struct Flash(f32);
+#[derive(Component)]
+struct LungeTrail(f32);
 #[derive(Resource)]
 struct Art {
     arc: Handle<Mesh>,
     ring: Handle<Mesh>,
+    streak: Handle<Mesh>,
     idle_cyan: Handle<StandardMaterial>,
     cyan: Handle<StandardMaterial>,
     gold: Handle<StandardMaterial>,
@@ -142,7 +179,16 @@ pub(crate) fn install(app: &mut App) {
     .add_systems(Startup, (art, spawn_hud))
     .add_systems(
         Update,
-        (reconcile, contacts, orders, behavior, visuals, auras)
+        (
+            cycle_stance,
+            reconcile,
+            contacts,
+            orders,
+            behavior,
+            ai::advance_waves,
+            visuals,
+            auras,
+        )
             .chain()
             .after(CombatSet::PlayerDamage)
             .after(crate::feedback::FeedbackSet::ContactPause)
@@ -164,9 +210,13 @@ fn art(
         cull_mode: None,
         ..default()
     };
+    let mut streak = Vec::new();
+    skill_vfx_art::ribbon(&mut streak, Vec2::ZERO, Vec2::Y * 0.4, 0.0, 0.065);
+    skill_vfx_art::ribbon(&mut streak, Vec2::Y * 0.4, Vec2::Y, 0.065, 0.0);
     commands.insert_resource(Art {
         arc: meshes.add(skill_vfx_art::arc(2.2, 0.035)),
         ring: meshes.add(skill_vfx_art::arc(std::f32::consts::TAU, 0.018)),
+        streak: meshes.add(skill_vfx_art::mesh(streak)),
         idle_cyan: materials.add(material(
             Color::srgba(0.14, 0.78, 0.72, 0.45),
             LinearRgba::new(0.06, 0.42, 0.44, 1.0),
@@ -180,6 +230,38 @@ fn art(
             LinearRgba::new(1.2, 0.7, 0.15, 1.0),
         )),
     });
+}
+fn cycle_stance(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    selected: Res<SelectedClass>,
+    language: Res<crate::ui::localization::UiLanguage>,
+    player: Query<&Transform, With<Player>>,
+    mut session: ResMut<SummonStatus>,
+    mut combat_events: MessageWriter<CombatEvent>,
+    mut floating: MessageWriter<FloatingCombatTextEvent>,
+) {
+    if selected.0 != HeroClass::Soulbinder
+        || !keyboard.just_pressed(crate::companion::SENTINEL_STANCE_KEY)
+    {
+        return;
+    }
+    session.stance = session.stance.next();
+    let zh = *language == crate::ui::localization::UiLanguage::Chinese;
+    let label = session.stance.label(zh);
+    combat_events.write(CombatEvent {
+        text: if zh {
+            format!("契灵姿态：{label}")
+        } else {
+            format!("Summon stance: {label}")
+        },
+    });
+    if let Ok(hero) = player.single() {
+        floating.write(FloatingCombatTextEvent {
+            text: label.to_string(),
+            position: hero.translation + Vec3::Y * 1.4,
+            critical: false,
+        });
+    }
 }
 #[allow(clippy::too_many_arguments)]
 fn reconcile(
@@ -253,7 +335,14 @@ fn reconcile(
                     slot,
                     bone,
                     attack: None,
+                    auto_target: None,
                     cooldown: 0.0,
+                    lunge_cooldown: 0.35 + slot as f32 * 0.25,
+                    cleave_cooldown: 0.8 + slot as f32 * 0.3,
+                    wave_cooldown: 1.0,
+                    taunt_cooldown: 0.8 + slot as f32 * 0.35,
+                    action_label: AutoAction::Idle,
+                    action_banner_secs: 0.0,
                     phase: 0.0,
                     moving: false,
                     progress: 1.0,
@@ -659,20 +748,27 @@ fn behavior(
             }
         }
     }
-    let target_position = session.bond.target.and_then(|target| {
+    let marked_target = session.bond.target.and_then(|target| {
         damage
             .enemies
             .get(target)
             .ok()
             .filter(|e| e.3.current > 0.0)
-            .map(|e| e.1.translation)
+            .map(|e| (target, e.1.translation))
     });
     session.bond.tick(
         dt,
         health.current > 0.0
-            && target_position.is_some_and(|position| within_leash(hero.translation, position)),
+            && marked_target.is_some_and(|(_, position)| within_leash(hero.translation, position)),
     );
+    let marked_target = if session.bond.target.is_some() {
+        marked_target
+    } else {
+        None
+    };
     session.marked = session.bond.target;
+    let cd_rate = if session.overdrive > 0.0 { 1.5 } else { 1.0 };
+    let mut claimed_targets: Vec<Entity> = Vec::with_capacity(2);
     for (mut position, mut vitality, mut state, mut visible, contact_pause) in &mut minions {
         let new_max = (if state.bone {
             tuning.bone_health
@@ -686,9 +782,20 @@ fn behavior(
             vitality.current = new_max * fraction;
         }
         vitality.guard_secs = (vitality.guard_secs - dt).max(0.0);
+        state.lunge_cooldown = (state.lunge_cooldown - dt * cd_rate).max(0.0);
+        state.cleave_cooldown = (state.cleave_cooldown - dt * cd_rate).max(0.0);
+        state.wave_cooldown = (state.wave_cooldown - dt * cd_rate).max(0.0);
+        state.taunt_cooldown = (state.taunt_cooldown - dt * cd_rate).max(0.0);
+        state.action_banner_secs = (state.action_banner_secs - dt).max(0.0);
+        if state.action_banner_secs <= 0.0
+            && !matches!(state.action_label, AutoAction::Idle | AutoAction::Hunting)
+        {
+            state.action_label = AutoAction::Idle;
+        }
         if health.current <= 0.0 {
             *visible = Visibility::Hidden;
             state.attack = None;
+            state.auto_target = None;
             state.echo = None;
             continue;
         }
@@ -719,9 +826,12 @@ fn behavior(
                 Visibility::Hidden
             };
             state.attack = None;
+            state.auto_target = None;
             state.moving = false;
             state.echo = None;
             state.retreating = false;
+            state.action_label = AutoAction::Idle;
+            state.action_banner_secs = 0.0;
             state.progress = 1.0;
             if vitality.dead_secs <= 0.0 {
                 vitality.current = vitality.max
@@ -762,8 +872,10 @@ fn behavior(
             && depth::retreating(state.retreating, vitality.current, vitality.max, &tuning);
         if state.retreating {
             state.attack = None;
+            state.auto_target = None;
             state.echo = None;
             state.volley = 0.0;
+            state.action_label = AutoAction::Idle;
             if position.translation.distance(hero.translation) < 2.0 {
                 vitality.current =
                     (vitality.current + tuning.retreat_heal_per_sec * dt).min(vitality.max);
@@ -783,9 +895,40 @@ fn behavior(
             vitality.current =
                 (vitality.current + dt * tuning.bone_regen_per_sec).min(vitality.max);
         }
+        let effective = if session.guard > 0.0 || state.retreating {
+            None
+        } else {
+            ai::acquire_target(
+                session.stance,
+                state.bone,
+                hero.translation,
+                position.translation,
+                marked_target,
+                state.auto_target,
+                &claimed_targets,
+                &damage.enemies,
+                &tuning,
+            )
+        };
+        let effective_entity = effective.map(|(entity, _, _)| entity);
+        let effective_pos = effective.map(|(_, pos, _)| pos);
+        if let Some((entity, _, is_marked)) = effective {
+            state.auto_target = if is_marked { None } else { Some(entity) };
+            if !is_marked {
+                claimed_targets.push(entity);
+            }
+            if state.action_banner_secs <= 0.0 {
+                state.action_label = AutoAction::Hunting;
+            }
+        } else {
+            state.auto_target = None;
+            if state.action_banner_secs <= 0.0 {
+                state.action_label = AutoAction::Idle;
+            }
+        }
         if state
             .attack
-            .is_some_and(|(target, _, _)| Some(target) != session.bond.target)
+            .is_some_and(|(target, _, _)| Some(target) != effective_entity)
         {
             state.attack = None;
         }
@@ -793,8 +936,7 @@ fn behavior(
         let goal = if session.guard > 0.0 || state.retreating {
             hero.translation + formation(state.slot, state.bone)
         } else {
-            target_position
-                .filter(|_| session.bond.target.is_some())
+            effective_pos
                 .map(|target| {
                     if talents.bone >= 5 {
                         depth::flank(target, hero.translation, state.slot, tuning.flank_offset)
@@ -808,6 +950,40 @@ fn behavior(
             position.translation = hero.translation + formation(state.slot, state.bone);
             state.attack = None;
         }
+
+        // Autonomous active skill rotation (Phantom Lunge, Spectral Cleave, Spectral Wave, Ossuary Slam).
+        let mut cast_auto_skill = false;
+        if state.attack.is_none()
+            && state.cooldown == 0.0
+            && state.volley <= 0.0
+            && session.guard == 0.0
+            && !state.retreating
+            && let Some((target, target_pos, _)) = effective
+        {
+            let base = if state.bone {
+                tuning.bone_damage
+            } else {
+                tuning.spirit_damage
+            };
+            let scaled = scaled_damage(base, bonus.0, level.level, &tuning);
+            cast_auto_skill = ai::try_cast_autonomous_skill(
+                &mut state,
+                &mut vitality,
+                &mut position,
+                hero.translation,
+                target,
+                target_pos,
+                scaled,
+                session.overdrive > 0.0,
+                session.rune,
+                &layout,
+                &mut damage,
+                &mut commands,
+                &art,
+                &tuning,
+            );
+        }
+
         let delta = Vec3::new(
             goal.x - position.translation.x,
             0.0,
@@ -815,12 +991,12 @@ fn behavior(
         );
         let distance = delta.length();
         let facing = delta.normalize_or_zero();
-        let stop = if session.bond.target.is_some() && session.guard == 0.0 && !state.retreating {
+        let stop = if effective_entity.is_some() && session.guard == 0.0 && !state.retreating {
             if talents.bone >= 5 { 0.12 } else { REACH * 0.8 }
         } else {
             0.15
         };
-        state.moving = distance > stop && state.attack.is_none();
+        state.moving = !cast_auto_skill && distance > stop && state.attack.is_none();
         if state.moving {
             position.translation = crate::player::clamp_player_translation(
                 &layout,
@@ -832,15 +1008,16 @@ fn behavior(
             );
             state.phase += dt * 12.0;
         }
-        if facing.length_squared() > 0.0 {
+        if !cast_auto_skill && facing.length_squared() > 0.0 {
             position.rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
         }
-        if state.attack.is_none()
+        if !cast_auto_skill
+            && state.attack.is_none()
             && state.cooldown == 0.0
-            && target_position.is_some_and(|target| position.translation.distance(target) <= REACH)
+            && effective_pos.is_some_and(|target| position.translation.distance(target) <= REACH)
             && session.guard == 0.0
             && !state.retreating
-            && let Some(target) = session.bond.target
+            && let Some(target) = effective_entity
         {
             state.attack = Some((
                 target,
@@ -848,7 +1025,9 @@ fn behavior(
                 state.volley > 0.0 || session.overdrive > 0.0 || session.bond.empowered,
             ));
         }
-        state.progress = 1.0;
+        if !cast_auto_skill {
+            state.progress = 1.0;
+        }
         if let Some((target, before, heavy)) = state.attack {
             let duration = if heavy { HEAVY_WINDUP } else { WINDUP };
             let speed = if session.overdrive > 0.0 {
@@ -1035,6 +1214,7 @@ fn visuals(
             Without<Enemy>,
             Without<Marker>,
             Without<Flash>,
+            Without<LungeTrail>,
             Without<Minion>,
             Without<Part>,
         ),
@@ -1045,6 +1225,7 @@ fn visuals(
             Without<Enemy>,
             Without<Marker>,
             Without<Flash>,
+            Without<LungeTrail>,
             Without<Minion>,
             Without<VisualRoot>,
         ),
@@ -1057,6 +1238,7 @@ fn visuals(
             Without<Part>,
             Without<VisualRoot>,
             Without<Flash>,
+            Without<LungeTrail>,
             Without<Minion>,
         ),
     >,
@@ -1067,6 +1249,18 @@ fn visuals(
             Without<VisualRoot>,
             Without<Enemy>,
             Without<Marker>,
+            Without<LungeTrail>,
+            Without<Minion>,
+        ),
+    >,
+    mut trails: Query<
+        (Entity, &mut LungeTrail, &mut Transform),
+        (
+            Without<Part>,
+            Without<VisualRoot>,
+            Without<Enemy>,
+            Without<Marker>,
+            Without<Flash>,
             Without<Minion>,
         ),
     >,
@@ -1122,11 +1316,27 @@ fn visuals(
             commands.entity(entity).despawn();
         }
     }
+    for (entity, mut life, mut transform) in &mut trails {
+        life.0 -= time.delta_secs();
+        transform.scale.x = (transform.scale.x * (1.0 - time.delta_secs() * 6.0)).max(0.02);
+        if life.0 <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
 }
 #[allow(clippy::type_complexity)]
 fn clear(
     mut commands: Commands,
-    roots: Query<Entity, Or<(With<Minion>, With<Marker>, With<Flash>)>>,
+    roots: Query<
+        Entity,
+        Or<(
+            With<Minion>,
+            With<Marker>,
+            With<Flash>,
+            With<LungeTrail>,
+            With<SummonWave>,
+        )>,
+    >,
     mut panels: Query<&mut Node, With<MinionHud>>,
     mut session: ResMut<SummonStatus>,
 ) {
@@ -1279,6 +1489,12 @@ fn update_hud(
             }
         }
     }
+    let active_action = rows.iter().find_map(|(s, v)| {
+        (v.current > 0.0)
+            .then(|| s.action_label.label(zh))
+            .flatten()
+    });
+    let stance_label = session.stance.label(zh);
     let text = rows
         .into_iter()
         .map(|(s, v)| {
@@ -1319,11 +1535,14 @@ fn update_hud(
         )
     } else if session.guard > 0.0 {
         if zh { "护阵" } else { "Guarding" }.to_string()
+    } else if let Some(action) = active_action {
+        action.to_string()
     } else if session.marked.is_some() {
         if zh { "追击" } else { "Pursuing" }.to_string()
     } else {
         if zh { "待命" } else { "Following" }.to_string()
     };
+    let status = format!("{status} · [N] {stance_label}");
     let resonance = if player.single().is_ok_and(|tree| tree.spirit >= 1) {
         if session.bond.empowered {
             if zh {

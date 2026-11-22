@@ -202,10 +202,13 @@ type CompanionEnemyQuery<'w, 's> = Query<
 
 fn cycle_companion_stance(
     keyboard: Res<ButtonInput<KeyCode>>,
+    selected: Res<crate::class::SelectedClass>,
     mut combat_events: MessageWriter<CombatEvent>,
     mut player: Query<&mut CompanionBond, With<Player>>,
 ) {
-    if !keyboard.just_pressed(SENTINEL_STANCE_KEY) {
+    if selected.0 == crate::class::HeroClass::Soulbinder
+        || !keyboard.just_pressed(SENTINEL_STANCE_KEY)
+    {
         return;
     }
     let Ok(mut bond) = player.single_mut() else {
