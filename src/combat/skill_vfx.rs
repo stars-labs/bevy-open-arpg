@@ -50,6 +50,22 @@ pub(crate) struct EvadeVisual {
     pub phase: EvadeVfxPhase,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClassProcKind {
+    WardenSolarCleave,
+    WardenAegisQuake,
+    StalkerPhantomVolley,
+    EmberOverload,
+}
+
+#[derive(Message, Clone, Copy, Debug)]
+pub(super) struct ClassProcVisual {
+    pub kind: ClassProcKind,
+    pub origin: Vec3,
+    pub facing: Vec3,
+    pub radius: f32,
+}
+
 pub(super) struct SkillVfxPlugin;
 impl Plugin for SkillVfxPlugin {
     fn build(&self, app: &mut App) {
@@ -57,6 +73,7 @@ impl Plugin for SkillVfxPlugin {
             .add_message::<MovementVisual>()
             .add_message::<ProjectileVisual>()
             .add_message::<EvadeVisual>()
+            .add_message::<ClassProcVisual>()
             .add_systems(Startup, prepare_art)
             .add_systems(
                 Update,
@@ -64,6 +81,7 @@ impl Plugin for SkillVfxPlugin {
                     show_releases,
                     show_movement,
                     show_evade,
+                    show_class_procs,
                     show_projectile_trails,
                     animate,
                 )
@@ -348,59 +366,187 @@ fn show_releases(
                 }
             }
             StrikeShape::GroundBlast { radius, delay, .. } => {
-                // A bright boundary charges at the target; descending streaks arrive
-                // when damage resolves. The hero and enemies remain visible inside it.
-                spawn(
+                // Class-distinct ground-targeted telegraphs:
+                // - Stalker Arrow Rain: hunter-emerald reticle + 14 angled bone arrows plunging down
+                // - Embercaller Cinderfall: counter-rotating molten ritual rings + blazing angled meteor
+                let (primary, core) = evade_palette(selected.0);
+                let ring_color = if selected.0 == HeroClass::Stalker {
+                    primary
+                } else {
+                    tint(e.cast.rune)
+                };
+                spawn_colored(
                     &mut commands,
                     &mut materials,
                     art.ring.clone(),
-                    e.cast.rune,
+                    ring_color,
+                    2.4,
                     Stroke {
                         pose: Transform::from_translation(base).with_scale(Vec3::splat(radius)),
                         end_scale: Vec3::splat(radius * 0.96),
                         duration: delay,
                         velocity: Vec3::ZERO,
-                        spin: 0.7,
+                        spin: 0.9,
                     },
                 );
-                for i in 0..5 {
-                    let angle = i as f32 * 2.399;
-                    let offset = Vec3::new(angle.sin(), 0.0, angle.cos()) * radius * 0.45;
-                    spawn(
+                if selected.0 == HeroClass::Stalker {
+                    // Inner hunter lock-on ring + 14 angled emerald arrow streaks raining across the zone
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.ring.clone(),
+                        core,
+                        2.6,
+                        Stroke {
+                            pose: Transform::from_translation(base + Vec3::Y * 0.02)
+                                .with_scale(Vec3::splat(radius * 0.45)),
+                            end_scale: Vec3::splat(radius * 0.92),
+                            duration: delay,
+                            velocity: Vec3::ZERO,
+                            spin: -1.6,
+                        },
+                    );
+                    for i in 0..14 {
+                        let angle = i as f32 * 2.39996;
+                        let frac = ((i as f32 + 0.5) / 14.0).sqrt();
+                        let offset =
+                            Vec3::new(angle.sin(), 0.0, angle.cos()) * radius * 0.82 * frac;
+                        let start_h = 3.2 + (i % 4) as f32 * 0.75;
+                        let slant = Vec3::new(-0.32, -1.0, -0.22).normalize();
+                        let fall_time = (delay * (0.72 + (i % 3) as f32 * 0.14)).max(0.12);
+                        spawn_colored(
+                            &mut commands,
+                            &mut materials,
+                            art.streak.clone(),
+                            if i % 3 == 0 { core } else { primary },
+                            2.7,
+                            Stroke {
+                                pose: Transform::from_translation(base + offset - slant * start_h)
+                                    .with_rotation(
+                                        Quat::from_rotation_y(angle * 0.15)
+                                            * Quat::from_rotation_x(
+                                                std::f32::consts::FRAC_PI_2 - 0.34,
+                                            ),
+                                    )
+                                    .with_scale(Vec3::new(0.48, 1.0, 1.15)),
+                                end_scale: Vec3::new(0.18, 1.0, 1.35),
+                                duration: fall_time,
+                                velocity: slant * (start_h / fall_time),
+                                spin: 0.0,
+                            },
+                        );
+                    }
+                } else {
+                    // Embercaller Cinderfall: counter-rotating inner molten seal + blazing angled meteor!
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.ring.clone(),
+                        core,
+                        3.0,
+                        Stroke {
+                            pose: Transform::from_translation(base + Vec3::Y * 0.03)
+                                .with_scale(Vec3::splat(radius * 0.32)),
+                            end_scale: Vec3::splat(radius * 0.94),
+                            duration: delay,
+                            velocity: Vec3::ZERO,
+                            spin: -2.2,
+                        },
+                    );
+                    let meteor_dir = Vec3::new(0.36, -1.0, 0.24).normalize();
+                    let drop_dist = 4.8;
+                    let meteor_yaw = meteor_dir.x.atan2(meteor_dir.z);
+                    spawn_colored(
                         &mut commands,
                         &mut materials,
                         art.streak.clone(),
-                        e.cast.rune,
+                        core,
+                        3.6,
                         Stroke {
-                            pose: Transform::from_translation(base + offset + Vec3::Y * 2.6)
-                                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
-                                .with_scale(Vec3::new(0.6, 1.0, 0.8)),
-                            end_scale: Vec3::new(0.2, 1.0, 1.1),
+                            pose: Transform::from_translation(base - meteor_dir * drop_dist)
+                                .with_rotation(
+                                    Quat::from_rotation_y(meteor_yaw)
+                                        * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 - 0.40),
+                                )
+                                .with_scale(Vec3::new(2.2, 1.0, 2.0)),
+                            end_scale: Vec3::new(3.0, 1.0, 2.4),
                             duration: delay,
-                            velocity: Vec3::NEG_Y * (2.6 / delay.max(0.05)),
+                            velocity: meteor_dir * (drop_dist / delay.max(0.05)),
                             spin: 0.0,
                         },
                     );
+                    for i in 0..6 {
+                        let angle = i as f32 * std::f32::consts::TAU / 6.0;
+                        let offset = Vec3::new(angle.sin(), 0.0, angle.cos()) * radius * 0.36;
+                        spawn_colored(
+                            &mut commands,
+                            &mut materials,
+                            art.streak.clone(),
+                            primary,
+                            2.8,
+                            Stroke {
+                                pose: Transform::from_translation(
+                                    base + offset - meteor_dir * (drop_dist * 0.85),
+                                )
+                                .with_rotation(
+                                    Quat::from_rotation_y(meteor_yaw)
+                                        * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 - 0.40),
+                                )
+                                .with_scale(Vec3::new(0.85, 1.0, 1.35)),
+                                end_scale: Vec3::new(0.25, 1.0, 1.65),
+                                duration: delay,
+                                velocity: meteor_dir * ((drop_dist * 0.85) / delay.max(0.05)),
+                                spin: 0.0,
+                            },
+                        );
+                    }
                 }
             }
             StrikeShape::Projectiles { .. } => {
-                spawn(
+                let (primary, core) = evade_palette(selected.0);
+                spawn_colored(
                     &mut commands,
                     &mut materials,
                     art.crescent.clone(),
-                    e.cast.rune,
+                    if selected.0 == HeroClass::Stalker {
+                        core
+                    } else {
+                        tint(e.cast.rune)
+                    },
+                    2.6,
                     Stroke {
                         pose: Transform::from_translation(
                             e.origin + e.facing * 0.65 + Vec3::Y * 0.9,
                         )
                         .with_rotation(Quat::from_rotation_y(yaw))
-                        .with_scale(Vec3::splat(0.24)),
-                        end_scale: Vec3::splat(0.5),
+                        .with_scale(Vec3::splat(0.28)),
+                        end_scale: Vec3::splat(0.62),
                         duration: 0.24,
-                        velocity: e.facing * 0.4,
+                        velocity: e.facing * 0.55,
                         spin: 0.0,
                     },
                 );
+                if selected.0 == HeroClass::Stalker {
+                    // Crisp emerald bowstring snap flash
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        primary,
+                        2.5,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.origin + e.facing * 0.5 + Vec3::Y * 0.92,
+                            )
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(0.9, 1.0, 1.1)),
+                            end_scale: Vec3::new(0.0, 1.0, 1.6),
+                            duration: 0.18,
+                            velocity: e.facing * 1.6,
+                            spin: 0.0,
+                        },
+                    );
+                }
             }
         }
     }
@@ -408,32 +554,410 @@ fn show_releases(
 fn show_movement(
     mut commands: Commands,
     art: Res<Art>,
+    selected: Res<SelectedClass>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut events: MessageReader<MovementVisual>,
 ) {
+    let (primary, core) = evade_palette(selected.0);
     for e in events.read() {
         let delta = (e.end - e.start).with_y(0.0);
         if delta.length_squared() < 0.01 {
             continue;
         }
+        let len = delta.length();
+        let dir = delta / len;
         let yaw = delta.x.atan2(delta.z);
         let side = Vec3::new(delta.z, 0.0, -delta.x).normalize_or_zero();
-        for offset in [-0.20, 0.20] {
-            spawn(
-                &mut commands,
-                &mut materials,
-                art.streak.clone(),
-                e.rune,
-                Stroke {
-                    pose: Transform::from_translation(e.start + side * offset + Vec3::Y * 0.32)
-                        .with_rotation(Quat::from_rotation_y(yaw))
-                        .with_scale(Vec3::new(0.7, 1.0, delta.length())),
-                    end_scale: Vec3::new(0.0, 1.0, delta.length()),
-                    duration: 0.38,
-                    velocity: Vec3::ZERO,
-                    spin: 0.0,
-                },
-            );
+        match selected.0 {
+            HeroClass::Warden => {
+                // Heavy gilded charge plow rails + landing shock fracture & ring
+                for offset in [-0.30, 0.0, 0.30] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        if offset == 0.0 { core } else { primary },
+                        2.7,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.start + side * offset + Vec3::Y * 0.22,
+                            )
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(
+                                if offset == 0.0 { 1.3 } else { 0.85 },
+                                1.0,
+                                len,
+                            )),
+                            end_scale: Vec3::new(0.0, 1.0, len),
+                            duration: 0.38,
+                            velocity: Vec3::ZERO,
+                            spin: 0.0,
+                        },
+                    );
+                }
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.fracture.clone(),
+                    primary,
+                    2.6,
+                    Stroke {
+                        pose: Transform::from_translation(e.end + Vec3::Y * 0.09)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::splat(0.75)),
+                        end_scale: Vec3::splat(1.75),
+                        duration: 0.42,
+                        velocity: Vec3::ZERO,
+                        spin: 0.0,
+                    },
+                );
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    core,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(e.end + Vec3::Y * 0.11)
+                            .with_scale(Vec3::splat(0.35)),
+                        end_scale: Vec3::splat(1.85),
+                        duration: 0.28,
+                        velocity: Vec3::ZERO,
+                        spin: 1.8,
+                    },
+                );
+            }
+            HeroClass::Stalker => {
+                // Hunter emerald wind-arcs + shadow feather shards + agile landing vortex
+                for offset in [-0.24, 0.24] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        primary,
+                        2.6,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.start + side * offset + Vec3::Y * 0.46,
+                            )
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(0.95, 1.0, len)),
+                            end_scale: Vec3::new(0.0, 1.0, len * 1.1),
+                            duration: 0.32,
+                            velocity: Vec3::ZERO,
+                            spin: 0.0,
+                        },
+                    );
+                }
+                for i in 0..4 {
+                    let spread = (i as f32 - 1.5) * 0.28;
+                    let back_yaw = yaw + std::f32::consts::PI + spread;
+                    let back_dir = Vec3::new(back_yaw.sin(), 0.0, back_yaw.cos());
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        core,
+                        2.7,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.start + Vec3::Y * (0.4 + i as f32 * 0.18),
+                            )
+                            .with_rotation(Quat::from_rotation_y(back_yaw))
+                            .with_scale(Vec3::new(0.75, 1.0, 0.9)),
+                            end_scale: Vec3::new(0.0, 1.0, 1.3),
+                            duration: 0.26,
+                            velocity: back_dir * 2.4 + Vec3::Y * 0.35,
+                            spin: 0.0,
+                        },
+                    );
+                }
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.crescent.clone(),
+                    core,
+                    2.6,
+                    Stroke {
+                        pose: Transform::from_translation(e.end + Vec3::Y * 0.42)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::splat(0.55)),
+                        end_scale: Vec3::splat(1.35),
+                        duration: 0.22,
+                        velocity: dir * 0.8,
+                        spin: 2.2,
+                    },
+                );
+            }
+            HeroClass::Embercaller => {
+                // Vertical molten-orange phase-flame pillar at departure + ember blink trail + arrival spark ring
+                for (offset, color, width, h) in [
+                    (0.0, core, 1.8, 2.2),
+                    (-0.26, primary, 1.2, 1.7),
+                    (0.26, primary, 1.2, 1.7),
+                ] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        color,
+                        3.2,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.start + side * offset + Vec3::Y * 0.08,
+                            )
+                            .with_rotation(
+                                Quat::from_rotation_y(yaw)
+                                    * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                            )
+                            .with_scale(Vec3::new(width, 1.0, h)),
+                            end_scale: Vec3::new(0.0, 1.0, h * 1.3),
+                            duration: 0.30,
+                            velocity: Vec3::Y * 0.8,
+                            spin: 0.0,
+                        },
+                    );
+                }
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.streak.clone(),
+                    primary,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(e.start + Vec3::Y * 0.65)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(1.2, 1.0, len)),
+                        end_scale: Vec3::new(0.0, 1.0, len),
+                        duration: 0.30,
+                        velocity: Vec3::ZERO,
+                        spin: 0.0,
+                    },
+                );
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    core,
+                    3.0,
+                    Stroke {
+                        pose: Transform::from_translation(e.end + Vec3::Y * 0.10)
+                            .with_scale(Vec3::splat(1.35)),
+                        end_scale: Vec3::splat(0.45),
+                        duration: 0.24,
+                        velocity: Vec3::ZERO,
+                        spin: -3.0,
+                    },
+                );
+            }
+            HeroClass::Soulbinder => {
+                for offset in [-0.20, 0.20] {
+                    spawn(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        e.rune,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.start + side * offset + Vec3::Y * 0.32,
+                            )
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(0.7, 1.0, len)),
+                            end_scale: Vec3::new(0.0, 1.0, len),
+                            duration: 0.38,
+                            velocity: Vec3::ZERO,
+                            spin: 0.0,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+fn show_class_procs(
+    mut commands: Commands,
+    art: Res<Art>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut events: MessageReader<ClassProcVisual>,
+) {
+    for e in events.read() {
+        let dir = Vec3::new(e.facing.x, 0.0, e.facing.z).normalize_or(Vec3::Z);
+        let yaw = dir.x.atan2(dir.z);
+        let base = e.origin + Vec3::Y * 0.10;
+        match e.kind {
+            ClassProcKind::WardenSolarCleave => {
+                let gold = Color::srgb(1.0, 0.78, 0.26);
+                let bright = Color::srgb(1.0, 0.96, 0.75);
+                // Twin crossed golden solar crescents + gilded ground fracture
+                for roll in [-0.42_f32, 0.42_f32] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.crescent.clone(),
+                        if roll < 0.0 { bright } else { gold },
+                        3.2,
+                        Stroke {
+                            pose: Transform::from_translation(base + Vec3::Y * 0.58 + dir * 0.35)
+                                .with_rotation(
+                                    Quat::from_rotation_y(yaw) * Quat::from_rotation_z(roll),
+                                )
+                                .with_scale(Vec3::splat(e.radius * 0.55)),
+                            end_scale: Vec3::splat(e.radius * 1.08),
+                            duration: 0.34,
+                            velocity: dir * 1.2,
+                            spin: if roll < 0.0 { 1.4 } else { -1.4 },
+                        },
+                    );
+                }
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    gold,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(base).with_scale(Vec3::splat(0.4)),
+                        end_scale: Vec3::splat(e.radius),
+                        duration: 0.34,
+                        velocity: Vec3::ZERO,
+                        spin: 1.6,
+                    },
+                );
+            }
+            ClassProcKind::WardenAegisQuake => {
+                let gold = Color::srgb(0.98, 0.68, 0.18);
+                let white = Color::srgb(1.0, 0.94, 0.80);
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.fracture.clone(),
+                    gold,
+                    3.0,
+                    Stroke {
+                        pose: Transform::from_translation(base + Vec3::Y * 0.02)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::splat(e.radius * 0.5)),
+                        end_scale: Vec3::splat(e.radius * 1.02),
+                        duration: 0.52,
+                        velocity: Vec3::ZERO,
+                        spin: 0.0,
+                    },
+                );
+                for (scale, color, dur) in [(0.35, white, 0.28), (0.55, gold, 0.42)] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.ring.clone(),
+                        color,
+                        3.0,
+                        Stroke {
+                            pose: Transform::from_translation(base)
+                                .with_scale(Vec3::splat(e.radius * scale)),
+                            end_scale: Vec3::splat(e.radius * 1.12),
+                            duration: dur,
+                            velocity: Vec3::ZERO,
+                            spin: 1.5,
+                        },
+                    );
+                }
+            }
+            ClassProcKind::StalkerPhantomVolley => {
+                let emerald = Color::srgb(0.22, 0.95, 0.72);
+                let bright = Color::srgb(0.76, 1.0, 0.92);
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.crescent.clone(),
+                    bright,
+                    3.2,
+                    Stroke {
+                        pose: Transform::from_translation(e.origin + dir * 0.75 + Vec3::Y * 0.92)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::splat(0.45)),
+                        end_scale: Vec3::splat(1.25),
+                        duration: 0.24,
+                        velocity: dir * 1.8,
+                        spin: 0.0,
+                    },
+                );
+                for spread in [-0.24_f32, 0.24_f32] {
+                    let syaw = yaw + spread;
+                    let sdir = Vec3::new(syaw.sin(), 0.0, syaw.cos());
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        emerald,
+                        2.8,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.origin + sdir * 0.4 + Vec3::Y * 0.92,
+                            )
+                            .with_rotation(Quat::from_rotation_y(syaw))
+                            .with_scale(Vec3::new(0.85, 1.0, 1.8)),
+                            end_scale: Vec3::new(0.0, 1.0, 2.8),
+                            duration: 0.22,
+                            velocity: sdir * 3.5,
+                            spin: 0.0,
+                        },
+                    );
+                }
+            }
+            ClassProcKind::EmberOverload => {
+                let flame = Color::srgb(1.0, 0.42, 0.08);
+                let violet = Color::srgb(0.78, 0.36, 1.0);
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    flame,
+                    3.2,
+                    Stroke {
+                        pose: Transform::from_translation(base).with_scale(Vec3::splat(0.45)),
+                        end_scale: Vec3::splat(e.radius * 1.15),
+                        duration: 0.38,
+                        velocity: Vec3::ZERO,
+                        spin: 2.8,
+                    },
+                );
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    violet,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(base + Vec3::Y * 0.04)
+                            .with_scale(Vec3::splat(e.radius * 0.3)),
+                        end_scale: Vec3::splat(e.radius * 0.92),
+                        duration: 0.34,
+                        velocity: Vec3::ZERO,
+                        spin: -3.2,
+                    },
+                );
+                for i in 0..6 {
+                    let angle = i as f32 * std::f32::consts::TAU / 6.0;
+                    let out = Vec3::new(angle.sin(), 0.0, angle.cos());
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        if i % 2 == 0 { flame } else { violet },
+                        3.0,
+                        Stroke {
+                            pose: Transform::from_translation(base + out * 0.4 + Vec3::Y * 0.45)
+                                .with_rotation(
+                                    Quat::from_rotation_y(angle) * Quat::from_rotation_x(-0.55),
+                                )
+                                .with_scale(Vec3::new(0.9, 1.0, 0.9)),
+                            end_scale: Vec3::ZERO,
+                            duration: 0.36,
+                            velocity: out * 3.2 + Vec3::Y * 1.4,
+                            spin: 0.0,
+                        },
+                    );
+                }
+            }
         }
     }
 }

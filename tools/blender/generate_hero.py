@@ -171,21 +171,37 @@ def body():
     loft('leather sword belt',[(.91,.289,.211,0),(.969,.289,.211,0)],LEATHER)
     plate('reliquary belt buckle',[(-.075,-.239,.91),(.075,-.239,.91),(.066,-.239,.99),(-.066,-.239,.99)],GOLD)
     ellipsoid('buckle carnelian',(0,-.258,.953),(.03,.012,.025),EMBER)
-    loft('raised gorget',[(1.44,.225,.16,0),(1.57,.19,.15,0)],STEEL)
+    loft('raised gorget',[(1.44,.225,.16,0),(1.57,.19,.15,0)],STEEL,sides=32)
     trim_ring('gorget gold lip',1.56,.193,.153)
-    ellipsoid('helmet skull',(0,.005,1.755),(.25,.223,.284),STEEL)
-    # Angular enclosed visor and nose ridge, not a featureless sphere.
+    # Angular gothic cathedral greathelm (replaces round bowling-ball dome)
+    loft('gothic greathelm cranium',[
+        (1.57,.168,.176,-.008),(1.72,.198,.208,-.010),
+        (1.86,.192,.198,-.006),(1.96,.148,.154,0),(2.02,.085,.092,0)
+    ],STEEL,sides=32,bevel=.008)
     for side in [-1,1]:
-        plate('enclosed angular visor',[(0,-.249,1.72),(side*.213,-.14,1.75),
-             (side*.184,-.14,1.60),(side*.073,-.23,1.53),(0,-.267,1.60)],EDGE)
-        rod('brow gilding',(side*.018,-.241,1.815),(side*.205,-.142,1.795),.018,GOLD)
-        rod('shadowed eye slit',(side*.035,-.254,1.776),(side*.181,-.184,1.778),.021,DARK)
-        rod('ember eye glint',(side*.06,-.269,1.78),(side*.143,-.213,1.78),.005,EMBER)
+        plate('enclosed angular visor',[(side*.012,-.252,1.76),(side*.215,-.135,1.78),
+             (side*.190,-.132,1.60),(side*.078,-.232,1.54),(side*.012,-.266,1.60)],EDGE,.024)
+        rod('brow gilding',(side*.016,-.250,1.820),(side*.208,-.138,1.800),.016,GOLD)
+        rod('shadowed eye slit',(side*.028,-.260,1.778),(side*.182,-.182,1.780),.022,DARK)
+        rod('ember eye glint',(side*.045,-.272,1.780),(side*.148,-.212,1.782),.007,EMBER)
         for j in range(3):
-            x=side*(.055+.035*j)
-            rod('visor breathing slot',(x,-.255+abs(x)*.35,1.615),(x,-.25+abs(x)*.35,1.66),.009,DARK)
-    rod('helmet center ridge',(0,-.223,1.61),(0,-.246,1.9),.018,GOLD)
-    plate('helmet crest',[(0,-.10,1.96),(0,.08,2.065),(0,.23,1.86)],GOLD,.036)
+            x=side*(.055+.034*j)
+            rod('visor breathing slot',(x,-.258+abs(x)*.35,1.615),(x,-.252+abs(x)*.35,1.665),.009,DARK)
+    rod('helmet center ridge',(0,-.264,1.59),(0,-.256,1.94),.018,GOLD)
+    # Tall gothic reliquary cathedral crown spires atop the greathelm (matches portrait!)
+    trim_ring('greathelm crown band',1.93,.182,.188,-.004,mat=GOLD,radius=.014)
+    trim_ring('greathelm crown base',1.89,.188,.194,-.004,mat=STEEL,radius=.012)
+    for ang, hgt, rad in [(0.0,.26,.020),(.58,.18,.015),(-.58,.18,.015),(1.22,.15,.013),(-1.22,.15,.013),(2.05,.12,.011),(-2.05,.12,.011)]:
+        bx=math.sin(ang)*.178; by=-.004-math.cos(ang)*.184
+        tx=math.sin(ang)*(.192+hgt*.06); ty=-.004-math.cos(ang)*(.198+hgt*.06)
+        rod('cathedral crown spire',(bx,by,1.92),(tx,ty,1.92+hgt),rad,GOLD if hgt>.16 else STEEL,10)
+        if hgt>.20:
+            # Gothic reliquary cross-bar at central peak
+            rod('cathedral cross bar',(-.055,ty,1.92+hgt*.72),(.055,ty,1.92+hgt*.72),.010,GOLD,8)
+    # Ornate hanging reliquary shrine charm on hip
+    rod('reliquary hip chain',(.20,-.15,.91),(.24,-.14,.74),.007,GOLD,8)
+    plate('hip reliquary frame',[(.20,-.16,.61),(.28,-.12,.61),(.28,-.12,.74),(.24,-.14,.78),(.20,-.16,.74)],GOLD,.024)
+    ellipsoid('hip reliquary ember',(.24,-.148,.675),(.020,.012,.032),EMBER)
     # Two short split cloth tassets leave both moving greaves fully visible.
     for side in [-1,1]:
         plate('split crimson tasset',[(side*.04,-.195,.87),(side*.23,-.16,.86),
@@ -240,15 +256,46 @@ def leg():
     normalize((.25,.36,.66));export('hero_leg')
 
 
+def pauldron_shell(name, side, cx, cy, cz, rx, ry, rz, mat, tilt=.24, flair=.045):
+    rows, cols = 12, 20
+    verts = []
+    for r in range(rows):
+        v = r / (rows - 1)
+        for c in range(cols):
+            u = (c / (cols - 1)) * 2. - 1.
+            ang = u * math.pi * .54
+            ridge = .018 * (1. - abs(u)) * (1. - .35 * v)
+            wrap_drop = (.058 + .038 * v) * (u * u)
+            lx = side * (v * rx + flair * (v ** 2.2) - .026 * (u * u) * v)
+            ly = math.sin(ang) * ry * (.52 + .52 * v)
+            lz = (1. - v ** 1.55) * rz - v * rx * tilt - wrap_drop + ridge * math.cos(ang)
+            verts.append((cx + lx, cy + ly, cz + lz))
+    faces = [(r * cols + c, (r + 1) * cols + c, (r + 1) * cols + c + 1, r * cols + c + 1)
+             for r in range(rows - 1) for c in range(cols - 1)]
+    mesh = bpy.data.meshes.new(name); mesh.from_pydata(verts, [], faces); mesh.update()
+    obj = bpy.data.objects.new(name, mesh); bpy.context.collection.objects.link(obj)
+    finish(obj, name, mat)
+    solid = obj.modifiers.new('plate thickness', 'SOLIDIFY'); solid.thickness = .024
+    bpy.context.view_layer.objects.active = obj; bpy.ops.object.modifier_apply(modifier=solid.name)
+    return obj
+
+
 def mantle():
     reset()
+    # Sculpted arched gothic cathedral pauldrons with gilded arch ridges & crimson shoulder drape
     for side in [-1,1]:
-        for layer in range(3):
-            ellipsoid('layered pauldron', (side*(.39+.025*layer),.025,.045-layer*.04),
-                      (.21-layer*.022,.245-layer*.012,.135-layer*.013),STEEL)
+        pauldron_shell(f'gothic upper pauldron {side}', side, side*.22, .010, .065, .32, .255, .135, STEEL, tilt=.22, flair=.05)
+        pauldron_shell(f'gothic mid pauldron {side}', side, side*.29, .012, -.005, .31, .240, .105, STEEL, tilt=.28, flair=.05)
+        pauldron_shell(f'gothic lower pauldron {side}', side, side*.34, .014, -.065, .29, .220, .082, EDGE, tilt=.32, flair=.04)
+        rod('pauldron gold crest',(side*.24,-.04,.175),(side*.48,.01,.115),.016,GOLD)
+        rod('pauldron gold rim front',(side*.28,-.21,.01),(side*.54,-.15,-.10),.012,GOLD)
+        rod('pauldron gold rim rear',(side*.28,.22,.01),(side*.54,.17,-.10),.012,GOLD)
         for i in range(3):
-            ellipsoid('pauldron brass rivet',(side*(.35+.05*i),-.198,-.013),(.018,.012,.018),GOLD)
-        rod('pauldron bright ridge',(side*.28,-.12,.14),(side*.49,.02,.15),.016,GOLD)
+            ellipsoid('pauldron brass rivet',(side*(.34+.06*i),-.195,.005-.028*i),(.016,.012,.016),GOLD)
+    # Crimson reliquary shoulder sash draped asymmetrically across right shoulder (matches portrait!)
+    pauldron_shell('crimson shoulder sash', -1, -.18, .015, .085, .24, .235, .115, CLOTH, tilt=.20, flair=.02)
+    ellipsoid('mantle relic medallion',(-.24,-.195,.02),(.046,.022,.046),GOLD)
+    ellipsoid('mantle relic core',(-.24,-.212,.02),(.020,.012,.020),EMBER)
     normalize((1.2,.53,.29));export('hero_mantle')
 
 

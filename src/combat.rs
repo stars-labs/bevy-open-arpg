@@ -1,3 +1,4 @@
+mod class_mastery;
 pub(crate) mod feel;
 mod pixelfx;
 mod presentation;
@@ -582,6 +583,7 @@ struct Release {
     facing: Vec3,
     target: Vec3,
     shape: StrikeShape,
+    movement: Movement,
     profile: StrikeProfile,
 }
 
@@ -594,8 +596,23 @@ impl StrikeWorld<'_, '_> {
             facing,
             target,
             shape,
+            movement,
             profile,
         } = release;
+        let high_fury = hero.fury.current >= 70.0;
+        let low_health = hero.health.max > 0.0 && hero.health.current / hero.health.max < 0.4;
+        self.commands.write_message(class_mastery::ClassCastSignal {
+            origin,
+            facing,
+            target,
+            shape,
+            skill: profile.skill,
+            movement,
+            damage: profile.damage,
+            impact: profile.impact_scale,
+            high_fury,
+            low_health,
+        });
         // Present confirmed releases, including empty casts, at their true footprint.
         if let Some(cast) = profile.skill
             && !matches!(shape, StrikeShape::GroundBlast { .. })
@@ -839,6 +856,7 @@ impl Plugin for CombatPlugin {
             review::install(app);
         }
         summons::install(app);
+        class_mastery::install(app);
         app.add_plugins((
             presentation::CombatPresentationPlugin,
             pixelfx::PixelFxPlugin,
@@ -1284,6 +1302,7 @@ fn player_attacks(
                     facing,
                     target,
                     shape: skill.strike,
+                    movement: skill.movement,
                     profile,
                 },
             );
@@ -1495,6 +1514,7 @@ fn resolve_pending_player_strikes(
                 facing: pending.facing,
                 target: pending.target,
                 shape: pending.shape,
+                movement: Movement::None,
                 profile: pending.profile,
             },
         );

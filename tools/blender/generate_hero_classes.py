@@ -171,6 +171,56 @@ def yring(y, zc, rx, rz, n=28, brow=0.):
              zc+rz*math.sin(TAU*i/n)) for i in range(n)]
 
 
+def gothic_hood_ring(y, zc, rx, rz, n=48, brow=0., peak=.065, drape=.024, folds=.007):
+    """Pointed gothic arch cowl facing -Y: sharp cathedral brow peak, draped sides."""
+    pts = []
+    for i in range(n):
+        ang = TAU*i/n
+        ca, sa = math.cos(ang), math.sin(ang)
+        top_peak = peak*(max(0., sa)**3.0)
+        side_taper = 1.0 - 0.14*(max(0., sa)**1.6) + drape*max(0., -sa)
+        fold = folds*math.cos(ang*7.0)*(0.35 + 0.65*abs(ca))
+        pts.append(((rx*side_taper + fold)*ca, y - brow*(max(0., sa)**1.8) + fold*0.45,
+                    zc + rz*sa + top_peak))
+    return pts
+
+
+def pauldron_shell(name, side, cx, cy, cz, rx, ry, rz, mat, tilt=.24, flair=.04):
+    """Curved gothic layered pauldron wrapping smoothly over the deltoid."""
+    rows, cols = 12, 20
+    grid = []
+    for r in range(rows):
+        v = r/(rows-1)
+        row = []
+        for c in range(cols):
+            u = (c/(cols-1))*2. - 1.
+            ang = u*math.pi*.54
+            ridge = .016*(1. - abs(u))*(1. - .35*v)
+            wrap_drop = (.055 + .035*v)*(u*u)
+            lx = side*(v*rx + flair*(v**2.2) - .026*(u*u)*v)
+            ly = math.sin(ang)*ry*(.52 + .50*v)
+            lz = (1. - v**1.55)*rz - v*rx*tilt - wrap_drop + ridge*math.cos(ang)
+            row.append((cx+lx, cy+ly, cz+lz))
+        grid.append(row)
+    return sheet(name, grid, mat, .020)
+
+
+def fingered_hand(name, z_wrist, mat, accent_mat):
+    """Five-fingered dark-fantasy gloved/wrapped hand."""
+    ellipsoid(name+' palm', (0, -.005, z_wrist-.032), (.046, .035, .042), mat, 16, 12)
+    hoop(name+' wrist band', z_wrist, .052, .046, .008, accent_mat)
+    for i in range(4):
+        fx = -.031 + i*.021
+        flen = .058 if i in (1, 2) else .048
+        limb(f'{name} finger {i}', [
+            (fx, -.016, z_wrist-.058),
+            (fx*1.04, -.030, z_wrist-.058-flen*.55),
+            (fx*1.02, -.022, z_wrist-.058-flen),
+        ], [.011, .009, .006], mat, sides=8, steps=3)
+    limb(name+' thumb', [(.038, -.012, z_wrist-.034), (.052, -.032, z_wrist-.064),
+         (.040, -.040, z_wrist-.086)], [.013, .010, .0055], mat, sides=8, steps=3)
+
+
 def hoop(name, z, rx, ry, radius, mat, cy=0., lobes=0, amp=0., wave=0., cx=0.):
     return tube(name, zring(z, rx, ry, cy, 40, lobes, amp, wave, cx), [radius]*40, mat,
                 6, (0, 0, 1), closed=True)
@@ -293,148 +343,178 @@ def export_single(name):
 
 def stalker_body():
     reset()
-    hero.loft('hunter jerkin', [(.72, .235, .16, 0), (.93, .205, .14, 0), (1.16, .27, .17, 0),
-              (1.38, .335, .19, 0), (1.50, .20, .15, 0)], ASH)
-    # Bone harness: a keeled sternum plate with three tusk ribs sweeping back.
-    plate('bone sternum plate', [(0, -.218, 1.01), (.078, -.212, 1.10), (.066, -.208, 1.30),
-          (0, -.214, 1.35), (-.066, -.208, 1.30), (-.078, -.212, 1.10)], BONE, .034)
-    limb('sternum keel', [(0, -.232, 1.04), (0, -.24, 1.18), (0, -.228, 1.32)],
-         [(.012, .010), (.02, .016), (.008, .008)], BONE, 6)
+    # Tailored charcoal-leather hunter jerkin with high-segment contour
+    hero.loft('hunter jerkin', [(.72, .232, .158, 0), (.93, .202, .138, 0), (1.16, .266, .168, 0),
+              (1.38, .325, .186, 0), (1.50, .195, .148, 0)], SHADOW, sides=36, bevel=.008)
+    # Intricate sculpted ossuary bone sternum + 5 sweeping bone ribs + cross-baldrics (matches portrait!)
+    plate('bone sternum plate', [(0, -.216, 1.00), (.074, -.210, 1.10), (.068, -.206, 1.32),
+          (0, -.216, 1.38), (-.068, -.206, 1.32), (-.074, -.210, 1.10)], BONE, .030)
+    limb('sternum keel', [(0, -.228, 1.02), (0, -.242, 1.19), (0, -.230, 1.36)],
+         [(.012, .010), (.022, .017), (.009, .009)], BONE, sides=10, steps=4)
     for s in [-1, 1]:
-        for i in range(3):
-            z = 1.09+i*.078
-            limb('harness tusk rib', [(s*.05, -.214, z), (s*(.16+.012*i), -.176, z+.035),
-                 (s*(.255+.015*i), -.094, z+.05)], [.021, .017, .005], BONE, 6, (0, 0, 1))
-    hero.loft('hunter belt', [(.895, .246, .176, 0), (.955, .246, .176, 0)], HIDE)
-    plate('bone belt toggle', [(-.05, -.212, .90), (.05, -.212, .90), (.062, -.212, .925),
-          (.05, -.212, .95), (-.05, -.212, .95), (-.062, -.212, .925)], BONE, .028)
-    plate('belt pouch', [(.115, -.212, .80), (.215, -.185, .80), (.225, -.185, .905),
-          (.105, -.212, .905)], HIDE, .07)
-    limb('pouch bone peg', [(.145, -.224, .87), (.19, -.212, .862)], [.011, .006], BONE, 6, (0, 0, 1), 1)
-    # Short split hide tassets and one sash tail; both moving legs stay visible.
+        for i in range(5):
+            z = 1.05 + i*.068
+            limb(f'harness tusk rib {s}_{i}', [
+                (s*.042, -.212, z),
+                (s*(.155 + .012*i), -.182, z + .028),
+                (s*(.258 + .015*i), -.082, z + .046),
+                (s*(.220 + .010*i), .085, z + .045),
+            ], [.020, .018, .012, .005], BONE, sides=10, steps=4)
+    # Crossed leather hunter bandolier & utility straps
+    limb('hunter leather baldric', [(-.22, -.15, 1.46), (0, -.222, 1.18), (.22, -.16, .92)],
+         [(.024, .010), (.026, .010), (.024, .010)], HIDE, sides=8, steps=4)
+    hero.loft('hunter belt', [(.885, .244, .174, 0), (.955, .244, .174, 0)], HIDE, sides=36)
+    hoop('hunter belt clasp trim', .952, .246, .176, .007, ASH)
+    plate('bone belt toggle', [(-.052, -.212, .89), (.052, -.212, .89), (.064, -.212, .925),
+          (.052, -.212, .955), (-.052, -.212, .955), (-.064, -.212, .925)], BONE, .028)
+    plate('belt pouch', [(.115, -.212, .79), (.215, -.185, .79), (.225, -.185, .905),
+          (.105, -.212, .905)], HIDE, .065)
+    limb('pouch bone peg', [(.145, -.224, .87), (.19, -.212, .862)], [.011, .006], BONE, 8, (0, 0, 1), 2)
+    # Twin throwing-knives tucked along left hip belt
+    for idx, x in enumerate([-.13, -.19]):
+        shard(f'belt throwing knife {idx}', (x, -.205, .69), (x-.015, -.205, .86), .016, BONE, 5)
+        limb(f'belt knife hilt {idx}', [(x-.015, -.205, .86), (x-.025, -.205, .93)], [.010, .008], HIDE, 6, steps=2)
+    # Layered tattered charcoal + teal waist tassets (leaves moving legs crisp)
     for s in [-1, 1]:
-        plate('hide hip tasset', [(s*.10, -.186, .90), (s*.245, -.115, .89), (s*.262, -.125, .66),
-              (s*.19, -.165, .60), (s*.115, -.20, .68)], ASH, .026)
-    plate('teal sash tail', [(-.10, -.214, .90), (-.01, -.224, .90), (.0, -.236, .64),
-          (-.045, -.238, .55), (-.085, -.232, .66)], TEAL, .018)
-    plate('rear hide tasset', [(-.20, .16, .90), (.20, .16, .90), (.17, .19, .66),
-          (0, .2, .60), (-.17, .19, .66)], ASH, .026)
-    hero.loft('hunter neck wrap', [(1.42, .215, .17, 0), (1.50, .235, .19, -.01),
-              (1.58, .20, .165, 0)], TEAL)
-    # Deep hood: recessed face opening, forward brow, peak trailing backwards.
-    skin('deep hunter hood', [yring(-.11, 1.745, .14, .17), yring(-.232, 1.745, .163, .196, brow=.05),
-         yring(-.25, 1.75, .19, .228, brow=.075), yring(-.17, 1.752, .238, .264),
-         yring(-.04, 1.76, .264, .284), yring(.10, 1.775, .246, .262),
-         yring(.22, 1.79, .186, .20), yring(.33, 1.792, .116, .125),
-         yring(.42, 1.775, .056, .06), yring(.49, 1.745, .012, .012)], TEAL)
-    ellipsoid('hood shadow', (0, -.118, 1.745), (.132, .022, .162), SHADOW)
-    plate('bone muzzle mask', [(-.088, -.168, 1.725), (.088, -.168, 1.725), (.072, -.168, 1.64),
-          (.026, -.168, 1.592), (-.026, -.168, 1.592), (-.072, -.168, 1.64)], BONE, .03)
+        plate(f'hide hip tasset {s}', [(s*.10, -.184, .89), (s*.248, -.112, .88),
+              (s*.275, -.128, .54), (s*.195, -.172, .45), (s*.115, -.202, .58)], ASH, .022)
+    plate('teal sash tail', [(-.095, -.214, .89), (-.008, -.224, .89), (.008, -.240, .54),
+          (-.045, -.245, .42), (-.088, -.236, .58)], TEAL, .016)
+    plate('rear hide tasset', [(-.20, .16, .89), (.20, .16, .89), (.18, .195, .58),
+          (0, .208, .48), (-.18, .195, .58)], ASH, .022)
+    # Draped layered dark-teal hunter neck scarf (rich pleated wraps!)
+    skin('hunter wrapped scarf', [
+        zring(1.40, .275, .210, .005, n=44, lobes=10, amp=.038, wave=.012),
+        zring(1.49, .248, .195, -.005, n=44, lobes=10, amp=.030, wave=.010),
+        zring(1.57, .208, .172, -.006, n=44, lobes=8, amp=.022, wave=.006),
+    ], TEAL)
+    # SHARP POINTED GOTHIC HUNTER COWL (dark charcoal hood with deep shadow + sharp pointed peak!)
+    skin('deep hunter hood', [
+        gothic_hood_ring(-.085, 1.745, .140, .174, n=48, brow=.00, peak=.032, drape=.016, folds=.005),
+        gothic_hood_ring(-.190, 1.750, .164, .196, n=48, brow=.045, peak=.056, drape=.020, folds=.008),
+        gothic_hood_ring(-.245, 1.755, .182, .218, n=48, brow=.095, peak=.078, drape=.026, folds=.010),
+        gothic_hood_ring(-.172, 1.762, .214, .244, n=48, brow=.042, peak=.065, drape=.022, folds=.008),
+        gothic_hood_ring(-.045, 1.772, .232, .258, n=48, brow=.010, peak=.048, drape=.016, folds=.006),
+        gothic_hood_ring(.095, 1.780, .216, .240, n=48, brow=.00, peak=.038, drape=.010, folds=.005),
+        gothic_hood_ring(.218, 1.775, .166, .184, n=48, brow=.00, peak=.028, drape=.005, folds=.003),
+        gothic_hood_ring(.322, 1.755, .106, .118, n=48, brow=.00, peak=.016, drape=.002, folds=.002),
+        gothic_hood_ring(.405, 1.720, .048, .052, n=48, brow=.00, peak=.006, drape=.000, folds=.000),
+        gothic_hood_ring(.462, 1.690, .012, .014, n=48, brow=.00, peak=.000, drape=.000, folds=.000),
+    ], ASH, crease=58.)
+    # Deep teal inner hood lining trim
+    tube('hood teal edge piping',
+         gothic_hood_ring(-.242, 1.755, .182, .218, n=48, brow=.094, peak=.077, drape=.026, folds=.010),
+         [.008]*48, TEAL, sides=8, side=(0, 1, 0), closed=True)
+    ellipsoid('hood shadow', (0, -.068, 1.745), (.134, .062, .168), SHADOW, 24, 16)
+    # Sculpted angular bone-and-charcoal predator half-mask + fierce hunter-jade eyes!
+    plate('bone muzzle mask', [
+        (-.084, -.186, 1.730), (.084, -.186, 1.730),
+        (.076, -.182, 1.645), (.024, -.198, 1.592),
+        (-.024, -.198, 1.592), (-.076, -.182, 1.645),
+    ], BONE, .026)
+    limb('mask nose ridge', [(0, -.206, 1.735), (0, -.212, 1.655), (0, -.202, 1.595)],
+         [.012, .014, .008], ASH, 8, steps=3)
     for s in [-1, 1]:
-        plate('mask breathing slit', [(s*.022, -.172, 1.615), (s*.034, -.172, 1.615),
-              (s*.05, -.172, 1.69), (s*.038, -.172, 1.69)], SHADOW, .012)
-        shard('hunter eye glint', (s*.03, -.148, 1.762), (s*.098, -.148, 1.79), .012, SIGHT, 4)
-    for i in range(5):
-        y = -.15+i*.11
-        limb('hood ridge stitch', [(-.02, y, 2.035-.012*i-.008*i*i), (.02, y, 2.035-.012*i-.008*i*i)],
-             [.007, .007], BONE, 5, (0, 1, 0), 1)
-    # Ragged half-cloak, cut short and hung off-centre toward the quiver side.
-    rag = [.04, .13, .02, .16, .07, .0, .12, .03, .15, .05, .10]
-    cols, rows = len(rag)-1, 6
+        plate(f'mask breathing slit {s}', [(s*.024, -.194, 1.622), (s*.036, -.194, 1.622),
+              (s*.050, -.192, 1.694), (s*.038, -.192, 1.694)], SHADOW, .012)
+        shard(f'hunter eye glint {s}', (s*.026, -.172, 1.770), (s*.092, -.166, 1.796), .012, SIGHT, 6)
+    # High-res tattered flowing multi-pleat dark-teal hunter cloak (replaces short coarse square)
+    rag = [.05, .18, .03, .22, .08, .01, .19, .04, .21, .06, .16, .02, .18, .07, .12, .04, .14]
+    cols, rows = len(rag)-1, 12
     grid = []
     for r in range(rows):
         t = r/(rows-1)
         row = []
         for c in range(cols+1):
-            u = c/cols*2-1
-            row.append((-.05+u*(.27+.10*t), .225+.13*t+.024*math.cos(c*math.pi*.66),
-                        1.47-t*(.50+rag[c])))
+            u = c/cols*2 - 1
+            wave = .034*math.cos(u*5.*math.pi)*(0.25 + 0.75*t)
+            row.append((-.03 + u*(.27 + .19*t), .21 + .24*t + wave,
+                        1.47 - t*(.92 + rag[c])))
         grid.append(row)
-    sheet('ragged teal half cloak', grid, TEAL)
-    # Quiver slung across the back; shafts rise over the draw-hand shoulder.
+    sheet('ragged teal hunter cloak', grid, TEAL, .018)
+    # Quiver slung across the back; bone-fletched arrows rise cleanly over the draw shoulder
     foot, lip = Vector((.14, .40, .93)), Vector((-.21, .37, 1.57))
     axis = (lip-foot).normalized()
     tube('hide quiver', [foot-axis*.01, foot, foot.lerp(lip, .5), lip],
-         [.02, .05, .06, .068], HIDE, 10)
-    tube('quiver bone lip', [lip-axis*.03, lip+axis*.012], [.076, .08], BONE, 10)
-    tube('quiver bone heel', [foot-axis*.022, foot+axis*.04], [.036, .058], BONE, 10)
+         [.022, .052, .062, .070], HIDE, 16)
+    tube('quiver bone lip', [lip-axis*.03, lip+axis*.012], [.078, .082], BONE, 16)
+    tube('quiver bone heel', [foot-axis*.022, foot+axis*.04], [.038, .060], BONE, 16)
     tube('quiver sling', [lip+Vector((.02, -.07, -.04)), Vector((-.16, .22, 1.47)),
-         Vector((-.2, .0, 1.5))], [(.022, .008)]*3, HIDE, 6, (0, 0, 1))
+         Vector((-.2, .0, 1.5))], [(.022, .008)]*3, HIDE, 8, (0, 0, 1))
     across = axis.cross(Vector((0, 1, 0))).normalized()
-    for i, (dx, dy, reach) in enumerate([(-.03, -.02, .17), (.028, -.012, .2), (0, .03, .15), (-.012, .008, .22)]):
+    for i, (dx, dy, reach) in enumerate([(-.03, -.02, .18), (.028, -.012, .22), (0, .03, .16), (-.012, .008, .24)]):
         base = lip + across*dx + Vector((0, dy, 0))
-        tube('quivered bone shaft', [base-axis*.05, base+axis*reach], [.009, .009], BONE, 6)
+        tube(f'quivered bone shaft {i}', [base-axis*.05, base+axis*reach], [.009, .009], BONE, 8)
         for turn in [0, 1]:
             vane = across if turn == 0 else Vector((0, 1, 0))
-            tube('quivered fletching', [base+axis*(reach-.10), base+axis*(reach-.05), base+axis*(reach-.006)],
-                 [(.008, .003), (.03, .003), (.02, .003)], SIGHT if i == 3 and turn == 0 else TEAL, 4, vane)
+            tube(f'quivered fletching {i}_{turn}',
+                 [base+axis*(reach-.10), base+axis*(reach-.05), base+axis*(reach-.006)],
+                 [(.008, .003), (.032, .003), (.022, .003)], SIGHT if i == 3 and turn == 0 else TEAL, 6, vane)
     hero.hit_bones()
     export_part('hero_stalker')
 
 
 def stalker_arm():
     reset()
-    hero.loft('hunter sleeve', [(-.29, .052, .05, 0), (-.03, .066, .062, 0), (.22, .078, .072, 0),
-              (.36, .058, .056, 0)], ASH)
-    hero.loft('teal sleeve binding', [(.09, .083, .077, 0), (.17, .085, .079, 0)], TEAL)
-    ellipsoid('hide elbow guard', (0, .026, -.02), (.071, .066, .074), HIDE)
-    hero.loft('bone bracer', [(-.275, .064, .06, -.003), (-.20, .08, .073, -.006),
-              (-.07, .084, .076, -.006)], BONE)
-    for z, rx, ry in [(-.235, .078, .072), (-.11, .088, .08)]:
-        hoop('bracer hide strap', z, rx, ry, .009, HIDE, -.006)
-    limb('bracer tusk ridge', [(0, -.083, -.25), (0, -.096, -.16), (0, -.088, -.06)],
-         [.011, .016, .005], BONE, 6)
-    ellipsoid('archer glove', (0, -.006, -.325), (.066, .06, .078), HIDE)
-    for i in range(3):
-        x = -.036+i*.036
-        limb('glove finger tab', [(x, -.056, -.30), (x, -.062, -.335), (x, -.05, -.375)],
-             [.014, .015, .009], ASH, 6)
+    hero.loft('hunter sleeve', [(-.29, .054, .052, 0), (-.03, .068, .064, 0), (.22, .080, .074, 0),
+              (.36, .060, .058, 0)], SHADOW, sides=28, bevel=.005)
+    hero.loft('teal sleeve binding', [(.08, .085, .079, 0), (.18, .087, .081, 0)], TEAL, sides=28)
+    ellipsoid('hide elbow guard', (0, .028, -.015), (.074, .068, .076), HIDE, 18, 12)
+    hero.loft('bone bracer', [(-.275, .064, .060, -.003), (-.20, .082, .075, -.006),
+              (-.07, .086, .078, -.006)], BONE, sides=28, bevel=.005)
+    for z, rx, ry in [(-.235, .078, .072), (-.11, .088, .080)]:
+        hoop(f'bracer hide strap {z:.2f}', z, rx, ry, .009, HIDE, -.006)
+    limb('bracer tusk ridge', [(0, -.084, -.25), (0, -.098, -.16), (0, -.088, -.06)],
+         [.011, .016, .005], BONE, sides=8, steps=3)
+    fingered_hand('archer glove', -.278, HIDE, ASH)
     hero.normalize(ARM_SIZE, z_center=ARM_CENTER)
     export_part('hero_stalker_arm')
 
 
 def stalker_leg():
     reset()
-    hero.loft('hunter trouser', [(-.30, .06, .066, 0), (.02, .074, .078, 0), (.30, .09, .09, 0),
-              (.40, .094, .086, 0)], ASH)
-    hero.loft('teal thigh wrap', [(.17, .089, .091, 0), (.235, .092, .092, 0)], TEAL)
-    hero.loft('tall soft hide boot', [(-.385, .066, .07, 0), (-.25, .073, .079, 0),
-              (-.07, .085, .089, 0), (-.03, .093, .096, 0)], HIDE)
+    hero.loft('hunter trouser', [(-.30, .060, .066, 0), (.02, .074, .078, 0), (.30, .090, .090, 0),
+              (.40, .094, .086, 0)], SHADOW, sides=28, bevel=.004)
+    hero.loft('teal thigh wrap', [(.16, .090, .092, 0), (.24, .093, .093, 0)], TEAL, sides=28)
+    hero.loft('tall soft hide boot', [(-.385, .066, .070, 0), (-.25, .073, .079, 0),
+              (-.07, .085, .089, 0), (-.03, .093, .096, 0)], HIDE, sides=28, bevel=.005)
     for z, rx, ry in [(-.27, .075, .081), (-.15, .082, .087)]:
-        hoop('boot binding strap', z, rx, ry, .009, ASH)
-    plate('bone knee cap', [(-.058, -.108, -.03), (.058, -.108, -.03), (.07, -.112, .06),
-          (0, -.118, .135), (-.07, -.112, .06)], BONE, .04)
-    limb('bone shin splint', [(0, -.092, -.07), (0, -.092, -.2), (0, -.082, -.33)],
-         [(.024, .012), (.018, .011), (.008, .006)], BONE, 6)
-    ellipsoid('soft boot foot', (0, -.065, -.38), (.082, .152, .048), HIDE)
-    limb('boot toe seam', [(-.05, -.16, -.356), (0, -.2, -.36), (.05, -.16, -.356)],
-         [.008, .009, .008], ASH, 5, (0, 0, 1))
+        hoop(f'boot binding strap {z:.2f}', z, rx, ry, .009, ASH)
+    plate('bone knee cap', [(-.058, -.108, -.03), (.058, -.108, -.03), (.072, -.112, .06),
+          (0, -.120, .140), (-.072, -.112, .06)], BONE, .036)
+    limb('bone shin splint', [(0, -.092, -.07), (0, -.094, -.20), (0, -.082, -.33)],
+         [(.024, .012), (.018, .011), (.008, .006)], BONE, sides=8, steps=3)
+    ellipsoid('soft boot foot', (0, -.065, -.38), (.082, .152, .048), HIDE, 22, 14)
+    limb('boot toe seam', [(-.05, -.16, -.356), (0, -.20, -.360), (.05, -.16, -.356)],
+         [.008, .009, .008], ASH, sides=8, side=(0, 0, 1), steps=3)
     hero.normalize(LEG_SIZE)
     export_part('hero_stalker_leg')
 
 
 def stalker_mantle():
     reset()
-    # A soft cowl collar draped over the shoulders: cloth, no forged pauldrons.
-    skin('teal shoulder cowl', [zring(-.118, .472, .238, .012, lobes=9, wave=.022),
-         zring(-.03, .44, .232, .01), zring(.05, .315, .203, .005), zring(.115, .23, .178),
-         zring(.15, .205, .165)], TEAL)
-    skin('hide collar yoke', [zring(.03, .345, .214, .005), zring(.085, .268, .19),
-         zring(.128, .226, .176)], ASH)
-    # One strapped scapula scale guards the bow arm; the draw arm stays bare.
-    for i in range(2):
-        ellipsoid('bone shoulder scale', (.375+.05*i, .0, .03-.045*i),
-                       (.118-.012*i, .158-.014*i, .05), BONE)
-    for y in [-.09, .09]:
-        limb('shoulder tusk', [(.40, y, .05), (.50, y*1.25, .10), (.545, y*1.4, .18)],
-             [.02, .015, .004], BONE, 6, (0, 1, 0))
-    limb('scale lashing', [(.33, -.165, -.04), (.42, -.172, -.0), (.5, -.12, -.03)],
-         [(.02, .007)]*3, HIDE, 6, (0, 0, 1))
-    limb('bone cowl toggle', [(-.07, -.236, -.0), (0, -.25, .006), (.07, -.236, -.0)],
-         [.007, .019, .007], BONE, 6, (0, 0, 1))
+    # Pleated dark-teal hunter shoulder cowl + dark charcoal leather yoke
+    skin('teal shoulder cowl', [zring(-.118, .482, .242, .012, n=48, lobes=11, amp=.036, wave=.020),
+         zring(-.03, .445, .232, .010, n=48, lobes=11, amp=.026, wave=.014),
+         zring(.05, .318, .204, .005, n=48), zring(.115, .232, .178, n=48),
+         zring(.15, .206, .166, n=48)], TEAL)
+    skin('hide collar yoke', [zring(.03, .348, .216, .005, n=44), zring(.085, .270, .192, n=44),
+         zring(.128, .228, .178, n=44)], ASH)
+    # Sculpted jagged ossuary bone-carapace pauldron on bow arm (matches portrait!)
+    pauldron_shell('bone carapace upper', 1, .22, .008, .055, .29, .215, .105, BONE, tilt=.24, flair=.05)
+    pauldron_shell('bone carapace lower', 1, .28, .010, -.015, .29, .198, .082, BONE, tilt=.30, flair=.04)
+    for y in [-.095, 0.0, .095]:
+        limb(f'shoulder bone tusk {y:.2f}', [(.38, y, .05), (.50, y*1.25, .12), (.56, y*1.4, .22)],
+             [.020, .015, .003], BONE, sides=8, side=(0, 1, 0), steps=4)
+    limb('scale lashing', [(.28, -.165, -.02), (.42, -.175, .02), (.52, -.11, -.04)],
+         [(.020, .008)]*3, HIDE, sides=8, side=(0, 0, 1), steps=3)
+    # Lighter dark-leather guard on draw arm
+    pauldron_shell('draw arm leather guard', -1, -.26, .010, .025, .22, .180, .072, HIDE, tilt=.28, flair=.02)
+    limb('bone cowl toggle', [(-.072, -.236, .0), (0, -.252, .006), (.072, -.236, .0)],
+         [.007, .020, .007], BONE, sides=8, side=(0, 0, 1), steps=3)
     for s in [-1, 1]:
-        limb('toggle cord', [(s*.03, -.238, .0), (s*.07, -.226, .06), (s*.10, -.196, .10)],
-             [.007, .007, .006], HIDE, 5, (0, 0, 1))
+        limb(f'toggle cord {s}', [(s*.03, -.238, .0), (s*.07, -.226, .06), (s*.10, -.196, .10)],
+             [.007, .007, .006], HIDE, sides=6, side=(0, 0, 1), steps=2)
     hero.normalize(MANTLE_SIZE)
     export_part('hero_stalker_mantle')
 
@@ -475,11 +555,12 @@ def charm(name, top, drop, kind):
 
 def embercaller_body():
     reset()
-    skin('layered violet robe', [zring(z, rx, ry, 0, 48, 12, amp, wave)
+    # High-poly pleated deep-violet liturgical robe
+    skin('layered violet robe', [zring(z, rx, ry, 0, 56, 14, amp, wave)
          for z, rx, ry, amp, wave in ROBE], VIOLET)
-    hoop('robe hem gilding', .30, .373, .343, .011, GOLD, lobes=12, amp=.066, wave=.026)
-    # Open-fronted ash coat: the violet robe shows down the centre and below.
-    gap, cols, rows = math.radians(78), 30, 9
+    hoop('robe hem gilding', .30, .373, .343, .011, GOLD, lobes=14, amp=.066, wave=.026)
+    # Open-fronted tattered charcoal ash coat
+    gap, cols, rows = math.radians(78), 36, 12
     grid = []
     for r in range(rows):
         f = r/(rows-1)
@@ -487,86 +568,141 @@ def embercaller_body():
         for c in range(cols+1):
             t = c/cols
             angle = -math.pi/2 + gap/2 + t*(TAU-gap)
-            hem = .56 - .17*math.sin(math.pi*t) - (.035 if c % 2 else 0.)
+            hem = .54 - .18*math.sin(math.pi*t) - (.042 if c % 2 else 0.)
             z = 1.46 + (hem-1.46)*f
             rx, ry = robe_at(z)
-            swell = .03 + .02*f
+            swell = .03 + .022*f
             row.append(((rx+swell)*math.cos(angle), (ry+swell)*math.sin(angle), z))
         grid.append(row)
-    sheet('open ash coat', grid, COAT, .02)
+    sheet('open ash coat', grid, COAT, .020)
     for c in [0, cols]:
-        limb('coat front gilding', [grid[r][c] for r in range(rows)], [.011]*rows, GOLD, 6, (0, 1, 0), 2)
-    # Narrow stole carrying the ember sigil.
+        limb('coat front gilding', [grid[r][c] for r in range(rows)], [.011]*rows, GOLD, 8, (0, 1, 0), 2)
+    # Ornate draped liturgical stole with radiant solar-ember sunburst pectoral medallion (matches portrait!)
     grid = []
-    for r in range(8):
-        z = 1.40 - r*.115
+    for r in range(10):
+        z = 1.42 - r*.096
         _, ry = robe_at(z)
-        half = .07 + .003*r
-        grid.append([(u*half, -ry-.014-.004*abs(u), z - (.05 if r == 7 and u == 0 else 0))
+        half = .072 + .004*r
+        grid.append([(u*half, -ry-.016-.004*abs(u), z - (.055 if r == 9 and u == 0 else 0))
                      for u in [-1, 0, 1]])
     sheet('ash stole', grid, COAT, .016)
     for u in [0, 2]:
-        limb('stole gilding', [grid[r][u] for r in range(8)], [.008]*8, GOLD, 5, (0, 1, 0), 2)
-    shard('stole gold tassel', (0, grid[7][1][1]-.004, .49), (0, grid[7][1][1]-.004, .61), .024, GOLD, 4, .7)
-    sy = -robe_at(1.22)[1]-.03
-    tube('ember sigil ring', [(.056*math.cos(TAU*i/20), sy, 1.22+.056*math.sin(TAU*i/20)) for i in range(20)],
-         [.0075]*20, EMBER, 5, (0, 1, 0), closed=True)
-    shard('ember sigil flame', (0, sy, 1.262), (0, sy, 1.186), .015, EMBER, 4, .6, .5, (1, 0, 0))
-    for s in [-1, 1]:
-        shard('ember sigil wing', (s*.036, sy, 1.236), (s*.014, sy, 1.19), .008, EMBER, 4, .5, .6, (0, 1, 0))
-        shard('ember sigil ray', (s*.064, sy, 1.22), (s*.1, sy+.004, 1.22), .008, EMBER, 4, .3, .6, (0, 1, 0))
-    shard('ember sigil ray', (0, sy, 1.284), (0, sy+.002, 1.325), .008, EMBER, 4, .3, .6, (0, 1, 0))
-    # Cord girdle with hanging reliquary charms.
+        limb('stole gilding', [grid[r][u] for r in range(10)], [.008]*10, GOLD, 6, (0, 1, 0), 2)
+    shard('stole gold tassel', (0, grid[9][1][1]-.004, .44), (0, grid[9][1][1]-.004, .56), .024, GOLD, 6, .7)
+    sy = -robe_at(1.24)[1]-.034
+    # Radiant 12-ray gothic solar-ember starburst medallion on chest!
+    tube('solar sigil outer ring', [(.078*math.cos(TAU*i/28), sy, 1.24+.078*math.sin(TAU*i/28)) for i in range(28)],
+         [.008]*28, GOLD, 8, (0, 1, 0), closed=True)
+    tube('solar sigil ember ring', [(.052*math.cos(TAU*i/24), sy-.004, 1.24+.052*math.sin(TAU*i/24)) for i in range(24)],
+         [.007]*24, EMBER, 6, (0, 1, 0), closed=True)
+    shard('solar sigil core crystal', (0, sy-.008, 1.285), (0, sy-.008, 1.195), .022, CRYSTAL, 6)
+    for i in range(12):
+        ang = TAU*i/12
+        r0, r1 = .078, .135 if i % 2 == 0 else .108
+        shard(f'solar sigil ray {i}',
+              (r1*math.cos(ang), sy-.004, 1.24+r1*math.sin(ang)),
+              (r0*math.cos(ang), sy+.002, 1.24+r0*math.sin(ang)), .008, GOLD, 4)
+    # Cord girdle with hanging reliquary charms + dangling solar ring
     bx, by = robe_at(.98)
-    hero.loft('hide girdle', [(.95, bx+.052, by+.052, 0), (1.01, bx+.052, by+.052, 0)], HIDE)
+    hero.loft('hide girdle', [(.95, bx+.052, by+.052, 0), (1.01, bx+.052, by+.052, 0)], HIDE, sides=36)
     hoop('girdle gilding', 1.012, bx+.054, by+.054, .009, GOLD)
-    for angle, drop, kind in [(-2.38, .17, 'vial'), (-2.02, .25, 'ember'), (-.80, .14, 'tag'),
+    for angle, drop, kind in [(-2.38, .17, 'vial'), (-2.02, .25, 'ember'), (-.80, .15, 'tag'),
                               (-1.13, .22, 'vial'), (-.42, .19, 'ember')]:
         charm('reliquary', ((bx+.062)*math.cos(angle), (by+.062)*math.sin(angle), .955), drop, kind)
-    # Tall cowl: violet peak, shadowed face, thin gold circlet of thorns.
-    hero.loft('tall ash cowl', [(1.48, .20, .17, 0), (1.60, .255, .245, 0), (1.77, .265, .262, .005),
-              (1.92, .215, .22, .03), (2.04, .13, .14, .066), (2.13, .055, .06, .10),
-              (2.175, .012, .012, .116)], VIOLET)
-    ellipsoid('cowl shadow', (0, -.205, 1.735), (.14, .07, .168), SHADOW)
-    tube('cowl rolled hem', [(.158*math.cos(TAU*i/28), -.268+.062*math.cos(TAU*i/28)**2,
-         1.735+.186*math.sin(TAU*i/28)) for i in range(28)], [.021]*28, VIOLET, 6, (0, 1, 0), closed=True)
+    # TALL REGAL GOTHIC CATHEDRAL-ARCH COWL HOOD (replaces cartoon cone hat!)
+    skin('tall gothic violet cowl', [
+        gothic_hood_ring(-.075, 1.745, .142, .182, n=48, brow=.00, peak=.055, drape=.016, folds=.005),
+        gothic_hood_ring(-.182, 1.752, .165, .204, n=48, brow=.035, peak=.095, drape=.022, folds=.008),
+        gothic_hood_ring(-.238, 1.758, .180, .225, n=48, brow=.080, peak=.135, drape=.028, folds=.010),
+        gothic_hood_ring(-.165, 1.766, .212, .248, n=48, brow=.040, peak=.118, drape=.022, folds=.008),
+        gothic_hood_ring(-.042, 1.778, .228, .260, n=48, brow=.010, peak=.092, drape=.015, folds=.006),
+        gothic_hood_ring(.095, 1.784, .208, .236, n=48, brow=.00, peak=.065, drape=.010, folds=.004),
+        gothic_hood_ring(.215, 1.774, .158, .178, n=48, brow=.00, peak=.042, drape=.005, folds=.003),
+        gothic_hood_ring(.315, 1.746, .098, .112, n=48, brow=.00, peak=.022, drape=.002, folds=.002),
+        gothic_hood_ring(.395, 1.705, .044, .048, n=48, brow=.00, peak=.008, drape=.000, folds=.000),
+        gothic_hood_ring(.442, 1.675, .012, .014, n=48, brow=.00, peak=.000, drape=.000, folds=.000),
+    ], VIOLET, crease=58.)
+    tube('cowl gold edge trim',
+         gothic_hood_ring(-.236, 1.758, .181, .226, n=48, brow=.079, peak=.134, drape=.028, folds=.010),
+         [.008]*48, GOLD, sides=8, side=(0, 1, 0), closed=True)
+    # Shadowed inner cowl depth + sculpted gaunt ash-pale priestly visage & molten ember eyes!
+    ellipsoid('cowl inner shadow', (0, -.055, 1.745), (.134, .060, .172), SHADOW, 24, 16)
+    # Sculpted gaunt aristocratic priestly mask/visage (high cheekbones, sharp brow, narrow jaw)
+    v_rows, v_cols = 16, 20
+    v_grid = []
+    for r in range(v_rows):
+        v = r/(v_rows-1)
+        z = 1.748 + .156 - v*.308
+        half_w = (.076 + .042*math.sin((v/.36)*math.pi*.5)) if v < .36 else (.118*((1.-(v-.36)/.64)**.72) + .018*(1.-(v-.36)/.64))
+        row = []
+        for c in range(v_cols):
+            u = (c/(v_cols-1))*2. - 1.
+            au = abs(u)
+            wrap = (au**1.75)*.078
+            brow = .018*math.exp(-((v-.22)/.085)**2)*(1.-.35*au)
+            nose = .028*math.exp(-(u/.17)**2)*math.exp(-((v-.48)/.24)**2)
+            cheek = .020*math.exp(-((au-.55)/.22)**2)*math.exp(-((v-.47)/.15)**2)
+            eye_h = .026*math.exp(-((au-.40)/.16)**2)*math.exp(-((v-.35)/.085)**2)
+            gaunt = .016*math.exp(-((au-.50)/.20)**2)*math.exp(-((v-.70)/.14)**2)
+            y = -.184 + wrap - brow - nose - cheek + eye_h + gaunt
+            row.append((u*half_w, y, z))
+        v_grid.append(row)
+    sheet('ashpriest gaunt visage', v_grid, BONE, .016)
     for s in [-1, 1]:
-        shard('ember eye glint', (s*.03, -.274, 1.752), (s*.082, -.268, 1.772), .011, EMBER, 4)
-    hoop('thin gold circlet', 1.915, .226, .23, .011, GOLD, .029)
-    for i in range(9):
-        a = -math.pi/2 + (i-4)*.56
-        rise = .15 - .022*abs(i-4)
-        base = Vector((.226*math.cos(a), .029+.23*math.sin(a), 1.915))
-        lean = Vector((math.cos(a), math.sin(a), 0))*.028
-        shard('circlet thorn', base+lean+Vector((0, 0, rise)), base-Vector((0, 0, .008)), .014, GOLD, 4, .86)
-    shard('circlet ember stone', (0, -.212, 1.955), (0, -.208, 1.885), .02, EMBER, 4, .5, .6, (1, 0, 0))
-    # Liturgical back panel instead of a cape, so the robe hem stays the silhouette.
+        ellipsoid(f'priest eye hollow {s}', (s*.046, -.176, 1.798), (.025, .015, .018), SHADOW, 14, 10)
+        shard(f'ember eye glint {s}', (s*.026, -.192, 1.796), (s*.066, -.186, 1.804), .007, CRYSTAL, 6)
+    # Delicate gold brow halo-circlet with radiant sun-crest resting across the forehead!
+    brow_arc = [(math.sin(t)*.155, -.045 - math.cos(t)*.182, 1.895 - .018*abs(math.sin(t)))
+                for t in [(-1.65 + 3.30*i/26) for i in range(27)]]
+    tube('ashpriest brow circlet', brow_arc, [.008]*len(brow_arc), GOLD, sides=8, side=(0, 0, 1))
+    tube('forehead solar halo', [(.028*math.cos(TAU*i/16), -.226, 1.895+.028*math.sin(TAU*i/16)) for i in range(16)],
+         [.005]*16, GOLD, sides=6, side=(0, 1, 0), closed=True)
+    shard('circlet ember gem', (0, -.230, 1.918), (0, -.230, 1.872), .012, CRYSTAL, 6)
+    for i in range(7):
+        ang = (i - 3)*.44
+        bx = math.sin(ang)*.165
+        by = -.040 - math.cos(ang)*.186
+        rise = .16 - .022*abs(i - 3)
+        shard(f'circlet solar ray {i}', (bx*1.12, by*1.06, 1.90 + rise), (bx, by, 1.88), .012, GOLD, 5)
+    # FLOATING ORBITING MOLTEN EMBER CRYSTALS around the priest (iconic silhouette from portrait!)
+    for idx, (cx, cy, cz, sz) in enumerate([
+        (-.44, -.16, 1.24, .048),
+        (-.56, -.02, 1.44, .038),
+        (-.36, .18, 1.66, .034),
+        (.38, .18, 1.62, .032),
+    ]):
+        shard(f'orbiting ember crystal {idx}', (cx, cy, cz+sz*1.4), (cx, cy, cz-sz*1.2), sz, CRYSTAL, 6, belly=.48)
+        hoop(f'orbiting crystal halo {idx}', cz, sz*1.35, sz*1.35, .005, GOLD, cy=cy, cx=cx)
+    # High-res pleated liturgical violet back mantle panel
+    cols, rows = 14, 12
     grid = []
-    for r in range(8):
-        z = 1.46 - r*.125
-        _, ry = robe_at(z)
-        half = .115 + .008*r
-        grid.append([(u*half, ry+.062+.012*math.cos(u*3.), z - (.07 if r == 7 and u == 0 else 0))
-                     for u in [-1, -.5, 0, .5, 1]])
-    sheet('violet back panel', grid, VIOLET, .016)
-    limb('back panel gilding', [(grid[7][c][0], grid[7][c][1]+.004, grid[7][c][2]) for c in range(5)],
-         [.009]*5, GOLD, 5, (0, 1, 0), 1)
+    for r in range(rows):
+        t = r/(rows-1)
+        z = 1.46 - t*1.16
+        _, ry = robe_at(max(z, .27))
+        half = .18 + .16*t
+        row = []
+        for c in range(cols+1):
+            u = c/cols*2 - 1
+            wave = .028*math.cos(u*4.*math.pi)*(0.3 + 0.7*t)
+            tatter = .055*math.cos(u*5.*math.pi)*(t**2)
+            row.append((u*half, ry + .055 + .14*t + wave, z + tatter))
+        grid.append(row)
+    sheet('violet liturgical back mantle', grid, VIOLET, .016)
     hero.hit_bones()
     export_part('hero_embercaller')
 
 
 def embercaller_arm():
     reset()
-    skin('violet bell sleeve', [zring(-.262, .13, .114, n=24, lobes=8, amp=.035, wave=.008),
-         zring(-.17, .119, .106, n=24, lobes=8, amp=.02), zring(.02, .094, .088, n=24),
-         zring(.25, .088, .084, n=24), zring(.36, .066, .066, n=24)], VIOLET)
-    hoop('sleeve cuff gilding', -.245, .129, .113, .008, GOLD, lobes=8, amp=.03, wave=.008)
-    hero.loft('ash sleeve cap', [(.12, .099, .093, 0), (.25, .096, .09, 0), (.36, .08, .078, 0)], COAT)
-    hoop('sleeve cap gilding', .128, .1, .094, .008, GOLD)
-    hero.loft('dark under sleeve', [(-.305, .05, .048, 0), (-.25, .062, .058, 0)], SHADOW)
-    ellipsoid('ash wrapped hand', (0, -.004, -.33), (.054, .05, .07), BONE)
-    for z in [-.318, -.345]:
-        hoop('hand ash binding', z, .053, .05, .006, COAT, -.004)
+    skin('violet bell sleeve', [zring(-.262, .136, .120, n=32, lobes=10, amp=.040, wave=.010),
+         zring(-.17, .122, .108, n=32, lobes=10, amp=.024, wave=.006), zring(.02, .094, .088, n=32),
+         zring(.25, .088, .084, n=32), zring(.36, .066, .066, n=32)], VIOLET)
+    hoop('sleeve cuff gilding', -.245, .135, .119, .008, GOLD, lobes=10, amp=.035, wave=.010)
+    hero.loft('ash sleeve cap', [(.12, .099, .093, 0), (.25, .096, .090, 0), (.36, .080, .078, 0)], COAT, sides=28)
+    hoop('sleeve cap gilding', .128, .100, .094, .008, GOLD)
+    hero.loft('dark under sleeve', [(-.300, .050, .048, 0), (-.245, .062, .058, 0)], SHADOW, sides=24)
+    fingered_hand('ash caster hand', -.278, BONE, GOLD)
     hero.normalize(ARM_SIZE, z_center=ARM_CENTER)
     export_part('hero_embercaller_arm')
 
@@ -574,30 +710,37 @@ def embercaller_arm():
 def embercaller_leg():
     reset()
     hero.loft('ashpriest hose', [(-.30, .058, .064, 0), (.02, .072, .076, 0), (.31, .086, .086, 0),
-              (.40, .09, .084, 0)], SHADOW)
-    skin('violet under robe wrap', [zring(-.235, .083, .088, n=20, lobes=5, wave=.012),
-         zring(-.05, .084, .087, n=20), zring(.21, .092, .092, n=20)], VIOLET)
-    hero.loft('soft ash boot', [(-.39, .064, .068, 0), (-.30, .071, .077, 0), (-.20, .079, .084, 0)], HIDE)
+              (.40, .090, .084, 0)], SHADOW, sides=26)
+    skin('violet under robe wrap', [zring(-.235, .083, .088, n=28, lobes=6, wave=.012),
+         zring(-.05, .084, .087, n=28), zring(.21, .092, .092, n=28)], VIOLET)
+    hero.loft('soft ash boot', [(-.39, .064, .068, 0), (-.30, .071, .077, 0), (-.20, .079, .084, 0)], HIDE, sides=26)
     hoop('boot gold anklet', -.27, .075, .081, .008, GOLD)
-    ellipsoid('pointed slipper', (0, -.07, -.386), (.078, .156, .044), HIDE)
-    shard('gilded slipper toe', (0, -.262, -.368), (0, -.15, -.39), .04, GOLD, 5, .7, .62, (1, 0, 0))
+    ellipsoid('pointed slipper', (0, -.07, -.386), (.078, .156, .044), HIDE, 20, 12)
+    shard('gilded slipper toe', (0, -.262, -.368), (0, -.15, -.39), .040, GOLD, 6, .7, .62, (1, 0, 0))
     hero.normalize(LEG_SIZE)
     export_part('hero_embercaller_leg')
 
 
 def embercaller_mantle():
     reset()
-    skin('ash shoulder shawl', [zring(-.15, .52, .262, .012, lobes=8, wave=.03),
-         zring(-.05, .47, .246, .01), zring(.04, .32, .206, .005), zring(.10, .232, .178)], COAT)
-    hoop('shawl hem gilding', -.142, .521, .263, .0095, GOLD, .012, lobes=8, wave=.03)
-    skin('violet upper capelet', [zring(-.035, .39, .232, .008, lobes=8, wave=-.014),
-         zring(.03, .312, .206, .004), zring(.09, .242, .182), zring(.125, .222, .172)], VIOLET)
-    hoop('capelet hem gilding', -.03, .391, .233, .007, GOLD, .008, lobes=8, wave=-.014)
-    limb('gold clasp chain', [(-.13, -.236, -.0), (0, -.262, -.035), (.13, -.236, -.0)],
-         [.008, .008, .008], GOLD, 5, (0, 0, 1))
-    shard('ember clasp stone', (0, -.274, -.085), (0, -.268, .0), .026, EMBER, 4, .55, .5, (1, 0, 0))
+    # High-poly pleated liturgical shoulder shawl + draped gothic violet capelet + gold trim
+    skin('ash shoulder shawl', [zring(-.15, .53, .266, .012, n=48, lobes=12, amp=.038, wave=.026),
+         zring(-.05, .47, .248, .010, n=48, lobes=12, amp=.028, wave=.016),
+         zring(.04, .32, .206, .005, n=48), zring(.10, .232, .178, n=48)], COAT)
+    hoop('shawl hem gilding', -.142, .531, .267, .0095, GOLD, .012, lobes=12, amp=.036, wave=.026)
+    skin('violet upper capelet', [zring(-.035, .40, .236, .008, n=48, lobes=10, amp=.028, wave=-.014),
+         zring(.03, .314, .208, .004, n=48), zring(.09, .244, .184, n=48), zring(.125, .222, .172, n=48)], VIOLET)
+    hoop('capelet hem gilding', -.03, .401, .237, .007, GOLD, .008, lobes=10, amp=.026, wave=-.014)
+    # Draped gothic layered gilded shoulder wings
     for s in [-1, 1]:
-        shard('shawl gold drop', (s*.515, .012, -.25), (s*.515, .012, -.14), .02, GOLD, 4, .7)
+        pauldron_shell(f'liturgical shoulder wing {s}', s, s*.25, .012, .035, .25, .195, .080, VIOLET, tilt=.26, flair=.03)
+        limb(f'liturgical shoulder gold trim {s}', [
+            (s*.26, -.08, .095), (s*.42, .00, .065), (s*.51, .06, -.035)
+        ], [.010, .012, .008], GOLD, sides=8, steps=4)
+        shard(f'shawl gold drop {s}', (s*.52, .012, -.25), (s*.52, .012, -.14), .022, GOLD, 6, .7)
+    limb('gold clasp chain', [(-.15, -.236, .0), (0, -.266, -.038), (.15, -.236, .0)],
+         [.009, .009, .009], GOLD, sides=8, side=(0, 0, 1), steps=4)
+    shard('ember clasp stone', (0, -.276, -.088), (0, -.268, .0), .028, CRYSTAL, 6, .55, .5, (1, 0, 0))
     hero.normalize(MANTLE_SIZE)
     export_part('hero_embercaller_mantle')
 
@@ -606,59 +749,62 @@ def embercaller_mantle():
 
 def bone_bow():
     reset()
-    # Stave on +Z, back toward -Y (forward); the string sits at +Y by the archer.
+    # Stave on +Z, back toward -Y (forward); glowing hunter-sight bowstring at +Y!
     upper = [(-.012, .12), (.03, .36), (.13, .62), (.218, .82), (.24, .93), (.205, 1.0), (.14, 1.05)]
     spine = [(0, y, -z) for y, z in reversed(upper)] + [(0, -.012, 0)] + [(0, y, z) for y, z in upper]
     half = [(.036, .034), (.05, .024), (.046, .019), (.038, .016), (.03, .014), (.022, .012), (.012, .008)]
-    limb('bone recurve stave', spine, list(reversed(half)) + [(.034, .036)] + half, BONE, 8)
+    limb('bone recurve stave', spine, list(reversed(half)) + [(.034, .036)] + half, BONE, 12)
     for s in [-1, 1]:
         for z, r in [(.36, .058), (.62, .054), (.82, .045)]:
             y = dict((round(zz, 2), yy) for yy, zz in upper)[z]
-            ellipsoid('stave vertebra knuckle', (0, y, s*z), (r, .03, .034), BONE)
-        limb('riser tusk', [(0, -.01, s*.14), (0, -.085, s*.20), (0, -.165, s*.30)],
-             [.024, .017, .004], BONE, 6)
+            ellipsoid(f'stave vertebra knuckle {s}_{z:.2f}', (0, y, s*z), (r, .03, .034), BONE, 18, 12)
+        limb(f'riser tusk {s}', [(0, -.01, s*.14), (0, -.085, s*.20), (0, -.165, s*.30)],
+             [.024, .017, .004], BONE, 8)
         for z in [.135, .185]:
-            hoop('sinew riser lashing', s*z, .043, .04, .008, SINEW, -.006)
-        hoop('sinew nock lashing', s*.985, .03, .018, .007, SINEW, .215)
-        hoop('teal grip ribbon', s*.105, .041, .043, .009, TEAL, -.012)
-        tube('sinew bowstring loop', [(0, .252, s*.93), (0, .23, s*.995), (0, .156, s*1.046)],
-             [.007, .007, .007], SINEW, 5)
-    tube('hide bow grip', [(0, -.012, -.1), (0, -.014, 0), (0, -.012, .1)], [.039, .041, .039], HIDE, 10)
-    tube('taut sinew bowstring', [(0, .252, -.93), (0, .252, .93)], [.007, .007], SINEW, 6)
-    tube('string serving', [(0, .252, -.07), (0, .252, .07)], [.011, .011], TEAL, 6)
+            hoop(f'sinew riser lashing {s}_{z:.2f}', s*z, .043, .04, .008, SINEW, -.006)
+        hoop(f'sinew nock lashing {s}', s*.985, .03, .018, .007, SINEW, .215)
+        hoop(f'teal grip ribbon {s}', s*.105, .041, .043, .009, TEAL, -.012)
+        tube(f'sinew bowstring loop {s}', [(0, .252, s*.93), (0, .23, s*.995), (0, .156, s*1.046)],
+             [.008, .008, .008], SIGHT, 8)
+    tube('hide bow grip', [(0, -.012, -.1), (0, -.014, 0), (0, -.012, .1)], [.039, .041, .039], HIDE, 14)
+    # Luminous spectral hunter-sight bowstring (matches portrait!)
+    tube('taut spectral bowstring', [(0, .252, -.93), (0, .252, .93)], [.008, .008], SIGHT, 8)
+    tube('string serving', [(0, .252, -.07), (0, .252, .07)], [.012, .012], TEAL, 8)
     export_single('bone_bow')
 
 
 def ember_staff():
     reset()
-    # 2.52 long: foot at -1.008, grip at the origin (40 % up), cage tips at 1.512.
+    # 2.52 long: foot at -1.008, grip at the origin (40 % up), ornate lantern cage tips at 1.54.
     wobble = [(0, 0, -.9), (.012, -.008, -.6), (-.01, .006, -.3), (0, 0, -.1), (0, 0, .16),
               (.011, .006, .42), (-.013, .009, .7), (.01, -.006, .95), (0, 0, 1.13)]
-    limb('charred staff shaft', wobble, [.027, .03, .031, .034, .034, .031, .03, .031, .036], WOOD, 9)
+    limb('charred staff shaft', wobble, [.027, .03, .031, .034, .034, .031, .03, .031, .036], WOOD, 14)
     for x, y, z, r in [(.03, -.01, -.52, .03), (-.03, .012, .58, .028), (.028, .014, .86, .026)]:
         limb('shaft burl', [(x*.3, y*.3, z-.05), (x, y, z), (x*.4, y*.4, z+.06)],
-             [.012, r, .01], WOOD, 6)
+             [.012, r, .01], WOOD, 8)
     tube('gilded foot spike', [(0, 0, -1.008), (0, 0, -.955), (0, 0, -.9), (0, 0, -.87)],
-         [.004, .024, .032, .03], GOLD, 8)
-    tube('violet grip wrap', [(0, 0, -.1), (0, 0, .02), (0, 0, .15)], [.039, .041, .039], VIOLET, 10)
+         [.004, .024, .032, .03], GOLD, 12)
+    tube('violet grip wrap', [(0, 0, -.1), (0, 0, .02), (0, 0, .15)], [.039, .041, .039], VIOLET, 14)
     for z in [-.105, .155]:
-        hoop('grip gilding', z, .041, .041, .009, GOLD)
+        hoop(f'grip gilding {z:.2f}', z, .041, .041, .009, GOLD)
     tube('gilded head collar', [(0, 0, 1.09), (0, 0, 1.12), (0, 0, 1.17), (0, 0, 1.185)],
-         [.036, .046, .05, .04], GOLD, 10)
-    for i in range(4):
-        a = math.pi/4 + i*math.pi/2
-        d = Vector((math.cos(a), math.sin(a), 0))
+         [.036, .048, .054, .042], GOLD, 14)
+    # 6-ribbed gothic iron-and-gold ember brazier cage cradling a blazing molten core!
+    for i in range(6):
+        ang = i*TAU/6
+        d = Vector((math.cos(ang), math.sin(ang), 0))
         path = [d*r + Vector((0, 0, z)) for r, z in
-                [(.036, 1.16), (.1, 1.215), (.138, 1.31), (.122, 1.405), (.07, 1.47), (.04, 1.512)]]
-        limb('charred cage claw', path, [.019, .019, .017, .014, .01, .003], WOOD, 6, d.cross(Vector((0, 0, 1))))
-        hoop('claw gold band', 1.31, .013, .013, .006, GOLD, .138*d.y, cx=.138*d.x)
-    shard('caged ember crystal', (0, 0, 1.455), (0, 0, 1.205), .07, CRYSTAL, 6, .42)
-    shard('ember crystal splinter', (.05, .02, 1.36), (.03, .014, 1.23), .022, CRYSTAL, 4, .4)
-    shard('ember crystal splinter', (-.046, -.03, 1.33), (-.026, -.02, 1.225), .019, CRYSTAL, 4, .4)
-    for a, z in [(.6, .97), (2.7, 1.03), (4.6, .99)]:
-        d = Vector((math.cos(a), math.sin(a), 0))*.034
-        shard('ember shaft vein', d+Vector((0, 0, z+.055)), d+Vector((0, 0, z-.05)), .007, EMBER, 4, .4, .5, d)
-    charm('staff reliquary', (-.046, .012, 1.125), .13, 'vial')
+                [(.040, 1.16), (.118, 1.22), (.162, 1.33), (.142, 1.44), (.082, 1.52), (.028, 1.57)]]
+        limb(f'gothic brazier rib {i}', path, [.018, .018, .016, .013, .009, .003], WOOD, 8, d.cross(Vector((0, 0, 1))))
+        hoop(f'brazier gold band {i}', 1.33, .013, .013, .006, GOLD, .162*d.y, cx=.162*d.x)
+    hoop('brazier equatorial ring', 1.33, .165, .165, .009, GOLD)
+    shard('caged ember crystal', (0, 0, 1.50), (0, 0, 1.19), .088, CRYSTAL, 8, .44)
+    shard('ember crystal splinter a', (.058, .022, 1.39), (.034, .014, 1.23), .026, CRYSTAL, 6, .4)
+    shard('ember crystal splinter b', (-.052, -.032, 1.36), (-.030, -.020, 1.225), .024, EMBER, 6, .4)
+    for ang, z in [(.6, .97), (2.7, 1.03), (4.6, .99)]:
+        d = Vector((math.cos(ang), math.sin(ang), 0))*.034
+        shard(f'ember shaft vein {ang:.1f}', d+Vector((0, 0, z+.06)), d+Vector((0, 0, z-.055)), .008, CRYSTAL, 4, .4, .5, d)
+    charm('staff reliquary', (-.052, .014, 1.125), .14, 'ember')
     export_single('ember_staff')
 
 
