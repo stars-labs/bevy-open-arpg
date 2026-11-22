@@ -36,18 +36,34 @@ pub(super) struct ProjectileVisual {
     pub width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EvadeVfxPhase {
+    Start,
+    Trail,
+    End,
+}
+
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct EvadeVisual {
+    pub origin: Vec3,
+    pub direction: Vec3,
+    pub phase: EvadeVfxPhase,
+}
+
 pub(super) struct SkillVfxPlugin;
 impl Plugin for SkillVfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SkillVisual>()
             .add_message::<MovementVisual>()
             .add_message::<ProjectileVisual>()
+            .add_message::<EvadeVisual>()
             .add_systems(Startup, prepare_art)
             .add_systems(
                 Update,
                 (
                     show_releases,
                     show_movement,
+                    show_evade,
                     show_projectile_trails,
                     animate,
                 )
@@ -149,10 +165,20 @@ fn spawn(
     rune: Rune,
     stroke: Stroke,
 ) {
-    let color = tint(rune);
+    spawn_colored(commands, materials, mesh, tint(rune), 2.5, stroke);
+}
+
+fn spawn_colored(
+    commands: &mut Commands,
+    materials: &mut Assets<StandardMaterial>,
+    mesh: Handle<Mesh>,
+    color: Color,
+    emissive_boost: f32,
+    stroke: Stroke,
+) {
     let material = materials.add(StandardMaterial {
         base_color: color,
-        emissive: LinearRgba::from(color) * 2.5,
+        emissive: LinearRgba::from(color) * emissive_boost,
         alpha_mode: AlphaMode::Add,
         unlit: true,
         cull_mode: None,
@@ -175,6 +201,15 @@ fn spawn(
         },
         Name::new("Skill silhouette"),
     ));
+}
+
+fn evade_palette(class: HeroClass) -> (Color, Color) {
+    match class {
+        HeroClass::Warden => (Color::srgb(0.95, 0.74, 0.34), Color::srgb(0.92, 0.96, 1.0)),
+        HeroClass::Stalker => (Color::srgb(0.24, 0.88, 0.68), Color::srgb(0.75, 1.0, 0.90)),
+        HeroClass::Soulbinder => (Color::srgb(0.14, 0.92, 0.76), Color::srgb(0.68, 1.0, 0.95)),
+        HeroClass::Embercaller => (Color::srgb(1.0, 0.42, 0.10), Color::srgb(1.0, 0.86, 0.48)),
+    }
 }
 fn show_releases(
     mut commands: Commands,
@@ -402,6 +437,189 @@ fn show_movement(
         }
     }
 }
+fn show_evade(
+    mut commands: Commands,
+    art: Res<Art>,
+    selected: Res<SelectedClass>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut events: MessageReader<EvadeVisual>,
+) {
+    let (primary, core) = evade_palette(selected.0);
+    for e in events.read() {
+        let dir = Vec3::new(e.direction.x, 0.0, e.direction.z).normalize_or_zero();
+        let forward = if dir.length_squared() > 0.01 {
+            dir
+        } else {
+            Vec3::Z
+        };
+        let yaw = forward.x.atan2(forward.z);
+        let side = Vec3::new(forward.z, 0.0, -forward.x);
+        let base = e.origin + Vec3::Y * 0.08;
+        match e.phase {
+            EvadeVfxPhase::Start => {
+                // Departure phase rift ring + bright inner flash ring
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    primary,
+                    2.6,
+                    Stroke {
+                        pose: Transform::from_translation(base).with_scale(Vec3::splat(0.32)),
+                        end_scale: Vec3::splat(1.42),
+                        duration: 0.26,
+                        velocity: Vec3::ZERO,
+                        spin: 2.6,
+                    },
+                );
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    core,
+                    3.2,
+                    Stroke {
+                        pose: Transform::from_translation(base + Vec3::Y * 0.04)
+                            .with_scale(Vec3::splat(0.20)),
+                        end_scale: Vec3::splat(0.88),
+                        duration: 0.16,
+                        velocity: Vec3::ZERO,
+                        spin: -3.4,
+                    },
+                );
+                // Swept directional shock crescent launching along the evade vector
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.crescent.clone(),
+                    core,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(base + Vec3::Y * 0.48 + forward * 0.12)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(0.55, 1.0, 0.62)),
+                        end_scale: Vec3::new(1.32, 1.0, 1.42),
+                        duration: 0.22,
+                        velocity: forward * 1.4,
+                        spin: 0.0,
+                    },
+                );
+                // Vertical phase-rift ribbons rising at takeoff so departure feels like a blink
+                for (offset, color, width, height) in [
+                    (0.0, core, 1.55, 1.85),
+                    (-0.24, primary, 1.05, 1.45),
+                    (0.24, primary, 1.05, 1.45),
+                ] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        color,
+                        2.8,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                base + side * offset + Vec3::Y * 0.06,
+                            )
+                            .with_rotation(
+                                Quat::from_rotation_y(yaw)
+                                    * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                            )
+                            .with_scale(Vec3::new(width, 1.0, height)),
+                            end_scale: Vec3::new(0.0, 1.0, height * 1.25),
+                            duration: 0.24,
+                            velocity: Vec3::Y * 0.55 - forward * 0.35,
+                            spin: 0.0,
+                        },
+                    );
+                }
+                // Six directional velocity shards kicking backward along -forward
+                for i in 0..6 {
+                    let spread = (i as f32 - 2.5) * 0.18;
+                    let back_yaw = yaw + std::f32::consts::PI + spread;
+                    let back_dir = Vec3::new(back_yaw.sin(), 0.0, back_yaw.cos());
+                    let lift = 0.26 + (i % 3) as f32 * 0.26;
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        if i % 2 == 0 { core } else { primary },
+                        2.6,
+                        Stroke {
+                            pose: Transform::from_translation(base + Vec3::Y * lift)
+                                .with_rotation(Quat::from_rotation_y(back_yaw))
+                                .with_scale(Vec3::new(1.05, 1.0, 0.92)),
+                            end_scale: Vec3::new(0.0, 1.0, 1.35),
+                            duration: 0.24,
+                            velocity: back_dir * (2.2 + (i % 2) as f32 * 0.9) + Vec3::Y * 0.35,
+                            spin: 0.0,
+                        },
+                    );
+                }
+            }
+            EvadeVfxPhase::Trail => {
+                // Sleek longitudinal slipstream ribbons streaming straight behind the hero
+                let back_yaw = yaw + std::f32::consts::PI;
+                for (lat, height, color, width, len) in [
+                    (0.0, 0.88, core, 1.15, 1.55),
+                    (-0.28, 0.56, primary, 0.85, 1.35),
+                    (0.28, 0.56, primary, 0.85, 1.35),
+                ] {
+                    spawn_colored(
+                        &mut commands,
+                        &mut materials,
+                        art.streak.clone(),
+                        color,
+                        2.4,
+                        Stroke {
+                            pose: Transform::from_translation(
+                                e.origin + side * lat + Vec3::Y * height - forward * 0.12,
+                            )
+                            .with_rotation(Quat::from_rotation_y(back_yaw))
+                            .with_scale(Vec3::new(width, 1.0, len)),
+                            end_scale: Vec3::new(0.0, 1.0, len * 1.25),
+                            duration: 0.19,
+                            velocity: -forward * 0.65,
+                            spin: 0.0,
+                        },
+                    );
+                }
+            }
+            EvadeVfxPhase::End => {
+                // Crisp contracting arrival ring + compact forward snap crescent
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.ring.clone(),
+                    primary,
+                    2.6,
+                    Stroke {
+                        pose: Transform::from_translation(base).with_scale(Vec3::splat(1.12)),
+                        end_scale: Vec3::splat(0.46),
+                        duration: 0.18,
+                        velocity: Vec3::ZERO,
+                        spin: -2.4,
+                    },
+                );
+                spawn_colored(
+                    &mut commands,
+                    &mut materials,
+                    art.crescent.clone(),
+                    core,
+                    2.8,
+                    Stroke {
+                        pose: Transform::from_translation(base + Vec3::Y * 0.34 + forward * 0.18)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(Vec3::new(0.48, 1.0, 0.52)),
+                        end_scale: Vec3::new(0.98, 1.0, 1.02),
+                        duration: 0.16,
+                        velocity: forward * 0.75,
+                        spin: 0.0,
+                    },
+                );
+            }
+        }
+    }
+}
 fn show_projectile_trails(
     mut commands: Commands,
     art: Res<Art>,
@@ -471,5 +689,66 @@ fn animate(
 fn clear(mut commands: Commands, particles: Query<Entity, With<SkillParticle>>) {
     for entity in &particles {
         commands.entity(entity).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evade_visual_emits_distinct_start_trail_and_end_particles() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(SelectedClass(HeroClass::Soulbinder))
+            .add_message::<EvadeVisual>()
+            .add_systems(Startup, prepare_art)
+            .add_systems(Update, show_evade);
+
+        let count_particles = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<Entity, With<SkillParticle>>()
+                .iter(app.world())
+                .count()
+        };
+
+        app.world_mut().write_message(EvadeVisual {
+            origin: Vec3::ZERO,
+            direction: Vec3::Z,
+            phase: EvadeVfxPhase::Start,
+        });
+        app.update();
+        let after_start = count_particles(&mut app);
+        assert!(
+            after_start >= 10,
+            "start phase should emit departure ring, rift, crescent, and shards"
+        );
+
+        app.world_mut().write_message(EvadeVisual {
+            origin: Vec3::Z * 1.5,
+            direction: Vec3::Z,
+            phase: EvadeVfxPhase::Trail,
+        });
+        app.update();
+        let after_trail = count_particles(&mut app);
+        assert_eq!(
+            after_trail - after_start,
+            3,
+            "trail phase should emit 3 longitudinal slipstream streaks"
+        );
+
+        app.world_mut().write_message(EvadeVisual {
+            origin: Vec3::Z * 3.0,
+            direction: Vec3::Z,
+            phase: EvadeVfxPhase::End,
+        });
+        app.update();
+        let after_end = count_particles(&mut app);
+        assert_eq!(
+            after_end - after_trail,
+            2,
+            "end phase should emit contracting arrival ring and snap crescent"
+        );
     }
 }

@@ -485,6 +485,9 @@ fn boss_skill_models_keep_readable_effect_nodes() {
 fn core_characters_and_bosses_embed_detail_textures_and_cull_backfaces() {
     for path in [
         "assets/models/hero.glb",
+        "assets/models/hero_soulbinder.glb",
+        "assets/models/soul_spirit.glb",
+        "assets/models/bone_sentry.glb",
         "assets/models/skeleton.glb",
         "assets/models/ashbone_guard.glb",
         "assets/models/cultist.glb",

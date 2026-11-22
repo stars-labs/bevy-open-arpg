@@ -52,12 +52,15 @@ DETAIL_BY_MATERIAL = {
     "choir cloth": "cloth",
     "cold worn steel": "metal",
     "dull relic gold": "metal",
+    "funerary tarnished silver": "metal",
     "hollow bone": "bone",
     "hunter teal cloth": "cloth",
     "hollow obsidian": "stone",
     "matron silver": "metal",
     "old leather": "cloth",
+    "ossuary dark iron": "metal",
     "reliquary stone": "stone",
+    "ritual parchment cloth": "cloth",
     "roster ash bone": "bone",
     "roster black iron": "metal",
     "roster char cloth": "cloth",
@@ -65,6 +68,9 @@ DETAIL_BY_MATERIAL = {
     "roster pale steel": "metal",
     "roster reliquary gold": "metal",
     "roster scorched leather": "cloth",
+    "soulbinder petrol velvet": "cloth",
+    "spectral patinated armor": "metal",
+    "spectral wraith shroud": "cloth",
 }
 
 # These are deliberately thin, camera-facing, or burst/ring-style effects.

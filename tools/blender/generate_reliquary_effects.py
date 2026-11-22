@@ -62,23 +62,55 @@ def aura(kind):
 
 
 def shadow_trail():
-    mat = art.material('silver blue shadow ribbon', (.15,.31,.42), glow=.35)
-    for streak in range(3):
-        verts=[]
-        count=20
-        for i in range(count+1):
-            t=i/count
-            x=-.78 + t*1.32
-            y=(streak-1)*.13 + math.sin(t*math.pi)*.09
-            z=.22 + streak*.065 + math.sin(t*math.pi)*.045
-            width=math.sin(t*math.pi)**.8 * (.038-streak*.006)
-            verts.extend([(x,y-width,z),(x,y+width,z)])
-        faces=[(i*2,i*2+1,i*2+3,i*2+2) for i in range(count)]
-        mesh=bpy.data.meshes.new('tapered motion ribbon')
-        mesh.from_pydata(verts,[],faces)
-        obj=bpy.data.objects.new('tapered motion ribbon',mesh)
+    # Aligned along Blender -Y -> +Y (glTF +Z forward -> -Z trailing behind hero).
+    # Single-material aerodynamic phase-wake: 5 longitudinal tapered slipstream
+    # ribbons + a swept forward V-chevron shock collar.
+    mat = art.material('silver blue shadow ribbon', (.22, .68, .78), glow=1.65)
+    ribbons = [
+        # (x_front, x_back, z_front, z_back, y_start, y_end, width, bank_angle)
+        (0.00, 0.00, 0.88, 0.72, -0.24, 1.38, 0.075, 0.0),
+        (-0.24, -0.42, 1.08, 0.92, -0.10, 1.24, 0.056, 0.65),
+        (0.24, 0.42, 1.08, 0.92, -0.10, 1.24, 0.056, -0.65),
+        (-0.30, -0.18, 0.42, 0.24, -0.04, 1.12, 0.048, -0.55),
+        (0.30, 0.18, 0.42, 0.24, -0.04, 1.12, 0.048, 0.55),
+    ]
+    count = 28
+    for idx, (xf, xb, zf, zb, ys, ye, max_w, bank) in enumerate(ribbons):
+        verts = []
+        cb, sb = math.cos(bank), math.sin(bank)
+        for i in range(count + 1):
+            t = i / count
+            y = ys + (ye - ys) * t
+            x = xf + (xb - xf) * (t ** 1.15)
+            z = zf + (zb - zf) * t + math.sin(t * math.pi) * 0.055
+            # Sharp leading taper, sleek long trailing tail
+            w = max_w * (math.sin(t * math.pi) ** 0.72) * (1.0 - 0.35 * t)
+            dx, dz = cb * w, sb * w
+            verts.extend([(x - dx, y, z - dz), (x + dx, y, z + dz)])
+        faces = [(i * 2, i * 2 + 1, i * 2 + 3, i * 2 + 2) for i in range(count)]
+        mesh = bpy.data.meshes.new(f'tapered motion ribbon {idx}')
+        mesh.from_pydata(verts, [], faces)
+        obj = bpy.data.objects.new(f'tapered motion ribbon {idx}', mesh)
         bpy.context.collection.objects.link(obj)
-        art.finish(obj,obj.name,mat)
+        art.finish(obj, obj.name, mat)
+
+    # Swept forward V-chevron phase collar at chest height
+    chev_verts = []
+    chev_steps = 24
+    for i in range(chev_steps + 1):
+        u = (i / chev_steps) * 2.0 - 1.0  # -1..+1
+        au = abs(u)
+        x = u * 0.46
+        y = -0.22 + (au ** 1.45) * 0.68
+        z = 0.78 - au * 0.18
+        w = 0.068 * ((1.0 - au * au) ** 0.55 + 0.04)
+        chev_verts.extend([(x, y - w * 0.45, z + w * 0.85), (x, y + w * 0.45, z - w * 0.85)])
+    chev_faces = [(i * 2, i * 2 + 1, i * 2 + 3, i * 2 + 2) for i in range(chev_steps)]
+    mesh = bpy.data.meshes.new('phase wake chevron')
+    mesh.from_pydata(chev_verts, [], chev_faces)
+    obj = bpy.data.objects.new('phase wake chevron', mesh)
+    bpy.context.collection.objects.link(obj)
+    art.finish(obj, obj.name, mat)
 
 
 def crescent(name, radius, start, sweep, width, height, mat, ellipse=1.0):

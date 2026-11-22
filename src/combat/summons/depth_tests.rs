@@ -17,6 +17,7 @@ fn fixture(bone: u32, spirit: u32) -> (App, Entity) {
         .insert_resource(Art {
             arc: default(),
             ring: default(),
+            idle_cyan: default(),
             cyan: default(),
             gold: default(),
         })

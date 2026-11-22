@@ -433,6 +433,8 @@ impl PlayerAnimation {
 #[derive(Component)]
 struct PlayerMotionTrail {
     timer: Timer,
+    initial_scale: Vec3,
+    taper: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3955,6 +3957,7 @@ type PlayerVisualPlayerQuery<'w, 's> = Query<
         &'static Transform,
         &'static Velocity,
         &'static Evade,
+        &'static EvadeDrive,
         Option<&'static mut PlayerHitReact>,
         &'static mut PlayerAnimation,
         Option<&'static crate::feedback::ContactPause>,
@@ -4330,12 +4333,15 @@ fn animate_player_visuals(
     assets: Res<GameAssets>,
     mut commands: Commands,
     mut visuals: PlayerVisualQueries,
+    mut was_evading: Local<bool>,
+    mut evade_vfx: Option<MessageWriter<crate::combat::skill_vfx::EvadeVisual>>,
 ) {
     let Ok((
         player_entity,
         player_transform,
         velocity,
         evade,
+        evade_drive_vec,
         hit_react,
         mut animation,
         contact_pause,
@@ -4354,6 +4360,22 @@ fn animate_player_visuals(
     let moving = velocity.0.length_squared() > 0.01;
     let speed = velocity.0.length();
     let evading = evade_seconds_remaining(evade) > 0.0;
+    let dash_dir = if evade_drive_vec.0.length_squared() > 0.01 {
+        evade_drive_vec.0.normalize()
+    } else {
+        animation.facing_direction()
+    };
+    if *was_evading
+        && !evading
+        && let Some(ref mut writer) = evade_vfx
+    {
+        writer.write(crate::combat::skill_vfx::EvadeVisual {
+            origin: player_transform.translation,
+            direction: dash_dir,
+            phase: crate::combat::skill_vfx::EvadeVfxPhase::End,
+        });
+    }
+    *was_evading = evading;
     animation.locomotion_blend =
         player_locomotion_blend(animation.locomotion_blend, moving, time.delta_secs());
     if moving {
@@ -4388,13 +4410,21 @@ fn animate_player_visuals(
     if let Some(interval_secs) = motion_trail_interval(evading)
         && animation.motion_trail_timer.is_finished()
     {
+        let dash_yaw = dash_dir.x.atan2(dash_dir.z);
         spawn_player_motion_trail(
             &mut commands,
             assets.shadow_trail.clone(),
             player_transform.translation,
-            animation.facing_yaw,
+            dash_yaw,
             motion_trail_scale(speed),
         );
+        if let Some(ref mut writer) = evade_vfx {
+            writer.write(crate::combat::skill_vfx::EvadeVisual {
+                origin: player_transform.translation,
+                direction: dash_dir,
+                phase: crate::combat::skill_vfx::EvadeVfxPhase::Trail,
+            });
+        }
         animation
             .motion_trail_timer
             .set_duration(std::time::Duration::from_secs_f32(interval_secs));
@@ -5280,11 +5310,14 @@ fn spawn_player_attack_trail(
     motion: PlayerAttackMotion,
     arc_pose: PlayerAttackArcPose,
 ) {
+    let transform = player_attack_trail_transform(origin, facing_yaw, motion, arc_pose);
     commands.spawn((
         WorldAssetRoot(scene),
-        player_attack_trail_transform(origin, facing_yaw, motion, arc_pose),
+        transform,
         PlayerMotionTrail {
             timer: Timer::from_seconds(attack_trail_lifetime(motion), TimerMode::Once),
+            initial_scale: transform.scale,
+            taper: false,
         },
         Name::new("Player Weapon Afterimage"),
     ));
@@ -5298,13 +5331,16 @@ fn spawn_player_motion_trail(
     scale: f32,
 ) {
     let forward = Vec3::new(facing_yaw.sin(), 0.0, facing_yaw.cos());
+    let initial_scale = Vec3::splat(scale);
     commands.spawn((
         WorldAssetRoot(scene),
-        Transform::from_translation(origin - forward * 0.34 + Vec3::Y * 0.10)
+        Transform::from_translation(origin - forward * 0.14 + Vec3::Y * 0.06)
             .with_rotation(Quat::from_rotation_y(facing_yaw))
-            .with_scale(Vec3::splat(scale)),
+            .with_scale(initial_scale),
         PlayerMotionTrail {
-            timer: Timer::from_seconds(0.22, TimerMode::Once),
+            timer: Timer::from_seconds(0.20, TimerMode::Once),
+            initial_scale,
+            taper: true,
         },
         Name::new("Player Motion Trail"),
     ));
@@ -5316,29 +5352,38 @@ fn spawn_surge_activation_vfx(
     player_entity: Entity,
     origin: Vec3,
 ) {
+    let burst = surge_burst_transform(origin);
     commands.spawn((
         WorldAssetRoot(assets.crit_burst.clone()),
-        surge_burst_transform(origin),
+        burst,
         PlayerMotionTrail {
             timer: Timer::from_seconds(0.52, TimerMode::Once),
+            initial_scale: burst.scale,
+            taper: false,
         },
         Name::new("Nephalem Surge Burst"),
     ));
+    let ring = surge_ground_ring_transform(origin);
     commands.spawn((
         WorldAssetRoot(assets.holy_impact.clone()),
-        surge_ground_ring_transform(origin),
+        ring,
         PlayerMotionTrail {
             timer: Timer::from_seconds(0.66, TimerMode::Once),
+            initial_scale: ring.scale,
+            taper: false,
         },
         Name::new("Nephalem Surge Ground Ring"),
     ));
     if let Ok(mut entity_commands) = commands.get_entity(player_entity) {
+        let aura = surge_aura_transform();
         entity_commands.with_children(|parent| {
             parent.spawn((
                 WorldAssetRoot(assets.shadow_burst.clone()),
-                surge_aura_transform(),
+                aura,
                 PlayerMotionTrail {
                     timer: Timer::from_seconds(1.10, TimerMode::Once),
+                    initial_scale: aura.scale,
+                    taper: false,
                 },
                 Name::new("Nephalem Surge Aura"),
             ));
@@ -5515,14 +5560,25 @@ fn tick_class_passive(
 fn tick_player_motion_trails(
     time: Res<Time>,
     mut commands: Commands,
-    mut trails: Query<(Entity, &mut PlayerMotionTrail)>,
+    mut trails: Query<(Entity, &mut PlayerMotionTrail, &mut Transform)>,
 ) {
-    for (entity, mut trail) in &mut trails {
+    for (entity, mut trail, mut transform) in &mut trails {
         trail.timer.tick(time.delta());
-        if trail.timer.is_finished()
-            && let Ok(mut entity_commands) = commands.get_entity(entity)
-        {
-            entity_commands.try_despawn();
+        if trail.timer.is_finished() {
+            if let Ok(mut entity_commands) = commands.get_entity(entity) {
+                entity_commands.try_despawn();
+            }
+            continue;
+        }
+        if trail.taper {
+            let t = trail.timer.fraction();
+            let ease = 1.0 - (1.0 - t).powi(2);
+            transform.scale = trail.initial_scale
+                * Vec3::new(
+                    (1.0 - ease * 0.90).max(0.02),
+                    (1.0 - ease * 0.72).max(0.05),
+                    1.0 + ease * 0.38,
+                );
         }
     }
 }
@@ -5767,6 +5823,7 @@ fn use_evade(
     keyboard: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut combat_events: MessageWriter<CombatEvent>,
+    mut evade_vfx: Option<MessageWriter<crate::combat::skill_vfx::EvadeVisual>>,
     mut player: EvadeActivationQuery,
 ) {
     *buffered_secs = (*buffered_secs - time.delta_secs()).max(0.0);
@@ -5804,6 +5861,13 @@ fn use_evade(
         TimerMode::Once,
     );
     evade.cooldown = Timer::from_seconds(evade.cooldown_secs, TimerMode::Once);
+    if let Some(ref mut writer) = evade_vfx {
+        writer.write(crate::combat::skill_vfx::EvadeVisual {
+            origin: transform.translation,
+            direction: drive.0,
+            phase: crate::combat::skill_vfx::EvadeVfxPhase::Start,
+        });
+    }
     combat_events.write(CombatEvent {
         text: "Evade".to_string(),
     });

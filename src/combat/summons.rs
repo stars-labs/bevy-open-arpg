@@ -114,7 +114,9 @@ struct State {
     rune: Rune,
 }
 #[derive(Component)]
-struct Part(usize);
+struct Part(usize, Entity);
+#[derive(Component)]
+struct VisualRoot(Entity);
 #[derive(Component)]
 struct Marker;
 #[derive(Component)]
@@ -125,6 +127,7 @@ struct Flash(f32);
 struct Art {
     arc: Handle<Mesh>,
     ring: Handle<Mesh>,
+    idle_cyan: Handle<StandardMaterial>,
     cyan: Handle<StandardMaterial>,
     gold: Handle<StandardMaterial>,
 }
@@ -164,6 +167,10 @@ fn art(
     commands.insert_resource(Art {
         arc: meshes.add(skill_vfx_art::arc(2.2, 0.035)),
         ring: meshes.add(skill_vfx_art::arc(std::f32::consts::TAU, 0.018)),
+        idle_cyan: materials.add(material(
+            Color::srgba(0.14, 0.78, 0.72, 0.45),
+            LinearRgba::new(0.06, 0.42, 0.44, 1.0),
+        )),
         cyan: materials.add(material(
             Color::srgba(0.2, 0.85, 0.95, 0.8),
             LinearRgba::new(0.1, 0.8, 1.1, 1.0),
@@ -239,7 +246,7 @@ fn reconcile(
                 3.2,
             ));
         }
-        commands
+        let minion_entity = commands
             .spawn((
                 Minion,
                 State {
@@ -268,35 +275,49 @@ fn reconcile(
                 Visibility::default(),
                 Name::new(if bone { "契灵骨卫" } else { "缚魂契灵" }),
             ))
-            .with_children(|root| {
-                root.spawn((WorldAssetRoot(parts.body), Transform::default()));
-                root.spawn((
-                    Aura,
-                    Mesh3d(art.ring.clone()),
-                    MeshMaterial3d(art.cyan.clone()),
-                    Transform::from_xyz(0.0, 0.04, 0.0).with_scale(Vec3::splat(0.7)),
-                    Visibility::Hidden,
-                    NotShadowCaster,
-                    NotShadowReceiver,
-                ));
+            .id();
+        let visual_scale = if bone { 0.94 } else { 0.92 };
+        let initial_hover = if bone { 0.0 } else { 0.16 };
+        commands.entity(minion_entity).with_children(|root| {
+            root.spawn((
+                Aura,
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.idle_cyan.clone()),
+                Transform::from_xyz(0.0, 0.04, 0.0).with_scale(Vec3::splat(0.62)),
+                if bone {
+                    Visibility::Hidden
+                } else {
+                    Visibility::Visible
+                },
+                NotShadowCaster,
+                NotShadowReceiver,
+            ));
+            root.spawn((
+                VisualRoot(minion_entity),
+                Transform::from_xyz(0.0, initial_hover, 0.0).with_scale(Vec3::splat(visual_scale)),
+                Visibility::default(),
+            ))
+            .with_children(|visual| {
+                visual.spawn((WorldAssetRoot(parts.body), Transform::default()));
                 for i in 0..5 {
                     let model = match i {
                         0 => parts.mantle.clone(),
                         1 | 2 => parts.arm.clone(),
                         _ => parts.leg.clone(),
                     };
-                    root.spawn((
+                    visual.spawn((
                         WorldAssetRoot(model),
                         summon_limb_transform(i, 0.0, false, 1.0, false),
-                        Part(i),
+                        Part(i, minion_entity),
                     ));
                 }
-                root.spawn((
+                visual.spawn((
                     WorldAssetRoot(parts.weapon),
                     summon_weapon_transform(1.0, false),
-                    Part(5),
+                    Part(5, minion_entity),
                 ));
             });
+        });
     }
     if markers.is_empty() {
         commands.spawn((
@@ -315,12 +336,12 @@ fn reconcile(
 fn formation(slot: usize, bone: bool) -> Vec3 {
     Vec3::new(
         if bone {
-            if slot == 0 { -1.25 } else { 1.25 }
+            if slot == 0 { -1.45 } else { 1.45 }
         } else {
-            -1.5
+            -1.95
         },
         0.0,
-        0.85,
+        if bone { 0.95 } else { 1.15 },
     )
 }
 fn contacts(
@@ -1008,13 +1029,24 @@ fn visuals(
     session: Res<SummonStatus>,
     states: Query<&State>,
     enemies: Query<&Transform, With<Enemy>>,
-    mut parts: Query<
-        (&Part, &ChildOf, &mut Transform),
+    mut visual_roots: Query<
+        (&VisualRoot, &mut Transform),
         (
             Without<Enemy>,
             Without<Marker>,
             Without<Flash>,
             Without<Minion>,
+            Without<Part>,
+        ),
+    >,
+    mut parts: Query<
+        (&Part, &mut Transform),
+        (
+            Without<Enemy>,
+            Without<Marker>,
+            Without<Flash>,
+            Without<Minion>,
+            Without<VisualRoot>,
         ),
     >,
     mut marker: Query<
@@ -1023,6 +1055,7 @@ fn visuals(
             With<Marker>,
             Without<Enemy>,
             Without<Part>,
+            Without<VisualRoot>,
             Without<Flash>,
             Without<Minion>,
         ),
@@ -1031,6 +1064,7 @@ fn visuals(
         (Entity, &mut Flash, &mut Transform),
         (
             Without<Part>,
+            Without<VisualRoot>,
             Without<Enemy>,
             Without<Marker>,
             Without<Minion>,
@@ -1038,8 +1072,24 @@ fn visuals(
     >,
     mut commands: Commands,
 ) {
-    for (part, parent, mut transform) in &mut parts {
-        let Ok(state) = states.get(parent.parent()) else {
+    let elapsed = time.elapsed_secs();
+    for (root, mut transform) in &mut visual_roots {
+        let Ok(state) = states.get(root.0) else {
+            continue;
+        };
+        if state.bone {
+            transform.translation.y = 0.0;
+            transform.rotation = Quat::IDENTITY;
+        } else {
+            let phase = elapsed * 2.4 + state.slot as f32 * 1.3;
+            transform.translation.y = 0.16 + phase.sin() * 0.06;
+            let pitch = if state.moving { 0.12 } else { 0.03 };
+            transform.rotation =
+                Quat::from_rotation_x(pitch) * Quat::from_rotation_z((phase * 0.5).cos() * 0.04);
+        }
+    }
+    for (part, mut transform) in &mut parts {
+        let Ok(state) = states.get(part.1) else {
             continue;
         };
         *transform = if part.0 == 5 {
@@ -1323,7 +1373,7 @@ fn scaled_damage(base: f32, gear: f32, level: u32, tuning: &Tuning) -> f32 {
 fn auras(
     session: Res<SummonStatus>,
     art: Res<Art>,
-    states: Query<&SummonVitality, With<Minion>>,
+    states: Query<(&State, &SummonVitality), With<Minion>>,
     mut auras: Query<
         (
             &ChildOf,
@@ -1335,18 +1385,31 @@ fn auras(
     >,
 ) {
     for (parent, mut visible, mut transform, mut material) in &mut auras {
-        let alive = states.get(parent.parent()).is_ok_and(|v| v.current > 0.0);
-        *visible = if alive && (session.overdrive > 0.0 || session.guard > 0.0) {
+        let Ok((state, vitality)) = states.get(parent.parent()) else {
+            *visible = Visibility::Hidden;
+            continue;
+        };
+        let alive = vitality.current > 0.0;
+        let boosted = session.overdrive > 0.0 || session.guard > 0.0;
+        *visible = if alive && (boosted || !state.bone) {
             Visibility::Visible
         } else {
             Visibility::Hidden
         };
         material.0 = if session.overdrive > 0.0 {
             art.gold.clone()
-        } else {
+        } else if boosted {
             art.cyan.clone()
+        } else {
+            art.idle_cyan.clone()
         };
-        transform.scale = Vec3::splat(if session.overdrive > 0.0 { 0.7 } else { 0.9 });
+        transform.scale = Vec3::splat(if session.overdrive > 0.0 {
+            0.74
+        } else if boosted {
+            0.90
+        } else {
+            0.62
+        });
     }
 }
 #[cfg(test)]

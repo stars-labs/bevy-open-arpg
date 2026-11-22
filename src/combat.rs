@@ -4,7 +4,7 @@ mod presentation;
 mod ranged;
 #[cfg(feature = "combat_review")]
 mod review;
-mod skill_vfx;
+pub(crate) mod skill_vfx;
 mod skill_vfx_art;
 mod summon_logic;
 pub(crate) mod summon_progression;
