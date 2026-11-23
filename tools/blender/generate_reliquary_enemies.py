@@ -161,6 +161,182 @@ def shield(x):
     old.sphere('shield boss',(x,-.36,1.1),(.075,.04,.075),STEEL)
 
 
+def executioner_cleaver(x, z):
+    """Massive notched dark-fantasy executioner cleaver with molten edge runes."""
+    link('cleaver haft', (x, -.12, z - .42), (x, -.12, z + .10), .048, .042, LEATHER)
+    for i in range(6):
+        old.torus('cleaver grip band', (x, -.12, z - .36 + i * .072), .046, .009, GOLD, major_segments=14, minor_segments=5)
+    old.sphere('cleaver pommel', (x, -.12, z - .45), (.068, .068, .072), GOLD, 16)
+    tube('cleaver crossguard', [
+        (x - .28, -.12, z + .06),
+        (x - .15, -.16, z + .14),
+        (x, -.16, z + .11),
+        (x + .15, -.16, z + .14),
+        (x + .28, -.12, z + .06),
+    ], .032, GOLD)
+    # Broad asymmetric notched cleaver blade with bevelled central fuller
+    verts = [
+        (x - .18, -.12, z + .12),
+        (x + .22, -.12, z + .12),
+        (x + .28, -.12, z + .58),
+        (x + .23, -.12, z + .96),
+        (x + .06, -.12, z + 1.18),
+        (x - .22, -.12, z + 1.02),
+        (x - .14, -.12, z + .72),
+        (x - .24, -.12, z + .56),
+        (x + .01, -.185, z + .58),
+        (x + .01, -.055, z + .58),
+    ]
+    faces = []
+    for i in range(8):
+        faces += [(i, (i + 1) % 8, 8), ((i + 1) % 8, i, 9)]
+    mesh('executioner cleaver blade', verts, faces, IRON, False)
+    # Glowing molten spine runes embedded in the cleaver fuller
+    for i in range(4):
+        rz = z + .28 + i * .18
+        old.sphere(f'cleaver ember rune {i}', (x + .02, -.145, rz), (.036, .045, .045), EMBER, 12)
+    # Iron chain hook hanging off the cleaver back
+    for k in range(3):
+        old.torus(f'cleaver chain {k}', (x - .20, -.12, z + .90 - k * .085), .036, .010, STEEL, (math.pi / 2 if k % 2 == 0 else 0.0, 0.0, 0.0), 12, 5)
+
+
+def choir_scepter(x, accent):
+    """Ornate sovereign gothic crozier staff for Nyxara, the Hollow Matron."""
+    link('choir staff shaft', (x + .14, -.12, .05), (x + .14, -.12, 1.92), .036, .024, DARK)
+    for z_ring in (.48, 1.12, 1.62, 1.88):
+        old.torus(f'staff collar {z_ring:.2f}', (x + .14, -.12, z_ring), .044, .012, GOLD, major_segments=14, minor_segments=6)
+    cx, cy, cz = x + .14, -.12, 2.06
+    old.torus('scepter outer halo', (cx, cy, cz), .22, .024, GOLD, (math.pi / 2, 0, 0), 22, 8)
+    old.torus('scepter inner halo', (cx, cy, cz), .13, .016, STEEL, (math.pi / 2, 0.45, 0), 18, 6)
+    for i in range(6):
+        a = i * math.tau / 6
+        link(f'scepter spire {i}', (cx + .21 * math.cos(a), cy, cz + .21 * math.sin(a)), (cx + .34 * math.cos(a), cy, cz + .34 * math.sin(a)), .024, .003, GOLD)
+    old.sphere('scepter soul heart', (cx, cy, cz), (.072, .072, .095), accent, 16)
+
+
+def add_keeper_boss_regalia(width):
+    """Cathedral iron back-brazier, furnace chest grate, spiked gothic crown, and tattered cloak."""
+    # Glowing molten furnace visible inside an armored iron chest cage
+    old.sphere('keeper furnace core', (0, -.16, 1.19), (.18, .10, .18), EMBER, 16)
+    for i in range(-2, 3):
+        link(f'furnace rib bar {i}', (i * .068, -.25, 1.03), (i * .058, -.265, 1.36), .017, .015, DARK)
+    for rz in (1.08, 1.20, 1.32):
+        tube(f'furnace strap {rz:.2f}', [(-.19, -.22, rz), (0, -.275, rz), (.19, -.22, rz)], .014, GOLD)
+
+    # Towering gothic spiked iron reliquary arch rising behind shoulders
+    arch_pts = []
+    for i in range(19):
+        a = -math.pi * 0.12 + math.pi * 1.24 * i / 18
+        arch_pts.append((.56 * math.cos(a), .24, 1.38 + .68 * math.sin(a)))
+    tube('keeper back arch outer', arch_pts, .042, IRON)
+    inner_pts = [(p[0] * 0.78, p[1] + .02, 1.38 + (p[2] - 1.38) * 0.78) for p in arch_pts]
+    tube('keeper back arch inner', inner_pts, .022, GOLD)
+    for i in range(9):
+        a = math.pi * i / 8
+        bx, bz = .55 * math.cos(a), 1.38 + .67 * math.sin(a)
+        tx, tz = (.82 + (i % 2) * .12) * math.cos(a), 1.38 + (.95 + (i % 2) * .14) * math.sin(a)
+        link(f'keeper halo spike {i}', (bx, .24, bz), (tx, .27, tz), .036, .003, IRON if i % 2 else GOLD)
+
+    # Twin burning shoulder braziers hanging off the arch flanks
+    for side in (-1, 1):
+        bx = side * .54
+        link(f'brazier post {side}', (side * .32 * width, .18, 1.35), (bx, .22, 1.62), .028, .022, IRON)
+        rings(f'brazier bowl {side}', [(1.58, .05, .05), (1.66, .13, .13), (1.72, .11, .11)], IRON, (bx, .22, 0))
+        old.sphere(f'brazier flame {side}', (bx, .22, 1.76), (.075, .075, .115), EMBER, 14)
+
+    # Dramatic swept iron-and-gold cathedral horns above skull
+    for side in (-1, 1):
+        tube(f'keeper crown horn {side}', [
+            (side * .15, -.02, 1.76),
+            (side * .28, .01, 1.94),
+            (side * .34, .05, 2.15),
+            (side * .24, .08, 2.30),
+        ], .038, DARK)
+        old.torus(f'horn ring {side}', (side * .27, .01, 1.94), .044, .012, GOLD, (0.4, side * 0.4, 0), 12, 5)
+
+    # Heavy tattered royal funeral mantle behind shoulders
+    cape_profile = [
+        (0.24, .54, .11),
+        (0.62, .48, .12),
+        (1.06, .43, .12),
+        (1.38, .40, .14),
+    ]
+    rings('keeper funeral cape', cape_profile, CLOTH, center=(0, .21, 0), pleats=.09, ragged=.12)
+
+
+def add_matron_boss_regalia(accent):
+    """Floating gothic choir eclipse halo, orbiting soul shards, and high cathedral collar."""
+    # High regal flared cathedral collar framing the hooded skull
+    collar_pts = []
+    for i in range(17):
+        a = math.pi * 0.08 + math.pi * 0.84 * i / 16
+        collar_pts.append((.44 * math.cos(a), .10 + .16 * math.sin(a), 1.48 + .32 * math.sin(a)))
+    tube('matron collar crest', collar_pts, .036, CLOTH)
+    tube('matron collar gold trim', [(p[0] * 1.04, p[1] - .015, p[2] + .02) for p in collar_pts], .014, GOLD)
+
+    # Towering floating dual eclipse choir halo behind her head
+    cz = 1.74
+    old.torus('matron outer halo', (0, .24, cz), .58, .026, GOLD, (math.pi / 2, 0, 0), 32, 8)
+    old.torus('matron inner halo', (0, .22, cz), .40, .018, STEEL, (math.pi / 2, 0, 0), 28, 6)
+    for i in range(11):
+        a = -math.pi * 0.10 + math.pi * 1.20 * i / 10
+        r_in = .57
+        r_out = .92 if i % 2 == 0 else .76
+        link(
+            f'matron halo ray {i}',
+            (r_in * math.cos(a), .24, cz + r_in * math.sin(a)),
+            (r_out * math.cos(a), .25, cz + r_out * math.sin(a)),
+            .028,
+            .002,
+            GOLD if i % 2 == 0 else STEEL,
+        )
+    # 6 floating luminous violet soul shards orbiting the halo
+    for i in range(6):
+        a = i * math.tau / 6 + 0.35
+        sx, sz = .49 * math.cos(a), cz + .49 * math.sin(a)
+        link(f'orbit shard top {i}', (sx, .20, sz), (sx, .20, sz + .11), .036, .003, accent)
+        link(f'orbit shard bot {i}', (sx, .20, sz), (sx, .20, sz - .09), .036, .003, accent)
+
+    # Flowing layered shoulder stole drapes
+    for side in (-1, 1):
+        tube(f'matron stole {side}', [
+            (side * .18, -.16, 1.40),
+            (side * .26, -.21, 1.06),
+            (side * .28, -.23, 0.62),
+            (side * .31, -.22, 0.24),
+        ], .038, GOLD)
+    # Luminous violet heart reliquary on chest
+    old.torus('matron chest seal', (0, -.195, 1.24), .095, .016, GOLD, (math.pi / 2, 0, 0), 18, 6)
+    old.sphere('matron chest core', (0, -.195, 1.24), (.062, .035, .078), accent, 14)
+
+
+def add_bell_warden_regalia(accent):
+    """Heavy iron belfry shoulder yoke, twin shoulder bells, and towering belfry finial."""
+    # Curved iron belfry yoke spanning shoulders
+    tube('belfry shoulder yoke', [
+        (-.62, .10, 1.54),
+        (-.36, .14, 1.62),
+        (0.0, .18, 1.68),
+        (.36, .14, 1.62),
+        (.62, .10, 1.54),
+    ], .042, IRON)
+    # Central gothic belfry spire rising behind hood
+    link('belfry central mast', (0, .18, 1.40), (0, .20, 2.34), .040, .010, IRON)
+    old.torus('belfry crest ring', (0, .20, 2.14), .14, .018, GOLD, (math.pi / 2, 0, 0), 18, 6)
+    old.sphere('belfry lantern core', (0, .20, 2.14), (.055, .055, .075), accent, 14)
+    # Twin smaller tolling bells suspended from the yoke ends
+    for side in (-1, 1):
+        bx = side * .58
+        link(f'yoke bell chain {side}', (bx, .10, 1.54), (bx, .10, 1.38), .015, .015, STEEL)
+        rings(f'yoke mini bell {side}', [
+            (1.16, .12, .12),
+            (1.22, .11, .11),
+            (1.32, .07, .07),
+            (1.39, .025, .025),
+        ], GOLD, (bx, .10, 0))
+        old.sphere(f'yoke bell glow {side}', (bx, .10, 1.15), (.042, .042, .050), accent, 12)
+
+
 def build(name, role, scale, height):
     old.reset()
     soul=name.startswith(('hollow','choir','bell'))
@@ -237,7 +413,9 @@ def build(name, role, scale, height):
             if bulky:
                 for i in range(3): link('pauldron thorn',(x+side*.10,-.09+i*.09,1.41),(x+side*.24,-.13+i*.12,1.57),.036,.001,GOLD)
         if side>0:
-            if role in ('caster','warden','matron','merchant','bell'):
+            if role=='matron':
+                choir_scepter(x, accent)
+            elif role in ('caster','warden','merchant','bell'):
                 link('crooked staff',(x+.14,-.12,.06),(x+.14,-.12,1.83),.032,.021,LEATHER)
                 old.torus('relic staff cage',(x+.14,-.12,1.79),.127,.025,GOLD,(math.pi/2,0,0))
                 old.sphere('small captive soul',(x+.14,-.12,1.79),(.055,.055,.072),accent)
@@ -246,13 +424,32 @@ def build(name, role, scale, height):
                 tube('recurve crossbow limbs',[(x-.34,-.50,.90),(x-.22,-.61,.88),(x,-.53,.86),(x+.22,-.61,.88),(x+.34,-.50,.90)],.027,STEEL)
                 tube('bowstring',[(x-.34,-.50,.90),(x,-.17,.86),(x+.34,-.50,.90)],.006,LEATHER)
                 link('loaded quarrel',(x,-.16,.89),(x,-.79,.89),.008,.005,STEEL)
+            elif role=='boss':
+                executioner_cleaver(x+.08,.86)
             else: blade(x+.06,.88,heavy=bulky)
         elif role in ('guard','warden'): shield(x-.12)
+        elif role=='boss':
+            # Spiked executioner gauntlet & hanging iron shackles
+            old.torus('keeper manacle',(x-.11,-.12,.85),.09,.022,IRON,(0,0,0),14,6)
+            for k in range(3):
+                old.torus(f'keeper shackle {k}',(x-.13,-.12,.74-k*.085),.04,.012,STEEL,(math.pi/2 if k%2 else 0,0,0),12,5)
+            link('keeper gauntlet spike',(x-.16,-.18,.84),(x-.26,-.28,.96),.035,.003,GOLD)
+        elif role=='matron':
+            # Floating violet choir orb held beside left hand
+            old.torus('matron orb ring',(x-.14,-.18,.90),.14,.016,GOLD,(0.5,0.4,0),18,6)
+            old.sphere('matron orb core',(x-.14,-.18,.90),(.078,.078,.078),accent,16)
         elif role in ('stalker','duelist'): blade(x-.03,.70)
         elif role=='bell':
-            rings('bronze tolling bell',[(.66,.23,.23),(.72,.235,.235),(.77,.17,.17),(1.0,.11,.11),(1.09,.025,.025)],GOLD,(x-.14,-.09,0))
-            old.sphere('bell clapper',(x-.14,-.09,.62),(.045,.045,.064),IRON)
+            rings('bronze tolling bell',[(.62,.28,.28),(.69,.29,.29),(.78,.20,.20),(1.03,.12,.12),(1.13,.03,.03)],GOLD,(x-.15,-.09,0))
+            old.torus('bell rim band',(x-.15,-.09,.69),.285,.020,IRON,major_segments=20,minor_segments=6)
+            old.sphere('bell clapper',(x-.15,-.09,.59),(.060,.060,.085),accent,14)
         join_since('enemy_left_arm' if side<0 else 'enemy_right_arm',before,shoulder)
+    if role=='boss':
+        add_keeper_boss_regalia(width)
+    elif role=='matron':
+        add_matron_boss_regalia(accent)
+    elif role=='bell':
+        add_bell_warden_regalia(accent)
     if role in ('marksman','imp','merchant'):
         old.sphere('travel satchel',(-.15,.205,.97),(.22,.12,.31),LEATHER)
         for i in range(5):
@@ -336,7 +533,17 @@ def preview(name):
 
 
 if __name__=='__main__':
+    only = None
+    if '--only' in sys.argv:
+        idx = sys.argv.index('--only')
+        only = set()
+        for arg in sys.argv[idx + 1:]:
+            if arg.startswith('--'):
+                break
+            only.add(arg)
     for name,role,scale,height in CAST:
+        if only is not None and name not in only:
+            continue
         if '--preview-only' in sys.argv:
             old.reset()
             bpy.ops.import_scene.gltf(filepath=str(OUT/f'{name}.glb'))

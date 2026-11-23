@@ -10,6 +10,7 @@ use crate::{
         apply_player_damage_with_evade, mitigated_damage, total_armor,
     },
 };
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAsset;
 
@@ -24,8 +25,11 @@ impl Plugin for BossAbilitiesPlugin {
                 Update,
                 (
                     attach_boss_ability_controllers,
+                    attach_boss_presentation,
+                    update_boss_presentation,
                     cast_boss_abilities,
                     resolve_boss_ability_hazards,
+                    update_boss_stage_vfx,
                 )
                     .chain()
                     .after(EnemySet::BossPhase)
@@ -115,6 +119,23 @@ struct BossAbilityHazard {
 
 #[derive(Component)]
 struct BossAbilityEntity;
+
+#[derive(Component, Default, Debug)]
+struct BossPresentationState {
+    phase_two_announced: bool,
+    enrage_announced: bool,
+    was_staggered: bool,
+}
+
+#[derive(Component)]
+struct BossStageVfx {
+    timer: Timer,
+    duration_secs: f32,
+    start_scale: Vec3,
+    end_scale: Vec3,
+    velocity: Vec3,
+    spin_y: f32,
+}
 
 struct BossHazardSpec {
     owner: Entity,
@@ -648,6 +669,274 @@ fn cleanup_boss_ability_entities(
     }
 }
 
+fn boss_theme_color(boss_id: &str) -> Color {
+    match boss_id {
+        "hollow_matron" => Color::srgba(0.76, 0.34, 1.0, 0.92),
+        "bell_warden" => Color::srgba(0.28, 0.88, 0.96, 0.92),
+        _ => Color::srgba(1.0, 0.36, 0.10, 0.92),
+    }
+}
+
+type NewBossPresentationQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Transform, &'static Enemy),
+    (With<BossPhase>, Without<BossPresentationState>),
+>;
+
+type BossPresentationQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Transform,
+        &'static Health,
+        &'static Enemy,
+        &'static BossPhase,
+        Option<&'static BossStagger>,
+        Option<&'static Staggered>,
+        &'static mut BossPresentationState,
+    ),
+>;
+
+fn attach_boss_presentation(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut screen_shake: MessageWriter<ScreenShakeEvent>,
+    new_bosses: NewBossPresentationQuery,
+) {
+    for (entity, transform, enemy) in &new_bosses {
+        commands
+            .entity(entity)
+            .try_insert(BossPresentationState::default());
+        let color = boss_theme_color(&enemy.id);
+        spawn_boss_burst_vfx(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            transform.translation,
+            color,
+            BossBurstKind::Entrance,
+        );
+        screen_shake.write(ScreenShakeEvent::new(0.045, 0.24));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_boss_presentation(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut floating_text: MessageWriter<FloatingCombatTextEvent>,
+    mut screen_shake: MessageWriter<ScreenShakeEvent>,
+    mut bosses: BossPresentationQuery,
+) {
+    for (transform, health, enemy, phase, stagger, staggered, mut state) in &mut bosses {
+        if health.current <= 0.0 {
+            continue;
+        }
+        let theme = boss_theme_color(&enemy.id);
+
+        if phase.phase_two_started() && !state.phase_two_announced {
+            state.phase_two_announced = true;
+            spawn_boss_burst_vfx(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                transform.translation,
+                theme,
+                BossBurstKind::PhaseShift,
+            );
+            screen_shake.write(ScreenShakeEvent::new(0.068, 0.30));
+            floating_text.write(FloatingCombatTextEvent {
+                text: format!("{} — PHASE II", enemy.display_name),
+                position: transform.translation + Vec3::Y * 3.0,
+                critical: true,
+            });
+        }
+
+        if phase.enrage_started() && !state.enrage_announced {
+            state.enrage_announced = true;
+            spawn_boss_burst_vfx(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                transform.translation,
+                Color::srgba(1.0, 0.20, 0.08, 0.95),
+                BossBurstKind::Enrage,
+            );
+            screen_shake.write(ScreenShakeEvent::new(0.082, 0.36));
+            floating_text.write(FloatingCombatTextEvent {
+                text: format!("{} — ENRAGED!", enemy.display_name),
+                position: transform.translation + Vec3::Y * 3.1,
+                critical: true,
+            });
+        }
+
+        let is_staggered = boss_is_interrupted(stagger, staggered);
+        if is_staggered && !state.was_staggered {
+            spawn_boss_burst_vfx(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                transform.translation,
+                Color::srgba(1.0, 0.84, 0.26, 0.96),
+                BossBurstKind::StaggerBreak,
+            );
+            screen_shake.write(ScreenShakeEvent::new(0.062, 0.22));
+            floating_text.write(FloatingCombatTextEvent {
+                text: "STAGGER BROKEN!".to_string(),
+                position: transform.translation + Vec3::Y * 2.8,
+                critical: true,
+            });
+        }
+        state.was_staggered = is_staggered;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BossBurstKind {
+    Entrance,
+    PhaseShift,
+    Enrage,
+    StaggerBreak,
+}
+
+fn spawn_boss_burst_vfx(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    origin: Vec3,
+    color: Color,
+    kind: BossBurstKind,
+) {
+    let lin = LinearRgba::from(color);
+    let boost = match kind {
+        BossBurstKind::Entrance => 2.6,
+        BossBurstKind::PhaseShift => 3.6,
+        BossBurstKind::Enrage => 4.2,
+        BossBurstKind::StaggerBreak => 4.0,
+    };
+    let emissive = LinearRgba::new(lin.red * boost, lin.green * boost, lin.blue * boost, 1.0);
+    let ring_mat = materials.add(StandardMaterial {
+        base_color: color,
+        emissive,
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+
+    // Primary expanding ground shockwave torus
+    let (end_radius, duration) = match kind {
+        BossBurstKind::Entrance => (4.4, 0.85),
+        BossBurstKind::PhaseShift => (6.4, 0.95),
+        BossBurstKind::Enrage => (7.2, 1.05),
+        BossBurstKind::StaggerBreak => (5.2, 0.72),
+    };
+    commands.spawn((
+        Mesh3d(meshes.add(Torus::new(0.46, 0.62))),
+        MeshMaterial3d(ring_mat.clone()),
+        Transform::from_translation(origin + Vec3::Y * 0.14).with_scale(Vec3::new(0.6, 0.45, 0.6)),
+        NotShadowCaster,
+        NotShadowReceiver,
+        BossStageVfx {
+            timer: Timer::from_seconds(duration, TimerMode::Once),
+            duration_secs: duration,
+            start_scale: Vec3::new(0.55, 0.55, 0.55),
+            end_scale: Vec3::new(end_radius, 0.08, end_radius),
+            velocity: Vec3::ZERO,
+            spin_y: 1.6,
+        },
+        BossAbilityEntity,
+        Name::new("Boss Stage Shockwave Ring"),
+    ));
+
+    // Vertical aura surge pillar for Entrance / PhaseShift / Enrage
+    if !matches!(kind, BossBurstKind::StaggerBreak) {
+        let pillar_mat = materials.add(StandardMaterial {
+            base_color: Color::linear_rgba(lin.red * 0.7, lin.green * 0.7, lin.blue * 0.7, 0.75),
+            emissive: emissive * 0.85,
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Add,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.95, 5.2))),
+            MeshMaterial3d(pillar_mat),
+            Transform::from_translation(origin + Vec3::Y * 2.5)
+                .with_scale(Vec3::new(0.85, 0.35, 0.85)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            BossStageVfx {
+                timer: Timer::from_seconds(duration * 0.9, TimerMode::Once),
+                duration_secs: duration * 0.9,
+                start_scale: Vec3::new(1.1, 0.4, 1.1),
+                end_scale: Vec3::new(2.2, 1.45, 2.2),
+                velocity: Vec3::Y * 0.8,
+                spin_y: -2.2,
+            },
+            BossAbilityEntity,
+            Name::new("Boss Stage Pillar"),
+        ));
+    }
+
+    // Radial flying shards for PhaseShift / Enrage / StaggerBreak
+    let shard_count = match kind {
+        BossBurstKind::Entrance => 4,
+        BossBurstKind::PhaseShift => 6,
+        BossBurstKind::Enrage => 8,
+        BossBurstKind::StaggerBreak => 8,
+    };
+    let shard_mesh = meshes.add(Cone::new(0.16, 0.78));
+    for i in 0..shard_count {
+        let angle = (i as f32 / shard_count as f32) * std::f32::consts::TAU;
+        let dir = Vec3::new(angle.cos(), 0.45, angle.sin()).normalize();
+        let speed = match kind {
+            BossBurstKind::StaggerBreak => 5.6,
+            BossBurstKind::Enrage => 4.8,
+            _ => 3.8,
+        };
+        commands.spawn((
+            Mesh3d(shard_mesh.clone()),
+            MeshMaterial3d(ring_mat.clone()),
+            Transform::from_translation(origin + Vec3::Y * 1.15 + dir * 0.6)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            BossStageVfx {
+                timer: Timer::from_seconds(0.62, TimerMode::Once),
+                duration_secs: 0.62,
+                start_scale: Vec3::new(1.0, 1.2, 1.0),
+                end_scale: Vec3::splat(0.08),
+                velocity: dir * speed,
+                spin_y: 4.5,
+            },
+            BossAbilityEntity,
+            Name::new("Boss Stage Burst Shard"),
+        ));
+    }
+}
+
+fn update_boss_stage_vfx(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut effects: Query<(Entity, &mut Transform, &mut BossStageVfx)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut transform, mut vfx) in &mut effects {
+        vfx.timer.tick(time.delta());
+        let t = (vfx.timer.elapsed_secs() / vfx.duration_secs).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - t) * (1.0 - t);
+        transform.scale = vfx.start_scale.lerp(vfx.end_scale, eased);
+        transform.translation += vfx.velocity * dt * (1.0 - t * 0.55);
+        transform.rotate_y(vfx.spin_y * dt);
+        if vfx.timer.is_finished() {
+            commands.entity(entity).try_despawn();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,5 +1059,15 @@ mod tests {
             boss_hazard_arm_multiplier(Difficulty::Torment)
                 < boss_hazard_arm_multiplier(Difficulty::Normal)
         );
+    }
+
+    #[test]
+    fn boss_theme_colors_are_distinct_per_boss() {
+        let keeper = boss_theme_color("keeper");
+        let matron = boss_theme_color("hollow_matron");
+        let bell = boss_theme_color("bell_warden");
+        assert_ne!(keeper, matron);
+        assert_ne!(keeper, bell);
+        assert_ne!(matron, bell);
     }
 }

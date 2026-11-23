@@ -489,10 +489,10 @@ fn update_page(
             }
             SkillText::Basics => basics_text(class, talents, &tuning.growth, zh),
             SkillText::TalentSummary(branch) => {
-                talent_description(*branch, talents, &tuning.growth, zh)
+                talent_description_for_class(class.class, *branch, talents, &tuning.growth, zh)
             }
             SkillText::TalentRank(branch, rank) => {
-                talent_rank_copy(*branch, *rank, &tuning.growth, zh)
+                talent_rank_copy_for_class(class.class, *branch, *rank, &tuning.growth, zh)
             }
         };
         if text.0 != value {
@@ -689,6 +689,194 @@ fn talent_effect(
     }
 }
 
+fn class_talent_synergy_summary(
+    class: crate::class::HeroClass,
+    branch: TalentBranch,
+    chinese: bool,
+) -> Option<&'static str> {
+    use crate::class::HeroClass;
+    match (class, branch) {
+        (HeroClass::Warden, TalentBranch::Wrath) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：圣焰重劈扩大并追加前冲爆焰 | 4阶：战意上限降至 2 层",
+            "Class Synergy · R2: Solar Cleave widens + forward blast | R4: Valor cap 3 -> 2",
+        )),
+        (HeroClass::Warden, TalentBranch::Vigor) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：圣焰重劈护盾翻倍，怒火震慑回血加盾 | 4阶：范围/位移必触怒火震慑",
+            "Class Synergy · R2: Double Solar barrier + Quake heal | R4: Area/Mobility always triggers Quake",
+        )),
+        (HeroClass::Warden, TalentBranch::Focus) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：圣焰重劈返还 18 怒气 | 4阶：施放技能额外获得 +1 层战意",
+            "Class Synergy · R2: Solar Cleave refunds +18 Fury | R4: Skills grant +1 Valor",
+        )),
+        (HeroClass::Stalker, TalentBranch::Wrath) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：追魂连矢升级为 4 支穿透箭 | 4阶：连矢暴击 +30% 且伤害提升",
+            "Class Synergy · R2: Phantom Volley fires 4 piercing arrows | R4: +30% crit & higher damage",
+        )),
+        (HeroClass::Stalker, TalentBranch::Vigor) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：箭雨升级为 3 波连续齐射 | 4阶：位移技回复 12 生命并获 12 护盾",
+            "Class Synergy · R2: Arrow Rain drops 3 staggered waves | R4: Mobility heals +12 HP & +12 Barrier",
+        )),
+        (HeroClass::Stalker, TalentBranch::Focus) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：猎手专注上限降至 3 层 | 4阶：追魂连矢返还 20 杀意",
+            "Class Synergy · R2: Predator Focus cap 4 -> 3 | R4: Phantom Volley refunds +20 Malice",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Wrath) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：余烬过载召唤 5 颗五芒陨星 | 4阶：过载陨星范围与伤害大幅增强",
+            "Class Synergy · R2: Cinder Overload rains 5 pentagram meteors | R4: Larger blast & higher damage",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Vigor) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：灰步护盾翻倍并引爆烈焰冲击 | 4阶：余烬过载额外获 18 护盾并回血",
+            "Class Synergy · R2: Ash Step doubles barrier + flame nova | R4: Overload grants +18 Barrier & +8 HP",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Focus) => Some(bilingual(
+            chinese,
+            "职业质变 · 2阶：余烬电荷上限降至 2 层 | 4阶：余烬过载返还 22 魔能",
+            "Class Synergy · R2: Cinder Charge cap 3 -> 2 | R4: Overload refunds +22 Arcana",
+        )),
+        (HeroClass::Soulbinder, _) => None,
+    }
+}
+
+fn class_talent_rank_milestone(
+    class: crate::class::HeroClass,
+    branch: TalentBranch,
+    rank: u32,
+    chinese: bool,
+) -> Option<&'static str> {
+    use crate::class::HeroClass;
+    match (class, branch, rank) {
+        (HeroClass::Warden, TalentBranch::Wrath, 2) => Some(bilingual(
+            chinese,
+            "圣焰冲击 · 重劈扩大+追加爆焰",
+            "Solar Shockwave · Wider cleave + forward blast",
+        )),
+        (HeroClass::Warden, TalentBranch::Wrath, 4) => Some(bilingual(
+            chinese,
+            "百战不殆 · 战意上限 3->2",
+            "Relentless Valor · Valor cap 3->2",
+        )),
+        (HeroClass::Warden, TalentBranch::Vigor, 2) => Some(bilingual(
+            chinese,
+            "圣盾壁垒 · 重劈双倍护盾+震慑回血",
+            "Bulwark Aegis · 2x barrier + Quake heal",
+        )),
+        (HeroClass::Warden, TalentBranch::Vigor, 4) => Some(bilingual(
+            chinese,
+            "不屈震慑 · 范围/位移必触震慑",
+            "Unbreakable Quake · Always procs on Area/Mobility",
+        )),
+        (HeroClass::Warden, TalentBranch::Focus, 2) => Some(bilingual(
+            chinese,
+            "战意回流 · 圣焰重劈返还 18 怒气",
+            "Valor Refund · Solar Cleave +18 Fury",
+        )),
+        (HeroClass::Warden, TalentBranch::Focus, 4) => Some(bilingual(
+            chinese,
+            "神威连携 · 技能施放额外 +1 战意",
+            "Chain Valor · Skills grant +1 Valor",
+        )),
+        (HeroClass::Stalker, TalentBranch::Wrath, 2) => Some(bilingual(
+            chinese,
+            "四连追魂 · 追魂连矢增至 4 箭",
+            "Quad Volley · 4 piercing Phantom arrows",
+        )),
+        (HeroClass::Stalker, TalentBranch::Wrath, 4) => Some(bilingual(
+            chinese,
+            "穿心狙杀 · 连矢暴击+30%/高伤",
+            "Heartseeker · +30% Volley crit & damage",
+        )),
+        (HeroClass::Stalker, TalentBranch::Vigor, 2) => Some(bilingual(
+            chinese,
+            "三重箭幕 · 箭雨追加第 3 波齐射",
+            "Triple Barrage · 3 staggered Arrow Rain waves",
+        )),
+        (HeroClass::Stalker, TalentBranch::Vigor, 4) => Some(bilingual(
+            chinese,
+            "影步回春 · 位移回血 12 + 护盾 12",
+            "Shadow Mend · Mobility +12 HP & +12 Barrier",
+        )),
+        (HeroClass::Stalker, TalentBranch::Focus, 2) => Some(bilingual(
+            chinese,
+            "猎手本能 · 专注上限 4->3",
+            "Keen Focus · Focus cap 4->3",
+        )),
+        (HeroClass::Stalker, TalentBranch::Focus, 4) => Some(bilingual(
+            chinese,
+            "杀意倾泻 · 连矢返还 20 杀意",
+            "Malice Flow · Volley refunds +20 Malice",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Wrath, 2) => Some(bilingual(
+            chinese,
+            "五芒陨星 · 过载升级为 5 陨星",
+            "Pentagram Overload · 5 overload meteors",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Wrath, 4) => Some(bilingual(
+            chinese,
+            "焦土炼狱 · 过载范围与伤害大增",
+            "Scorched Cataclysm · Larger & stronger meteors",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Vigor, 2) => Some(bilingual(
+            chinese,
+            "灰烬圣幕 · 灰步双倍护盾+烈焰冲击",
+            "Cinder Veil · 2x Ash Step barrier + flame nova",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Vigor, 4) => Some(bilingual(
+            chinese,
+            "焚霜护体 · 过载获 18 护盾与回血",
+            "Frost-Ember Ward · Overload +18 Barrier & +8 HP",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Focus, 2) => Some(bilingual(
+            chinese,
+            "炽热共鸣 · 电荷上限 3->2",
+            "Rapid Charge · Charge cap 3->2",
+        )),
+        (HeroClass::Embercaller, TalentBranch::Focus, 4) => Some(bilingual(
+            chinese,
+            "魔能涌动 · 过载返还 22 魔能",
+            "Arcana Surge · Overload refunds +22 Arcana",
+        )),
+        _ => None,
+    }
+}
+
+fn talent_description_for_class(
+    class: crate::class::HeroClass,
+    branch: TalentBranch,
+    talents: &Talents,
+    growth: &crate::data::CombatGrowthTuning,
+    chinese: bool,
+) -> String {
+    let mut base = talent_description(branch, talents, growth, chinese);
+    if let Some(synergy) = class_talent_synergy_summary(class, branch, chinese) {
+        base.push('\n');
+        base.push_str(synergy);
+    }
+    base
+}
+
+fn talent_rank_copy_for_class(
+    class: crate::class::HeroClass,
+    branch: TalentBranch,
+    rank: u32,
+    growth: &crate::data::CombatGrowthTuning,
+    chinese: bool,
+) -> String {
+    let mut base = talent_rank_copy(branch, rank, growth, chinese);
+    if let Some(milestone) = class_talent_rank_milestone(class, branch, rank, chinese) {
+        base.push('\n');
+        base.push_str(milestone);
+    }
+    base
+}
+
 fn talent_description(
     branch: TalentBranch,
     talents: &Talents,
@@ -835,6 +1023,36 @@ mod tests {
         assert!(
             talent_rank_copy(TalentBranch::Focus, 8, &tuning.growth, true)
                 .contains("怒气消耗 -15%")
+        );
+        assert!(
+            talent_description_for_class(
+                crate::class::HeroClass::Warden,
+                TalentBranch::Wrath,
+                &base,
+                &tuning.growth,
+                true
+            )
+            .contains("圣焰重劈")
+        );
+        assert!(
+            talent_description_for_class(
+                crate::class::HeroClass::Stalker,
+                TalentBranch::Wrath,
+                &base,
+                &tuning.growth,
+                false
+            )
+            .contains("4 piercing arrows")
+        );
+        assert!(
+            talent_rank_copy_for_class(
+                crate::class::HeroClass::Embercaller,
+                TalentBranch::Wrath,
+                2,
+                &tuning.growth,
+                true
+            )
+            .contains("五芒陨星")
         );
     }
 

@@ -8,7 +8,10 @@ use crate::{
     player::Player,
     terrain::{self, value_noise},
 };
-use bevy::prelude::*;
+use bevy::{
+    light::{NotShadowCaster, NotShadowReceiver},
+    prelude::*,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Width and depth of one streamed world tile, in world units.
@@ -111,16 +114,38 @@ struct ChunkPlan {
     decorations: Vec<DecorationSpec>,
 }
 
+const AMBIENT_MOTE_COUNT: usize = 28;
+const AMBIENT_MOTE_RADIUS: f32 = 15.5;
+const AMBIENT_MOTE_MIN_Y: f32 = 0.45;
+const AMBIENT_MOTE_MAX_Y: f32 = 5.4;
+
+/// Drifting dark-fantasy ash / ember atmosphere mote orbiting around the player.
+#[derive(Component, Debug, Clone, Copy)]
+struct AmbientMote {
+    offset: Vec3,
+    drift_speed: f32,
+    sway_phase: f32,
+    sway_speed: f32,
+    base_scale: f32,
+}
+
+#[derive(Resource, Debug, Clone, Copy, Eq, PartialEq)]
+struct AmbientAtmosphereChapter(ChapterId);
+
 /// Streams a deterministic wilderness around the player.
 pub struct ProceduralWorldPlugin;
 
 impl Plugin for ProceduralWorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ProceduralWorldSeed>()
-            .add_systems(OnEnter(GameState::InGame), setup_procedural_world)
+            .add_systems(
+                OnEnter(GameState::InGame),
+                (setup_procedural_world, spawn_ambient_motes),
+            )
             .add_systems(
                 Update,
-                stream_procedural_chunks.run_if(in_state(GameState::InGame).and_then(not_paused)),
+                (stream_procedural_chunks, update_ambient_motes)
+                    .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
             .add_systems(OnExit(GameState::InGame), teardown_procedural_world);
     }
@@ -285,12 +310,156 @@ fn spawn_chunk(
     root
 }
 
-fn teardown_procedural_world(mut commands: Commands, chunks: Query<Entity, With<ProceduralChunk>>) {
+fn ambient_mote_colors(chapter: ChapterId) -> (Color, Color) {
+    match chapter {
+        ChapterId::AshenReliquary => (
+            Color::srgba(1.0, 0.48, 0.14, 0.72),
+            Color::srgba(0.66, 0.56, 0.48, 0.36),
+        ),
+        ChapterId::HollowBastion => (
+            Color::srgba(0.32, 0.90, 0.92, 0.65),
+            Color::srgba(0.54, 0.64, 0.74, 0.36),
+        ),
+    }
+}
+
+fn spawn_ambient_motes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    active_chapter: Res<ActiveChapter>,
+) {
+    let (primary_color, ash_color) = ambient_mote_colors(active_chapter.0);
+    let mote_mesh = meshes.add(Sphere::new(0.055).mesh().ico(1).unwrap());
+    let ember_mat = materials.add(StandardMaterial {
+        base_color: primary_color,
+        emissive: LinearRgba::from(primary_color) * 2.2,
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+    let ash_mat = materials.add(StandardMaterial {
+        base_color: ash_color,
+        emissive: LinearRgba::from(ash_color) * 0.9,
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+
+    let mut rng = SplitMix64::new(0xE1BE_4A5B_900D_1337);
+    for i in 0..AMBIENT_MOTE_COUNT {
+        let angle = rng.unit_f32() * std::f32::consts::TAU;
+        let dist = rng.unit_f32().sqrt() * AMBIENT_MOTE_RADIUS;
+        let y = AMBIENT_MOTE_MIN_Y + rng.unit_f32() * (AMBIENT_MOTE_MAX_Y - AMBIENT_MOTE_MIN_Y);
+        let offset = Vec3::new(angle.cos() * dist, y, angle.sin() * dist);
+        let is_ember = i % 3 != 0;
+        let base_scale = if is_ember {
+            0.75 + rng.unit_f32() * 0.65
+        } else {
+            0.55 + rng.unit_f32() * 0.50
+        };
+        commands.spawn((
+            Mesh3d(mote_mesh.clone()),
+            MeshMaterial3d(if is_ember {
+                ember_mat.clone()
+            } else {
+                ash_mat.clone()
+            }),
+            Transform::from_translation(offset).with_scale(Vec3::splat(base_scale)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            OutdoorScenery,
+            AmbientMote {
+                offset,
+                drift_speed: 0.34 + rng.unit_f32() * 0.55,
+                sway_phase: rng.unit_f32() * std::f32::consts::TAU,
+                sway_speed: 0.7 + rng.unit_f32() * 1.1,
+                base_scale,
+            },
+            Name::new("Ambient Ash Mote"),
+        ));
+    }
+    commands.insert_resource(AmbientAtmosphereChapter(active_chapter.0));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_ambient_motes(
+    mut commands: Commands,
+    time: Res<Time>,
+    active_chapter: Res<ActiveChapter>,
+    atmosphere_chapter: Option<Res<AmbientAtmosphereChapter>>,
+    player: Query<&Transform, (With<Player>, Without<AmbientMote>)>,
+    mut motes: Query<(Entity, &mut Transform, &mut AmbientMote), Without<Player>>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if atmosphere_chapter.is_some_and(|ch| ch.0 != active_chapter.0) {
+        for (entity, ..) in &motes {
+            commands.entity(entity).try_despawn();
+        }
+        spawn_ambient_motes(commands, meshes, materials, active_chapter);
+        return;
+    }
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+    let span = AMBIENT_MOTE_MAX_Y - AMBIENT_MOTE_MIN_Y;
+    let wind = Vec3::new(0.42, 0.0, -0.26);
+
+    for (_, mut transform, mut mote) in &mut motes {
+        mote.offset.y += mote.drift_speed * dt;
+        mote.offset.x += wind.x * dt;
+        mote.offset.z += wind.z * dt;
+        if mote.offset.y > AMBIENT_MOTE_MAX_Y {
+            mote.offset.y -= span;
+        }
+        // Wrap gently around player horizon so motes stay uniformly distributed
+        if mote.offset.x > AMBIENT_MOTE_RADIUS {
+            mote.offset.x -= AMBIENT_MOTE_RADIUS * 2.0;
+        } else if mote.offset.x < -AMBIENT_MOTE_RADIUS {
+            mote.offset.x += AMBIENT_MOTE_RADIUS * 2.0;
+        }
+        if mote.offset.z > AMBIENT_MOTE_RADIUS {
+            mote.offset.z -= AMBIENT_MOTE_RADIUS * 2.0;
+        } else if mote.offset.z < -AMBIENT_MOTE_RADIUS {
+            mote.offset.z += AMBIENT_MOTE_RADIUS * 2.0;
+        }
+
+        let sway = (elapsed * mote.sway_speed + mote.sway_phase).sin() * 0.55;
+        let pulse = 0.72
+            + 0.38
+                * (elapsed * (mote.sway_speed * 1.4) + mote.sway_phase)
+                    .cos()
+                    .abs();
+        let height_fade = ((mote.offset.y - AMBIENT_MOTE_MIN_Y) / 0.9).min(1.0)
+            * ((AMBIENT_MOTE_MAX_Y - mote.offset.y) / 1.1).min(1.0);
+        let scale = (mote.base_scale * pulse * height_fade.max(0.08)).max(0.01);
+
+        transform.translation = Vec3::new(
+            player_transform.translation.x + mote.offset.x + sway,
+            mote.offset.y,
+            player_transform.translation.z + mote.offset.z + sway * 0.6,
+        );
+        transform.scale = Vec3::new(scale, scale * 1.35, scale);
+    }
+}
+
+fn teardown_procedural_world(
+    mut commands: Commands,
+    chunks: Query<Entity, With<ProceduralChunk>>,
+    motes: Query<Entity, With<AmbientMote>>,
+) {
     for entity in &chunks {
+        commands.entity(entity).try_despawn();
+    }
+    for entity in &motes {
         commands.entity(entity).try_despawn();
     }
     commands.remove_resource::<LoadedProceduralChunks>();
     commands.remove_resource::<ProceduralWorldAssets>();
+    commands.remove_resource::<AmbientAtmosphereChapter>();
 }
 
 fn world_axis_to_chunk(value: f32) -> i64 {

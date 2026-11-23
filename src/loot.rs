@@ -22,7 +22,10 @@ use crate::{
     },
     register_champion_pack_kill, register_valor_kill, valor_gold_reward, valor_xp_reward,
 };
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use rand::{Rng, RngExt};
 
@@ -84,6 +87,23 @@ struct LootGlow {
     base_intensity: f32,
     pulse_speed: f32,
     pulse_amount: f32,
+}
+
+#[derive(Component, Clone, Copy)]
+struct LootBeam {
+    spin_speed: f32,
+    pulse_speed: f32,
+    pulse_amount: f32,
+    base_scale: Vec3,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct LootDropFlash {
+    timer: Timer,
+    duration_secs: f32,
+    start_scale: f32,
+    end_scale: f32,
 }
 
 #[derive(Component)]
@@ -419,6 +439,7 @@ impl Plugin for LootPlugin {
                     update_death_burst_vfx,
                     update_death_remains,
                     update_loot_readability,
+                    update_loot_beams,
                     update_loot_labels,
                     update_loot_filter_visibility,
                     update_loot_proximity_info,
@@ -3174,6 +3195,208 @@ fn spawn_loot_drop(
             ))
             .id();
         commands.entity(loot_entity).add_child(glow_entity);
+
+        spawn_loot_beam_children(
+            commands,
+            meshes,
+            materials,
+            loot_entity,
+            &weapon.quality,
+            color,
+        );
+    }
+}
+
+fn loot_beam_spec(quality: &str) -> Option<(f32, f32, f32, f32)> {
+    // Returns (beam_height, core_radius, halo_radius, emissive_boost)
+    match quality {
+        "primal" => Some((8.2, 0.14, 0.36, 4.6)),
+        "ancient" => Some((6.8, 0.125, 0.31, 4.0)),
+        "legendary" => Some((5.6, 0.11, 0.27, 3.5)),
+        "rare" => Some((3.1, 0.075, 0.17, 2.2)),
+        _ => None,
+    }
+}
+
+fn loot_beam_mesh(radius_bottom: f32, radius_top: f32, height: f32, segments: usize) -> Mesh {
+    let segs = segments.max(6);
+    let levels = [
+        (0.00_f32, radius_bottom * 1.18, 0.88_f32),
+        (0.12_f32, radius_bottom, 1.00_f32),
+        (0.45_f32, radius_bottom.lerp(radius_top, 0.45), 0.56_f32),
+        (0.78_f32, radius_bottom.lerp(radius_top, 0.80), 0.18_f32),
+        (1.00_f32, radius_top, 0.00_f32),
+    ];
+    let ring_stride = segs + 1;
+    let mut positions = Vec::with_capacity(levels.len() * ring_stride);
+    let mut normals = Vec::with_capacity(levels.len() * ring_stride);
+    let mut colors = Vec::with_capacity(levels.len() * ring_stride);
+    let mut indices = Vec::with_capacity((levels.len() - 1) * segs * 6);
+
+    for (t, radius, intensity) in levels {
+        let y = t * height;
+        for i in 0..=segs {
+            let angle = (i as f32 / segs as f32) * std::f32::consts::TAU;
+            let (s, c) = angle.sin_cos();
+            positions.push([c * radius, y, s * radius]);
+            normals.push([c, 0.0, s]);
+            colors.push([intensity, intensity, intensity, intensity]);
+        }
+    }
+
+    for ring in 0..(levels.len() - 1) {
+        let base = (ring * ring_stride) as u32;
+        let next = ((ring + 1) * ring_stride) as u32;
+        for i in 0..segs as u32 {
+            let a = base + i;
+            let b = base + i + 1;
+            let c = next + i;
+            let d = next + i + 1;
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+fn spawn_loot_beam_children(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    loot_entity: Entity,
+    quality: &str,
+    color: Color,
+) {
+    let Some((height, core_radius, halo_radius, boost)) = loot_beam_spec(quality) else {
+        return;
+    };
+    let rank = loot_quality_rank(quality);
+    let lin = LinearRgba::from(color);
+    // Hot bright inner core pillar (white-tinted rarity core)
+    let core_tint = LinearRgba::new(
+        (lin.red * 0.65 + 0.35) * boost,
+        (lin.green * 0.65 + 0.35) * boost,
+        (lin.blue * 0.65 + 0.35) * boost,
+        1.0,
+    );
+    let core_beam = commands
+        .spawn((
+            Mesh3d(meshes.add(loot_beam_mesh(core_radius, core_radius * 0.42, height, 10))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::linear_rgba(
+                    core_tint.red,
+                    core_tint.green,
+                    core_tint.blue,
+                    0.92,
+                ),
+                emissive: core_tint,
+                unlit: true,
+                cull_mode: None,
+                alpha_mode: AlphaMode::Add,
+                ..default()
+            })),
+            Transform::from_xyz(0.0, 0.04, 0.0),
+            NotShadowCaster,
+            NotShadowReceiver,
+            LootBeam {
+                spin_speed: loot_spin_speed(quality) * 0.9,
+                pulse_speed: loot_pulse_speed(quality),
+                pulse_amount: 0.14,
+                base_scale: Vec3::ONE,
+                phase: 0.0,
+            },
+            LootFilterVisual { min_rank: rank },
+            LootEntity,
+            Name::new("Loot Pillar Core"),
+        ))
+        .id();
+    commands.entity(loot_entity).add_child(core_beam);
+
+    // Softer outer atmospheric halo sheath
+    let halo_tint = LinearRgba::new(
+        lin.red * boost * 0.48,
+        lin.green * boost * 0.48,
+        lin.blue * boost * 0.48,
+        1.0,
+    );
+    let halo_beam = commands
+        .spawn((
+            Mesh3d(meshes.add(loot_beam_mesh(
+                halo_radius,
+                halo_radius * 1.18,
+                height * 0.86,
+                12,
+            ))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::linear_rgba(
+                    halo_tint.red,
+                    halo_tint.green,
+                    halo_tint.blue,
+                    0.55,
+                ),
+                emissive: halo_tint,
+                unlit: true,
+                cull_mode: None,
+                alpha_mode: AlphaMode::Add,
+                ..default()
+            })),
+            Transform::from_xyz(0.0, 0.03, 0.0),
+            NotShadowCaster,
+            NotShadowReceiver,
+            LootBeam {
+                spin_speed: -loot_spin_speed(quality) * 0.55,
+                pulse_speed: loot_pulse_speed(quality) * 0.78,
+                pulse_amount: 0.18,
+                base_scale: Vec3::ONE,
+                phase: 1.4,
+            },
+            LootFilterVisual { min_rank: rank },
+            LootEntity,
+            Name::new("Loot Pillar Halo"),
+        ))
+        .id();
+    commands.entity(loot_entity).add_child(halo_beam);
+
+    // Dramatic drop-in ground shockwave flash for Legendary / Ancient / Primal drops
+    if rank >= 2 {
+        let flash = commands
+            .spawn((
+                Mesh3d(meshes.add(Torus::new(0.42, 0.56))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::linear_rgba(
+                        core_tint.red * 0.8,
+                        core_tint.green * 0.8,
+                        core_tint.blue * 0.8,
+                        0.85,
+                    ),
+                    emissive: core_tint * 1.1,
+                    unlit: true,
+                    alpha_mode: AlphaMode::Add,
+                    ..default()
+                })),
+                Transform::from_xyz(0.0, 0.07, 0.0).with_scale(Vec3::new(0.4, 0.3, 0.4)),
+                NotShadowCaster,
+                NotShadowReceiver,
+                LootDropFlash {
+                    timer: Timer::from_seconds(0.62, TimerMode::Once),
+                    duration_secs: 0.62,
+                    start_scale: 0.35,
+                    end_scale: 2.4 + (rank as f32 - 2.0) * 0.55,
+                },
+                LootFilterVisual { min_rank: rank },
+                LootEntity,
+                Name::new("Loot Drop Flash Ring"),
+            ))
+            .id();
+        commands.entity(loot_entity).add_child(flash);
     }
 }
 
@@ -3841,6 +4064,39 @@ fn update_loot_readability(
     for (mut light, glow) in &mut glows {
         light.intensity = glow.base_intensity
             * loot_pulse_factor(elapsed_secs, glow.pulse_speed, glow.pulse_amount);
+    }
+}
+
+fn update_loot_beams(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut beams: Query<(&mut Transform, &LootBeam), Without<LootDropFlash>>,
+    mut flashes: Query<(Entity, &mut Transform, &mut LootDropFlash), Without<LootBeam>>,
+) {
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+
+    for (mut transform, beam) in &mut beams {
+        transform.rotate_y(beam.spin_speed * dt);
+        let radial = 1.0 + (elapsed * beam.pulse_speed + beam.phase).sin() * beam.pulse_amount;
+        let vertical = 1.0 + (elapsed * (beam.pulse_speed * 0.65) + beam.phase).cos() * 0.06;
+        transform.scale = Vec3::new(
+            beam.base_scale.x * radial,
+            beam.base_scale.y * vertical,
+            beam.base_scale.z * radial,
+        );
+    }
+
+    for (entity, mut transform, mut flash) in &mut flashes {
+        flash.timer.tick(time.delta());
+        let progress = (flash.timer.elapsed_secs() / flash.duration_secs).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+        let radius = flash.start_scale.lerp(flash.end_scale, eased);
+        let y_scale = (1.0 - progress).max(0.02) * 0.45;
+        transform.scale = Vec3::new(radius, y_scale, radius);
+        if flash.timer.is_finished() {
+            commands.entity(entity).try_despawn();
+        }
     }
 }
 
@@ -7054,6 +7310,24 @@ mod tests {
             loot_pulse_factor(std::f32::consts::FRAC_PI_2, 1.0, 0.1)
                 > loot_pulse_factor(0.0, 1.0, 0.1)
         );
+    }
+
+    #[test]
+    fn loot_beam_spec_and_mesh_scale_by_rarity() {
+        assert!(loot_beam_spec("common").is_none());
+        let rare = loot_beam_spec("rare").expect("rare beam");
+        let legendary = loot_beam_spec("legendary").expect("legendary beam");
+        let ancient = loot_beam_spec("ancient").expect("ancient beam");
+        let primal = loot_beam_spec("primal").expect("primal beam");
+        assert!(legendary.0 > rare.0);
+        assert!(ancient.0 > legendary.0);
+        assert!(primal.0 > ancient.0);
+        assert!(primal.3 > rare.3);
+
+        let mesh = loot_beam_mesh(0.12, 0.05, 5.6, 10);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+        assert!(mesh.indices().is_some());
     }
 
     #[test]

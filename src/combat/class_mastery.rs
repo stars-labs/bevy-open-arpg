@@ -32,25 +32,53 @@ pub(super) struct ClassMasteryState {
 }
 
 impl ClassMasteryState {
-    pub(super) fn max_charges(class: HeroClass) -> u32 {
+    pub(super) fn max_charges_for(class: HeroClass, talents: &Talents) -> u32 {
         match class {
-            HeroClass::Warden => WARDEN_MAX_CHARGES,
-            HeroClass::Stalker => STALKER_MAX_CHARGES,
-            HeroClass::Embercaller => EMBER_MAX_CHARGES,
+            HeroClass::Warden => {
+                if talents.wrath >= 4 {
+                    2
+                } else {
+                    WARDEN_MAX_CHARGES
+                }
+            }
+            HeroClass::Stalker => {
+                if talents.focus >= 2 {
+                    3
+                } else {
+                    STALKER_MAX_CHARGES
+                }
+            }
+            HeroClass::Embercaller => {
+                if talents.focus >= 2 {
+                    2
+                } else {
+                    EMBER_MAX_CHARGES
+                }
+            }
             HeroClass::Soulbinder => 0,
         }
     }
 
-    fn add_charge(&mut self, class: HeroClass, amount: u32) {
-        let cap = Self::max_charges(class);
+    fn add_charge_for(&mut self, class: HeroClass, talents: &Talents, amount: u32) {
+        let cap = Self::max_charges_for(class, talents);
         if cap > 0 {
             self.charges = (self.charges + amount).min(cap);
         }
     }
 
-    fn ready(&self, class: HeroClass) -> bool {
-        let cap = Self::max_charges(class);
+    #[cfg(test)]
+    fn add_charge(&mut self, class: HeroClass, amount: u32) {
+        self.add_charge_for(class, &Talents::default(), amount);
+    }
+
+    fn ready_for(&self, class: HeroClass, talents: &Talents) -> bool {
+        let cap = Self::max_charges_for(class, talents);
         cap > 0 && self.charges >= cap
+    }
+
+    #[cfg(test)]
+    fn ready(&self, class: HeroClass) -> bool {
+        self.ready_for(class, &Talents::default())
     }
 }
 
@@ -83,7 +111,9 @@ fn observe_contacts(
     selected: Res<SelectedClass>,
     mut contacts: MessageReader<ContactFeedback>,
     mut state: ResMut<ClassMasteryState>,
+    player_talents: Query<&Talents, With<Player>>,
 ) {
+    let talents = player_talents.single().copied().unwrap_or_default();
     for event in contacts.read() {
         if event.cast == 0 || event.cast == state.last_contact_cast {
             continue;
@@ -91,18 +121,18 @@ fn observe_contacts(
         match selected.0 {
             HeroClass::Warden if event.skill.is_none() => {
                 state.last_contact_cast = event.cast;
-                state.add_charge(HeroClass::Warden, 1);
+                state.add_charge_for(HeroClass::Warden, &talents, 1);
             }
             HeroClass::Stalker => {
                 state.last_contact_cast = event.cast;
-                state.add_charge(HeroClass::Stalker, 1);
+                state.add_charge_for(HeroClass::Stalker, &talents, 1);
             }
             _ => {}
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn resolve_class_mastery(
     time: Res<Time>,
     selected: Res<SelectedClass>,
@@ -110,7 +140,10 @@ fn resolve_class_mastery(
     mut state: ResMut<ClassMasteryState>,
     mut signals: MessageReader<ClassCastSignal>,
     mut world: StrikeWorld,
-    mut heroes: Query<(&mut Barrier, &mut Fury), With<Player>>,
+    mut heroes: Query<
+        (&mut Health, &mut Barrier, &mut Fury, Option<&Talents>),
+        (With<Player>, Without<Enemy>),
+    >,
 ) {
     state.banner_secs = (state.banner_secs - time.delta_secs()).max(0.0);
     if state.banner_secs <= 0.0 {
@@ -121,21 +154,23 @@ fn resolve_class_mastery(
         return;
     }
     let zh = *language == crate::ui::localization::UiLanguage::Chinese;
-    let Ok((mut barrier, mut resource)) = heroes.single_mut() else {
+    let Ok((mut health, mut barrier, mut resource, talents_opt)) = heroes.single_mut() else {
         signals.clear();
         return;
     };
+    let talents = talents_opt.copied().unwrap_or_default();
 
     for signal in signals.read() {
         match selected.0 {
             HeroClass::Warden => {
-                // 1. Reliquary Solar Cleave when 3 Valor stacks are ready.
-                if state.ready(HeroClass::Warden) {
+                // 1. Reliquary Solar Cleave when Valor stacks are ready (3, or 2 at Wrath >= 4).
+                if state.ready_for(HeroClass::Warden, &talents) {
                     state.charges = 0;
                     state.last_proc = Some(ClassProcKind::WardenSolarCleave);
                     state.banner_secs = 1.3;
                     let center = signal.origin + signal.facing * 1.1;
-                    let radius = 3.2;
+                    let radius = if talents.wrath >= 2 { 4.2 } else { 3.2 };
+                    let damage_mult = if talents.wrath >= 2 { 0.90 } else { 0.65 };
                     let vfx = combat_vfx_assets(&world.assets);
                     apply_strike(
                         &mut world.commands,
@@ -149,12 +184,45 @@ fn resolve_class_mastery(
                         Strike {
                             area: HitArea::Radial { center, radius },
                             source: signal.origin,
-                            profile: proc_profile(signal.damage * 0.65, 1.35, Some(Rune::Expose)),
+                            profile: proc_profile(
+                                signal.damage * damage_mult,
+                                1.35,
+                                Some(Rune::Expose),
+                            ),
                         },
                         &mut world.enemies,
                         &world.bestiary,
                     );
-                    barrier.grant(12.0);
+                    // Wrath >= 2: Solar Shockwave launches a second forward solar eruption!
+                    if talents.wrath >= 2 {
+                        let forward_center = signal.origin + signal.facing * 3.3;
+                        apply_strike(
+                            &mut world.commands,
+                            &mut AttackFeedback {
+                                combat_events: &mut world.combat_events,
+                                floating_text: &mut world.floating_text,
+                                screen_shake: &mut world.screen_shake,
+                                hit_stop: &mut world.hit_stop,
+                            },
+                            &vfx,
+                            Strike {
+                                area: HitArea::Radial {
+                                    center: forward_center,
+                                    radius: 2.5,
+                                },
+                                source: signal.origin,
+                                profile: proc_profile(signal.damage * 0.55, 1.2, Some(Rune::Ember)),
+                            },
+                            &mut world.enemies,
+                            &world.bestiary,
+                        );
+                    }
+                    // Vigor >= 2 doubles Solar Cleave barrier (12 -> 24).
+                    barrier.grant(if talents.vigor >= 2 { 24.0 } else { 12.0 });
+                    // Focus >= 2 refunds +18 Fury on Solar Cleave!
+                    if talents.focus >= 2 {
+                        resource.gain(18.0);
+                    }
                     world.commands.write_message(ClassProcVisual {
                         kind: ClassProcKind::WardenSolarCleave,
                         origin: signal.origin,
@@ -168,11 +236,23 @@ fn resolve_class_mastery(
                     });
                 }
 
-                // 2. Aegis Quake when casting a skill at high fury (>=70) or Unbowed (<40% HP).
-                if signal.skill.is_some() && (signal.high_fury || signal.low_health) {
+                // Focus >= 4: Chain Valor grants +1 Valor stack when weaving any skill.
+                if signal.skill.is_some() && talents.focus >= 4 {
+                    state.add_charge_for(HeroClass::Warden, &talents, 1);
+                }
+
+                // 2. Aegis Quake when casting a skill at high fury (>=70), Unbowed (<40% HP),
+                // or unconditionally on Area/Mobility casts at Vigor >= 4.
+                let unbreakable_quake = talents.vigor >= 4
+                    && signal.skill.is_some_and(|cast| {
+                        matches!(cast.slot, SkillSlot::Area | SkillSlot::Mobility)
+                    });
+                if signal.skill.is_some()
+                    && (signal.high_fury || signal.low_health || unbreakable_quake)
+                {
                     state.last_proc = Some(ClassProcKind::WardenAegisQuake);
                     state.banner_secs = 1.25;
-                    let radius = 3.4;
+                    let radius = if talents.vigor >= 2 { 4.1 } else { 3.4 };
                     let vfx = combat_vfx_assets(&world.assets);
                     apply_strike(
                         &mut world.commands,
@@ -194,6 +274,10 @@ fn resolve_class_mastery(
                         &mut world.enemies,
                         &world.bestiary,
                     );
+                    if talents.vigor >= 2 {
+                        health.current = (health.current + 10.0).min(health.max);
+                        barrier.grant(12.0);
+                    }
                     world.commands.write_message(ClassProcVisual {
                         kind: ClassProcKind::WardenAegisQuake,
                         origin: signal.origin,
@@ -213,10 +297,16 @@ fn resolve_class_mastery(
                     .skill
                     .is_some_and(|cast| cast.slot == SkillSlot::Mobility)
                 {
-                    state.charges = STALKER_MAX_CHARGES;
+                    state.charges =
+                        ClassMasteryState::max_charges_for(HeroClass::Stalker, &talents);
+                    // Vigor >= 4: Shadow Mend restores +12 HP and +12 Barrier on Vault / Shadow Lunge.
+                    if talents.vigor >= 4 {
+                        health.current = (health.current + 12.0).min(health.max);
+                        barrier.grant(12.0);
+                    }
                 }
 
-                // Arrow Rain triggers a secondary staggered scatter volley on the same ground zone.
+                // Arrow Rain triggers a secondary staggered scatter volley (or 3 waves at Vigor >= 2!).
                 if let StrikeShape::GroundBlast { radius, delay, .. } = signal.shape {
                     let follow_profile = proc_profile(
                         signal.damage * 0.55,
@@ -231,10 +321,20 @@ fn resolve_class_mastery(
                         delay + 0.28,
                         follow_profile,
                     );
+                    if talents.vigor >= 2 {
+                        ranged::mark_ground_blast(
+                            &mut world.commands,
+                            signal.origin,
+                            signal.target,
+                            radius * 1.05,
+                            delay + 0.54,
+                            follow_profile,
+                        );
+                    }
                 }
 
-                // Full Focus unleashes Phantom Volley: 2 bonus fast piercing bone arrows + Malice refund!
-                if state.ready(HeroClass::Stalker)
+                // Full Focus unleashes Phantom Volley (2 arrows, or 4 arrows at Wrath >= 2, crit burst at Wrath >= 4).
+                if state.ready_for(HeroClass::Stalker, &talents)
                     && matches!(signal.shape, StrikeShape::Projectiles { .. })
                     && signal
                         .skill
@@ -243,11 +343,17 @@ fn resolve_class_mastery(
                     state.charges = 0;
                     state.last_proc = Some(ClassProcKind::StalkerPhantomVolley);
                     state.banner_secs = 1.25;
-                    let bonus_profile = proc_profile(
-                        signal.damage * 0.72,
+                    let arrow_count = if talents.wrath >= 2 { 4 } else { 2 };
+                    let spread_deg = if talents.wrath >= 2 { 38.0 } else { 26.0 };
+                    let dmg_scale = if talents.wrath >= 4 { 0.90 } else { 0.72 };
+                    let mut bonus_profile = proc_profile(
+                        signal.damage * dmg_scale,
                         1.15,
                         Some(signal.skill.map_or(Rune::Expose, |c| c.rune)),
                     );
+                    if talents.wrath >= 4 {
+                        bonus_profile.crit_chance = 0.45;
+                    }
                     ranged::launch_projectiles(
                         &mut world.commands,
                         &world.assets,
@@ -255,8 +361,8 @@ fn resolve_class_mastery(
                         signal.facing,
                         StrikeShape::Projectiles {
                             art: ProjectileArt::BoneArrow,
-                            count: 2,
-                            spread_deg: 26.0,
+                            count: arrow_count,
+                            spread_deg,
                             speed: 32.0,
                             range: 12.0,
                             width: 0.48,
@@ -265,7 +371,8 @@ fn resolve_class_mastery(
                         },
                         bonus_profile,
                     );
-                    resource.gain(10.0);
+                    // Focus >= 4 doubles Malice refund (10 -> 20).
+                    resource.gain(if talents.focus >= 4 { 20.0 } else { 10.0 });
                     world.commands.write_message(ClassProcVisual {
                         kind: ClassProcKind::StalkerPhantomVolley,
                         origin: signal.origin,
@@ -280,13 +387,36 @@ fn resolve_class_mastery(
                 }
             }
             HeroClass::Embercaller => {
-                // Ash Step blink sparks a quick Ember Veil barrier pulse.
+                // Ash Step blink sparks Ember Veil barrier (10, or 22 + flame pulse at Vigor >= 2).
                 if matches!(signal.movement, Movement::Blink(_)) {
-                    barrier.grant(10.0);
+                    barrier.grant(if talents.vigor >= 2 { 22.0 } else { 10.0 });
+                    if talents.vigor >= 2 {
+                        let vfx = combat_vfx_assets(&world.assets);
+                        apply_strike(
+                            &mut world.commands,
+                            &mut AttackFeedback {
+                                combat_events: &mut world.combat_events,
+                                floating_text: &mut world.floating_text,
+                                screen_shake: &mut world.screen_shake,
+                                hit_stop: &mut world.hit_stop,
+                            },
+                            &vfx,
+                            Strike {
+                                area: HitArea::Radial {
+                                    center: signal.origin,
+                                    radius: 3.0,
+                                },
+                                source: signal.origin,
+                                profile: proc_profile(signal.damage * 0.48, 1.1, Some(Rune::Ember)),
+                            },
+                            &mut world.enemies,
+                            &world.bestiary,
+                        );
+                    }
                 }
 
-                // At 3 Cinder Charges, casting any skill triggers Cinder Overload: 3 micro-meteors!
-                if state.ready(HeroClass::Embercaller) && signal.skill.is_some() {
+                // At max Cinder Charges (3, or 2 at Focus >= 2), casting any skill triggers Cinder Overload!
+                if state.ready_for(HeroClass::Embercaller, &talents) && signal.skill.is_some() {
                     state.charges = 0;
                     state.last_proc = Some(ClassProcKind::EmberOverload);
                     state.banner_secs = 1.35;
@@ -294,25 +424,36 @@ fn resolve_class_mastery(
                         StrikeShape::GroundBlast { .. } => signal.target,
                         _ => signal.origin + signal.facing * 3.8,
                     };
-                    let meteor_profile = proc_profile(signal.damage * 0.52, 1.2, Some(Rune::Ember));
-                    for i in 0..3 {
-                        let angle = i as f32 * std::f32::consts::TAU / 3.0 + 0.4;
-                        let offset = Vec3::new(angle.sin(), 0.0, angle.cos()) * 1.55;
+                    let meteor_count = if talents.wrath >= 2 { 5 } else { 3 };
+                    let blast_radius = if talents.wrath >= 4 { 2.8 } else { 2.1 };
+                    let dmg_scale = if talents.wrath >= 4 { 0.72 } else { 0.52 };
+                    let meteor_profile =
+                        proc_profile(signal.damage * dmg_scale, 1.2, Some(Rune::Ember));
+                    for i in 0..meteor_count {
+                        let angle = i as f32 * std::f32::consts::TAU / meteor_count as f32 + 0.4;
+                        let ring_dist = if meteor_count > 3 { 2.05 } else { 1.55 };
+                        let offset = Vec3::new(angle.sin(), 0.0, angle.cos()) * ring_dist;
                         ranged::mark_ground_blast(
                             &mut world.commands,
                             signal.origin,
                             anchor + offset,
-                            2.1,
-                            0.22 + i as f32 * 0.11,
+                            blast_radius,
+                            0.20 + i as f32 * 0.09,
                             meteor_profile,
                         );
                     }
-                    resource.gain(10.0);
+                    // Focus >= 4 refunds +22 Arcana (vs +10).
+                    resource.gain(if talents.focus >= 4 { 22.0 } else { 10.0 });
+                    // Vigor >= 4 grants Frost-Ember Ward barrier & healing on Overload.
+                    if talents.vigor >= 4 {
+                        barrier.grant(18.0);
+                        health.current = (health.current + 8.0).min(health.max);
+                    }
                     world.commands.write_message(ClassProcVisual {
                         kind: ClassProcKind::EmberOverload,
                         origin: anchor,
                         facing: signal.facing,
-                        radius: 2.8,
+                        radius: if talents.wrath >= 4 { 3.4 } else { 2.8 },
                     });
                     world.floating_text.write(FloatingCombatTextEvent {
                         text: if zh {
@@ -325,7 +466,7 @@ fn resolve_class_mastery(
                         critical: true,
                     });
                 } else {
-                    state.add_charge(HeroClass::Embercaller, 1);
+                    state.add_charge_for(HeroClass::Embercaller, &talents, 1);
                 }
             }
             HeroClass::Soulbinder => {}
@@ -434,6 +575,8 @@ fn update_hud(
     game_state: Res<State<GameState>>,
     mastery: Res<ClassMasteryState>,
     server: Res<AssetServer>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    player_talents: Query<&Talents, With<Player>>,
     mut root_q: Query<(&mut Node, &mut BorderColor), With<MasteryHudRoot>>,
     mut portrait_q: Query<&mut ImageNode, With<MasteryHudPortrait>>,
     mut text_q: Query<(&mut Text, &mut TextColor), With<MasteryHudText>>,
@@ -443,6 +586,7 @@ fn update_hud(
     >,
 ) {
     let visible = selected.0 != HeroClass::Soulbinder && *game_state.get() == GameState::InGame;
+    let talents = player_talents.single().copied().unwrap_or_default();
     let zh = *language == crate::ui::localization::UiLanguage::Chinese;
     let (accent, border, portrait_path, title, ready_text) = match selected.0 {
         HeroClass::Warden => (
@@ -490,12 +634,15 @@ fn update_hud(
             "",
         ),
     };
+    let compact = windows.single().is_ok_and(|w| w.width() < 760.0);
     for (mut node, mut border_color) in &mut root_q {
         node.display = if visible {
             Display::Flex
         } else {
             Display::None
         };
+        node.left = Val::Px(if compact { 10.0 } else { 18.0 });
+        node.top = Val::Px(if compact { 96.0 } else { 184.0 });
         *border_color = BorderColor::all(border);
     }
     if !visible {
@@ -504,7 +651,8 @@ fn update_hud(
     for mut portrait in &mut portrait_q {
         portrait.image = server.load(portrait_path);
     }
-    let max = ClassMasteryState::max_charges(selected.0).max(1);
+    let max = ClassMasteryState::max_charges_for(selected.0, &talents).max(1);
+    let is_ready = mastery.ready_for(selected.0, &talents);
     let pct = (mastery.charges as f32 / max as f32 * 100.0).clamp(0.0, 100.0);
     let proc_line = mastery.last_proc.map(|kind| match (kind, zh) {
         (ClassProcKind::WardenSolarCleave, true) => "触发 · 圣焰重劈",
@@ -516,7 +664,7 @@ fn update_hud(
         (ClassProcKind::StalkerPhantomVolley, false) => "Proc · Phantom Volley",
         (ClassProcKind::EmberOverload, false) => "Proc · Cinder Overload",
     });
-    let body = if mastery.ready(selected.0) {
+    let body = if is_ready {
         format!("{title} · {ready_text}")
     } else if let Some(proc_text) = proc_line {
         format!("{title} {}/{max}\n{proc_text}", mastery.charges)
@@ -525,7 +673,7 @@ fn update_hud(
     };
     for (mut text, mut color) in &mut text_q {
         text.0 = body.clone();
-        color.0 = if mastery.ready(selected.0) {
+        color.0 = if is_ready {
             accent
         } else {
             Color::srgb(0.92, 0.88, 0.80)
@@ -587,6 +735,10 @@ mod tests {
             .spawn((
                 Player,
                 Transform::default(),
+                Health {
+                    current: 80.0,
+                    max: 120.0,
+                },
                 Barrier {
                     current: 0.0,
                     max: 100.0,
@@ -598,6 +750,7 @@ mod tests {
                     regen_per_sec: 0.0,
                     cost_discount: 0.0,
                 },
+                Talents::default(),
             ))
             .id();
         (app, hero)
@@ -733,5 +886,141 @@ mod tests {
         assert_eq!(meteors, 3);
         assert_eq!(app.world().resource::<ClassMasteryState>().charges, 0);
         assert_eq!(app.world().get::<Fury>(hero).unwrap().current, 60.0);
+    }
+
+    #[test]
+    fn talent_synergies_upgrade_warden_stalker_and_embercaller_masteries() {
+        // Warden Wrath >= 4 reduces cap to 2; Vigor >= 2 doubles barrier; Focus >= 2 refunds +18 Fury.
+        let (mut w_app, w_hero) = mastery_app(HeroClass::Warden);
+        *w_app.world_mut().get_mut::<Talents>(w_hero).unwrap() = Talents {
+            points: 0,
+            wrath: 4,
+            vigor: 2,
+            focus: 2,
+        };
+        assert_eq!(
+            ClassMasteryState::max_charges_for(
+                HeroClass::Warden,
+                w_app.world().get::<Talents>(w_hero).unwrap()
+            ),
+            2
+        );
+        w_app
+            .world_mut()
+            .resource_mut::<ClassMasteryState>()
+            .charges = 2;
+        w_app.world_mut().write_message(ClassCastSignal {
+            origin: Vec3::ZERO,
+            facing: Vec3::Z,
+            target: Vec3::Z * 1.5,
+            shape: StrikeShape::Arc { range: 2.2 },
+            skill: None,
+            movement: Movement::None,
+            damage: 40.0,
+            impact: 1.0,
+            high_fury: false,
+            low_health: false,
+        });
+        w_app.update();
+        assert_eq!(w_app.world().get::<Barrier>(w_hero).unwrap().current, 24.0);
+        assert_eq!(w_app.world().get::<Fury>(w_hero).unwrap().current, 68.0);
+
+        // Stalker Wrath >= 2 launches 4 arrows, Focus >= 2 reduces cap to 3, Focus >= 4 refunds +20 Malice.
+        let (mut s_app, s_hero) = mastery_app(HeroClass::Stalker);
+        *s_app.world_mut().get_mut::<Talents>(s_hero).unwrap() = Talents {
+            points: 0,
+            wrath: 2,
+            vigor: 2,
+            focus: 4,
+        };
+        assert_eq!(
+            ClassMasteryState::max_charges_for(
+                HeroClass::Stalker,
+                s_app.world().get::<Talents>(s_hero).unwrap()
+            ),
+            3
+        );
+        s_app
+            .world_mut()
+            .resource_mut::<ClassMasteryState>()
+            .charges = 3;
+        s_app.world_mut().write_message(ClassCastSignal {
+            origin: Vec3::ZERO,
+            facing: Vec3::Z,
+            target: Vec3::Z * 6.0,
+            shape: StrikeShape::Projectiles {
+                art: ProjectileArt::BoneArrow,
+                count: 1,
+                spread_deg: 0.0,
+                speed: 26.0,
+                range: 10.0,
+                width: 0.4,
+                pierce: false,
+                blast_radius: 0.0,
+            },
+            skill: None,
+            movement: Movement::None,
+            damage: 25.0,
+            impact: 1.0,
+            high_fury: false,
+            low_health: false,
+        });
+        s_app.update();
+        let quad_arrows = s_app
+            .world_mut()
+            .query_filtered::<Entity, With<ranged::PlayerProjectile>>()
+            .iter(s_app.world())
+            .count();
+        assert_eq!(quad_arrows, 4);
+        assert_eq!(s_app.world().get::<Fury>(s_hero).unwrap().current, 70.0);
+
+        // Embercaller Wrath >= 2 summons 5 meteors, Focus >= 2 drops cap to 2, Focus >= 4 refunds +22 Arcana, Vigor >= 4 grants barrier + heal.
+        let (mut e_app, e_hero) = mastery_app(HeroClass::Embercaller);
+        *e_app.world_mut().get_mut::<Talents>(e_hero).unwrap() = Talents {
+            points: 0,
+            wrath: 4,
+            vigor: 4,
+            focus: 4,
+        };
+        assert_eq!(
+            ClassMasteryState::max_charges_for(
+                HeroClass::Embercaller,
+                e_app.world().get::<Talents>(e_hero).unwrap()
+            ),
+            2
+        );
+        e_app
+            .world_mut()
+            .resource_mut::<ClassMasteryState>()
+            .charges = 2;
+        e_app.world_mut().write_message(ClassCastSignal {
+            origin: Vec3::ZERO,
+            facing: Vec3::Z,
+            target: Vec3::Z * 5.0,
+            shape: StrikeShape::GroundBlast {
+                cast_range: 9.5,
+                radius: 2.8,
+                delay: 0.6,
+            },
+            skill: Some(SkillCast {
+                slot: SkillSlot::Finisher,
+                rune: Rune::Ember,
+            }),
+            movement: Movement::None,
+            damage: 54.0,
+            impact: 1.4,
+            high_fury: false,
+            low_health: false,
+        });
+        e_app.update();
+        let penta_meteors = e_app
+            .world_mut()
+            .query_filtered::<Entity, With<ranged::PlayerGroundBlast>>()
+            .iter(e_app.world())
+            .count();
+        assert_eq!(penta_meteors, 5);
+        assert_eq!(e_app.world().get::<Fury>(e_hero).unwrap().current, 72.0);
+        assert_eq!(e_app.world().get::<Barrier>(e_hero).unwrap().current, 18.0);
+        assert_eq!(e_app.world().get::<Health>(e_hero).unwrap().current, 88.0);
     }
 }
