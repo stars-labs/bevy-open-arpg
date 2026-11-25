@@ -246,6 +246,17 @@ fn cast_boss_abilities(
             difficulty.current,
             controller.sequence,
         );
+        let boss_cast_motion = match ability {
+            BossAbilityKind::AshenGuillotine => crate::motion::MotionId::ChargeBossGuillotine,
+            BossAbilityKind::CrucibleRings | BossAbilityKind::KeeperChainCage => {
+                crate::motion::MotionId::EnemyShockwaveSlam
+            }
+            BossAbilityKind::SoulFissureChoir | BossAbilityKind::MatronSoulLance => {
+                crate::motion::MotionId::ChargeStaffSkyward
+            }
+            BossAbilityKind::HollowCrescendo => crate::motion::MotionId::ChargeBossCrescendo,
+        };
+        crate::motion::queue_play_motion(&mut commands, entity, boss_cast_motion, Some(0.95), true);
         controller.sequence = controller.sequence.saturating_add(1);
         controller.cooldown = Timer::from_seconds(
             boss_special_cooldown_secs(difficulty.current, phase),
@@ -688,6 +699,7 @@ type BossPresentationQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static Transform,
         &'static Health,
         &'static Enemy,
@@ -709,6 +721,13 @@ fn attach_boss_presentation(
         commands
             .entity(entity)
             .try_insert(BossPresentationState::default());
+        crate::motion::queue_play_motion(
+            &mut commands,
+            entity,
+            crate::motion::MotionId::BossEntranceRoar,
+            None,
+            true,
+        );
         let color = boss_theme_color(&enemy.id);
         spawn_boss_burst_vfx(
             &mut commands,
@@ -731,7 +750,7 @@ fn update_boss_presentation(
     mut screen_shake: MessageWriter<ScreenShakeEvent>,
     mut bosses: BossPresentationQuery,
 ) {
-    for (transform, health, enemy, phase, stagger, staggered, mut state) in &mut bosses {
+    for (entity, transform, health, enemy, phase, stagger, staggered, mut state) in &mut bosses {
         if health.current <= 0.0 {
             continue;
         }
@@ -739,6 +758,13 @@ fn update_boss_presentation(
 
         if phase.phase_two_started() && !state.phase_two_announced {
             state.phase_two_announced = true;
+            crate::motion::queue_play_motion(
+                &mut commands,
+                entity,
+                crate::motion::MotionId::BossPhaseShiftAscend,
+                None,
+                true,
+            );
             spawn_boss_burst_vfx(
                 &mut commands,
                 &mut meshes,
@@ -757,6 +783,13 @@ fn update_boss_presentation(
 
         if phase.enrage_started() && !state.enrage_announced {
             state.enrage_announced = true;
+            crate::motion::queue_play_motion(
+                &mut commands,
+                entity,
+                crate::motion::MotionId::BossPhaseShiftAscend,
+                None,
+                true,
+            );
             spawn_boss_burst_vfx(
                 &mut commands,
                 &mut meshes,
@@ -775,6 +808,13 @@ fn update_boss_presentation(
 
         let is_staggered = boss_is_interrupted(stagger, staggered);
         if is_staggered && !state.was_staggered {
+            crate::motion::queue_play_motion(
+                &mut commands,
+                entity,
+                crate::motion::MotionId::StaggerKneelCollapse,
+                None,
+                true,
+            );
             spawn_boss_burst_vfx(
                 &mut commands,
                 &mut meshes,

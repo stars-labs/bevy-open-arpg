@@ -204,17 +204,20 @@ fn cycle_companion_stance(
     keyboard: Res<ButtonInput<KeyCode>>,
     selected: Res<crate::class::SelectedClass>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<&mut CompanionBond, With<Player>>,
+    mut player: Query<(&mut CompanionBond, Option<&mut crate::motion::MotionState>), With<Player>>,
 ) {
     if selected.0 == crate::class::HeroClass::Soulbinder
         || !keyboard.just_pressed(SENTINEL_STANCE_KEY)
     {
         return;
     }
-    let Ok(mut bond) = player.single_mut() else {
+    let Ok((mut bond, mut motion)) = player.single_mut() else {
         return;
     };
     bond.stance = bond.stance.next();
+    if let Some(motion) = motion.as_deref_mut() {
+        motion.play(crate::motion::MotionId::CoopPointTarget, None, false);
+    }
     combat_events.write(CombatEvent {
         text: format!("Reliquary Sentinel stance: {}", bond.stance.label()),
     });
@@ -224,6 +227,7 @@ type SentinelCommandPlayerQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static Transform,
         &'static mut CompanionBond,
         &'static mut Barrier,
@@ -260,7 +264,7 @@ fn activate_sentinel_command(
     companion: SentinelCommandCompanionQuery,
     mut enemies: SentinelCommandEnemyQuery,
 ) {
-    let Ok((player_transform, mut bond, mut barrier)) = player.single_mut() else {
+    let Ok((player_entity, player_transform, mut bond, mut barrier)) = player.single_mut() else {
         return;
     };
 
@@ -309,6 +313,17 @@ fn activate_sentinel_command(
     }
 
     bond.command_cooldown = SENTINEL_COMMAND_COOLDOWN_SECS;
+    crate::motion::queue_play_motion(
+        &mut params.commands,
+        player_entity,
+        match bond.stance {
+            CompanionStance::Vanguard => crate::motion::MotionId::CoopRallyCall,
+            CompanionStance::Guardian => crate::motion::MotionId::CompanionGuardianAegis,
+            CompanionStance::Seeker => crate::motion::MotionId::CoopPointTarget,
+        },
+        None,
+        false,
+    );
     spawn_sentinel_command_vfx(&mut params.commands, &params.assets, origin, bond.stance);
     params.combat_events.write(CombatEvent {
         text: sentinel_command_event_text(bond.stance, hits, highest_damage, barrier_gained),

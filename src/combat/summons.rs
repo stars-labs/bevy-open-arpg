@@ -1271,15 +1271,41 @@ fn visuals(
         let Ok(state) = states.get(root.0) else {
             continue;
         };
+        let motion_id = if state.bone {
+            if state.progress < 1.0 && state.heavy {
+                crate::motion::MotionId::SummonBoneTauntSlam
+            } else {
+                crate::motion::MotionId::SummonBoneGuardBrace
+            }
+        } else if state.progress < 1.0 && state.heavy {
+            crate::motion::MotionId::SummonSpiritSpectralWave
+        } else if state.progress < 1.0 {
+            crate::motion::MotionId::SummonSpiritHoverSlash
+        } else if state.moving {
+            crate::motion::MotionId::SummonSpiritPhantomLunge
+        } else {
+            crate::motion::MotionId::IdleSoulbinderChannel
+        };
+        let pose = crate::motion::sample_motion_pose(
+            motion_id,
+            state.progress.clamp(0.0, 1.0),
+            elapsed + state.slot as f32 * 0.7,
+        );
         if state.bone {
-            transform.translation.y = 0.0;
-            transform.rotation = Quat::IDENTITY;
+            transform.translation.y = (pose.body_y * 0.55).max(-0.08);
+            transform.rotation = Quat::from_euler(
+                EulerRot::YXZ,
+                pose.body_yaw * 0.65,
+                pose.body_pitch * 0.65,
+                pose.body_roll * 0.65,
+            );
         } else {
             let phase = elapsed * 2.4 + state.slot as f32 * 1.3;
-            transform.translation.y = 0.16 + phase.sin() * 0.06;
+            transform.translation.y = 0.16 + phase.sin() * 0.06 + pose.body_y * 0.35;
             let pitch = if state.moving { 0.12 } else { 0.03 };
-            transform.rotation =
-                Quat::from_rotation_x(pitch) * Quat::from_rotation_z((phase * 0.5).cos() * 0.04);
+            transform.rotation = Quat::from_rotation_x(pitch + pose.body_pitch * 0.55)
+                * Quat::from_rotation_y(pose.body_yaw * 0.65)
+                * Quat::from_rotation_z((phase * 0.5).cos() * 0.04 + pose.body_roll * 0.55);
         }
     }
     for (part, mut transform) in &mut parts {

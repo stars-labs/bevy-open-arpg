@@ -757,8 +757,16 @@ type EnemyAiQuery<'w, 's> = Query<
 >;
 type EnemyLimbQuery<'w, 's> =
     Query<'w, 's, (&'static EnemyLimb, &'static mut Transform), Without<Enemy>>;
-type EnemyLimbSourceQuery<'w, 's> =
-    Query<'w, 's, (Entity, &'static Enemy, &'static EnemyAnimation)>;
+type EnemyLimbSourceQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Enemy,
+        &'static EnemyAnimation,
+        Option<&'static crate::motion::MotionState>,
+    ),
+>;
 
 #[derive(SystemParam)]
 struct EnemyFeedbackWriters<'w> {
@@ -797,7 +805,12 @@ impl Plugin for EnemyPlugin {
             .add_systems(
                 Update,
                 (
-                    (bind_enemy_limbs, enemy_ai, animate_enemy_limbs_system)
+                    (
+                        bind_enemy_limbs,
+                        enemy_ai,
+                        update_enemy_motion_states,
+                        animate_enemy_limbs_system,
+                    )
                         .chain()
                         .after(crate::feedback::FeedbackSet::ContactPause),
                     tick_chilled,
@@ -1809,6 +1822,7 @@ fn spawn_enemy(commands: &mut Commands, assets: &GameAssets, spec: EnemySpawnSpe
             },
             EnemySkillCycle::new(difficulty),
             EnemyAnimation::new(base_scale),
+            crate::motion::MotionState::default(),
             EnemyEntity,
             Name::new(display_name),
         ))
@@ -2711,21 +2725,114 @@ fn bind_enemy_limbs(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn update_enemy_motion_states(
+    time: Res<Time>,
+    mut enemies: Query<(
+        &Enemy,
+        &EnemyAnimation,
+        &mut Transform,
+        &mut crate::motion::MotionState,
+        Option<&BossPhase>,
+        Option<&Staggered>,
+        Option<&crate::player::Burning>,
+        Option<&Chilled>,
+        Option<&crate::combat::Vulnerable>,
+    )>,
+) {
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+    for (
+        enemy,
+        animation,
+        mut transform,
+        mut motion,
+        boss_phase,
+        staggered,
+        burning,
+        chilled,
+        vulnerable,
+    ) in &mut enemies
+    {
+        // Status ailment posture priority: Staggered > Burning > Chilled > Vulnerable
+        motion.status_motion = if staggered.is_some() {
+            Some(
+                if boss_phase.is_some() || enemy.id == "butcher" || enemy.id == "hollow_reaver" {
+                    crate::motion::MotionId::StaggerKneelCollapse
+                } else {
+                    crate::motion::MotionId::StaggerDazedLoop
+                },
+            )
+        } else if burning.is_some() {
+            Some(crate::motion::MotionId::StatusBurningFlail)
+        } else if chilled.is_some() {
+            Some(crate::motion::MotionId::StatusChilledShiver)
+        } else if vulnerable.is_some() {
+            Some(crate::motion::MotionId::StatusVulnerableExposed)
+        } else {
+            None
+        };
+
+        // Telegraph / windup charge posture when enemy is winding up an attack
+        if animation.warning_progress > 0.04 && staggered.is_none() {
+            let windup_clip = match enemy.id.as_str() {
+                "keeper" => crate::motion::MotionId::ChargeBossGuillotine,
+                "hollow_matron" => crate::motion::MotionId::ChargeBossCrescendo,
+                "bell_warden" => crate::motion::MotionId::BossBellTollSwing,
+                "butcher" | "hollow_reaver" => crate::motion::MotionId::EnemyHeavyOverhead,
+                _ => match enemy.attack_kind {
+                    EnemyAttackKind::Shockwave => crate::motion::MotionId::EnemyShockwaveSlam,
+                    EnemyAttackKind::Projectile => crate::motion::MotionId::EnemyRangedDraw,
+                    EnemyAttackKind::Melee => crate::motion::MotionId::ChargeHeavyMelee,
+                },
+            };
+            motion.charge_ratio = animation.warning_progress.clamp(0.0, 1.0);
+            if motion.action != Some(windup_clip) {
+                motion.play(windup_clip, None, false);
+            }
+        } else {
+            motion.charge_ratio = 0.0;
+        }
+
+        let pose = motion.tick_and_sample(dt, elapsed, None);
+        // Apply torso motion overlay smoothly on top of enemy_ai transform
+        transform.translation.y = (transform.translation.y + pose.body_y * 0.72).max(-0.28);
+        transform.scale = (transform.scale + pose.body_scale_delta * animation.base_scale)
+            .max(Vec3::splat(animation.base_scale * 0.60));
+        transform.rotation *= Quat::from_euler(
+            EulerRot::YXZ,
+            pose.body_yaw * 0.65,
+            pose.body_pitch * 0.75,
+            pose.body_roll * 0.75,
+        );
+    }
+}
+
 fn animate_enemy_limbs_system(enemies: EnemyLimbSourceQuery, mut limbs: EnemyLimbQuery) {
     for (limb, mut transform) in &mut limbs {
-        let Ok((_, enemy, animation)) = enemies.get(limb.owner) else {
+        let Ok((_, enemy, animation, motion)) = enemies.get(limb.owner) else {
             continue;
         };
         *transform = limb.rest;
-        transform.rotation = limb.rest.rotation
-            * enemy_limb_rotation(
-                limb.kind,
-                &enemy.attack_kind,
-                animation.moving,
-                animation.walk_phase,
-                enemy_attack_progress(animation),
-                animation.warning_progress,
-            );
+        let base_rot = enemy_limb_rotation(
+            limb.kind,
+            &enemy.attack_kind,
+            animation.moving,
+            animation.walk_phase,
+            enemy_attack_progress(animation),
+            animation.warning_progress,
+        );
+        let motion_rot = motion.map_or(Quat::IDENTITY, |m| {
+            let p = m.blended_pose;
+            let v = match limb.kind {
+                EnemyLimbKind::LeftLeg => p.left_leg_rot,
+                EnemyLimbKind::RightLeg => p.right_leg_rot,
+                EnemyLimbKind::AttackHand => p.right_arm_rot,
+                EnemyLimbKind::OffHand => p.left_arm_rot,
+            };
+            Quat::from_euler(EulerRot::XYZ, v.x * 0.72, v.y * 0.72, v.z * 0.72)
+        });
+        transform.rotation = limb.rest.rotation * base_rot * motion_rot;
     }
 }
 

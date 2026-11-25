@@ -17,6 +17,7 @@ mod loot;
 mod lore;
 mod mastery;
 mod milestone;
+mod motion;
 mod obelisk;
 mod ordeal;
 mod player;
@@ -861,6 +862,7 @@ fn build_app(config: OpenArpgRuntimeConfig) -> App {
         DungeonPlugin,
         ProceduralWorldPlugin,
         PlayerPlugin,
+        motion::MotionPlugin,
         CompanionPlugin,
     ));
     app.add_plugins((

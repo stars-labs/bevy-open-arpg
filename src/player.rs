@@ -2822,6 +2822,7 @@ fn spawn_player(
             },
             Velocity(Vec3::ZERO),
             PlayerAnimation::default(),
+            crate::motion::MotionState::default(),
             DamageBonus(0.0),
             Fury::for_class(&class.resource),
             Equipment {
@@ -3029,19 +3030,30 @@ fn use_potion(
     gamepads: Query<&Gamepad>,
     mut stats: ResMut<RunStats>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<(&mut Health, &mut PotionBelt, &Talents), With<Player>>,
+    mut player: Query<
+        (
+            &mut Health,
+            &mut PotionBelt,
+            &Talents,
+            Option<&mut crate::motion::MotionState>,
+        ),
+        With<Player>,
+    >,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyF)
         && !gamepad_button_just_pressed(&gamepads, &[GamepadButton::West])
     {
         return;
     }
-    let Ok((mut health, mut potions, talents)) = player.single_mut() else {
+    let Ok((mut health, mut potions, talents, mut motion)) = player.single_mut() else {
         return;
     };
     let health_before = health.current;
     match try_drink_potion(&mut health, &mut potions, talents.potion_heal_multiplier()) {
         Some(restored) => {
+            if let Some(motion) = motion.as_deref_mut() {
+                motion.play(crate::motion::MotionId::DrinkHealthPotion, None, false);
+            }
             stats.potions_used += 1;
             if last_stand_potion_eligible(health_before, health.max) {
                 stats.last_stand_potions += 1;
@@ -3092,14 +3104,24 @@ fn tick_potion_cooldown(time: Res<Time>, mut query: Query<&mut PotionBelt, With<
     potions.cooldown.tick(time.delta());
 }
 
+#[allow(clippy::type_complexity)]
 fn use_elixir(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<RunStats>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<(&Health, &mut Barrier, &mut ElixirBelt, &mut ElixirBuff), With<Player>>,
+    mut player: Query<
+        (
+            &Health,
+            &mut Barrier,
+            &mut ElixirBelt,
+            &mut ElixirBuff,
+            Option<&mut crate::motion::MotionState>,
+        ),
+        With<Player>,
+    >,
 ) {
     if keyboard.just_pressed(KeyCode::KeyV) {
-        let Ok((_, _, mut belt, _)) = player.single_mut() else {
+        let Ok((_, _, mut belt, _, _)) = player.single_mut() else {
             return;
         };
         belt.selected = belt.selected.next();
@@ -3111,11 +3133,14 @@ fn use_elixir(
     if !keyboard.just_pressed(KeyCode::KeyG) {
         return;
     }
-    let Ok((health, mut barrier, mut belt, mut buff)) = player.single_mut() else {
+    let Ok((health, mut barrier, mut belt, mut buff, mut motion)) = player.single_mut() else {
         return;
     };
     if belt.current == 0 {
         return;
+    }
+    if let Some(motion) = motion.as_deref_mut() {
+        motion.play(crate::motion::MotionId::DrinkElixirFlask, None, false);
     }
     belt.current -= 1;
     buff.timer = Timer::from_seconds(belt.duration_secs, TimerMode::Once);
@@ -3961,6 +3986,8 @@ type PlayerVisualPlayerQuery<'w, 's> = Query<
         Option<&'static mut PlayerHitReact>,
         &'static mut PlayerAnimation,
         Option<&'static crate::feedback::ContactPause>,
+        Option<&'static Health>,
+        Option<&'static mut crate::motion::MotionState>,
     ),
     With<Player>,
 >;
@@ -4328,9 +4355,11 @@ pub(crate) fn clamp_player_translation(
     crate::dungeon::clamp_dungeon_translation(layout, translation)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn animate_player_visuals(
     time: Res<Time>,
     assets: Res<GameAssets>,
+    selected_class: Option<Res<crate::class::SelectedClass>>,
     mut commands: Commands,
     mut visuals: PlayerVisualQueries,
     mut was_evading: Local<bool>,
@@ -4345,6 +4374,8 @@ fn animate_player_visuals(
         hit_react,
         mut animation,
         contact_pause,
+        health,
+        mut motion_state,
     )) = visuals.player.single_mut()
     else {
         return;
@@ -4356,10 +4387,37 @@ fn animate_player_visuals(
     );
     animation.motion_trail_timer.tick(time.delta());
     animation.attack_trail_timer.tick(time.delta());
+    let hit_react_kind_fresh = hit_react
+        .as_ref()
+        .filter(|hr| hr.timer.elapsed_secs() <= f32::EPSILON)
+        .map(|hr| hr.kind);
     let hit_react_pose = update_player_hit_react(player_entity, hit_react, &time, &mut commands);
     let moving = velocity.0.length_squared() > 0.01;
     let speed = velocity.0.length();
     let evading = evade_seconds_remaining(evade) > 0.0;
+    let hero_class = selected_class.map_or(crate::class::HeroClass::Warden, |c| c.0);
+    let low_hp = health.is_some_and(|h| h.max > 0.0 && (h.current / h.max) < 0.35);
+
+    if let Some(motion) = motion_state.as_deref_mut() {
+        if !*was_evading && evading {
+            motion.play(crate::motion::class_evade_motion(hero_class), None, true);
+        }
+        if let Some(kind) = hit_react_kind_fresh {
+            let react_motion = match kind {
+                PlayerHitReactKind::Ward => crate::motion::MotionId::HitGuardBlock,
+                PlayerHitReactKind::Evade => crate::motion::MotionId::HitEvadeGraze,
+                PlayerHitReactKind::Health => {
+                    if low_hp {
+                        crate::motion::MotionId::HitHeavyRecoil
+                    } else {
+                        crate::motion::MotionId::HitFlinchFront
+                    }
+                }
+            };
+            motion.play(react_motion, None, false);
+        }
+    }
+
     let dash_dir = if evade_drive_vec.0.length_squared() > 0.01 {
         evade_drive_vec.0.normalize()
     } else {
@@ -4384,6 +4442,17 @@ fn animate_player_visuals(
     }
 
     let attack_progress = animation.attack_progress();
+    let motion_pose = if let Some(motion) = motion_state.as_deref_mut() {
+        let base_idle = if !moving && !evading && attack_progress >= 1.0 {
+            Some(crate::motion::class_idle_motion(hero_class, low_hp))
+        } else {
+            None
+        };
+        motion.tick_and_sample(time.delta_secs(), time.elapsed_secs(), base_idle)
+    } else {
+        crate::motion::ArticulatedPose::ZERO
+    };
+
     let walk_sway = animation.walk_phase.sin();
     let walk_step = animation.walk_phase.cos();
     let mut pose = player_visual_pose_with_hit_react(
@@ -4396,6 +4465,17 @@ fn animate_player_visuals(
         hit_react_pose,
     );
     pose = player_visual_pose_with_turn_lean(pose, animation.turn_lean, evading);
+    // Blend full-body articulated motion layer onto root + weapon
+    pose.body_y += motion_pose.body_y;
+    pose.body_yaw += motion_pose.body_yaw;
+    pose.body_pitch += motion_pose.body_pitch;
+    pose.body_roll += motion_pose.body_roll;
+    pose.body_scale = (pose.body_scale + motion_pose.body_scale_delta).max(Vec3::splat(0.55));
+    pose.weapon_translation += motion_pose.weapon_offset;
+    pose.weapon_pitch += motion_pose.weapon_rot.x;
+    pose.weapon_yaw += motion_pose.weapon_rot.y;
+    pose.weapon_roll += motion_pose.weapon_rot.z;
+
     let attack_arc_pose = player_attack_arc_pose(animation.attack_motion, attack_progress);
 
     let Ok(mut visual_root) = visuals.roots.single_mut() else {
@@ -4477,8 +4557,40 @@ fn animate_player_visuals(
             let shoulder = mantle.translation + mantle.rotation * Vec3::new(0.42, 0.0, 0.0);
             limb_pose = player_arm_between(shoulder, pose.weapon_translation);
         }
+        let extra_rot = match limb.kind {
+            PlayerLimbKind::ShoulderMantle => Quat::from_euler(
+                EulerRot::YXZ,
+                motion_pose.shoulder_yaw,
+                motion_pose.shoulder_pitch,
+                motion_pose.shoulder_roll,
+            ),
+            PlayerLimbKind::LeftArm => Quat::from_euler(
+                EulerRot::XYZ,
+                motion_pose.left_arm_rot.x,
+                motion_pose.left_arm_rot.y,
+                motion_pose.left_arm_rot.z,
+            ),
+            PlayerLimbKind::RightArm => Quat::from_euler(
+                EulerRot::XYZ,
+                motion_pose.right_arm_rot.x * 0.45,
+                motion_pose.right_arm_rot.y * 0.45,
+                motion_pose.right_arm_rot.z * 0.45,
+            ),
+            PlayerLimbKind::LeftLeg => Quat::from_euler(
+                EulerRot::XYZ,
+                motion_pose.left_leg_rot.x,
+                motion_pose.left_leg_rot.y,
+                motion_pose.left_leg_rot.z,
+            ),
+            PlayerLimbKind::RightLeg => Quat::from_euler(
+                EulerRot::XYZ,
+                motion_pose.right_leg_rot.x,
+                motion_pose.right_leg_rot.y,
+                motion_pose.right_leg_rot.z,
+            ),
+        };
         limb_transform.translation = limb_pose.translation;
-        limb_transform.rotation = limb_pose.rotation;
+        limb_transform.rotation = limb_pose.rotation * extra_rot;
         limb_transform.scale = limb_pose.scale;
         *visibility = limb_pose.visibility;
     }
@@ -5736,15 +5848,26 @@ fn use_surge(
     mut commands: Commands,
     assets: Res<GameAssets>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<(Entity, &mut SurgeBuff, &Transform), With<Player>>,
+    mut player: Query<
+        (
+            Entity,
+            &mut SurgeBuff,
+            &Transform,
+            Option<&mut crate::motion::MotionState>,
+        ),
+        With<Player>,
+    >,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyY) {
         return;
     }
-    let Ok((entity, mut surge, transform)) = player.single_mut() else {
+    let Ok((entity, mut surge, transform, mut motion)) = player.single_mut() else {
         return;
     };
     if activate_surge(&mut surge) {
+        if let Some(motion) = motion.as_deref_mut() {
+            motion.play(crate::motion::MotionId::ActivateSurgeRoar, None, true);
+        }
         spawn_surge_activation_vfx(&mut commands, &assets, entity, transform.translation);
         combat_events.write(CombatEvent {
             text: "Nephalem Surge unleashed".to_string(),
@@ -5763,12 +5886,19 @@ fn use_town_portal(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<RunStats>,
     mut combat_events: MessageWriter<CombatEvent>,
-    mut player: Query<(&mut Transform, &mut TownPortal), With<Player>>,
+    mut player: Query<
+        (
+            &mut Transform,
+            &mut TownPortal,
+            Option<&mut crate::motion::MotionState>,
+        ),
+        With<Player>,
+    >,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyT) {
         return;
     }
-    let Ok((mut transform, mut portal)) = player.single_mut() else {
+    let Ok((mut transform, mut portal, mut motion)) = player.single_mut() else {
         return;
     };
     if buff_timer_active(&portal.cooldown) {
@@ -5779,6 +5909,13 @@ fn use_town_portal(
             ),
         });
         return;
+    }
+    if let Some(motion) = motion.as_deref_mut() {
+        motion.play(
+            crate::motion::MotionId::ChargePortalChannel,
+            Some(0.75),
+            true,
+        );
     }
     let (target, return_position) = town_portal_target(&portal, transform.translation);
     let returned_to_fight = return_position.is_none();

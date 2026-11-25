@@ -617,11 +617,11 @@ fn basics_text(
     };
     let mut text = if zh {
         format!(
-            "左键 · {basic}\n{gain}\n\nShift · 闪避\n躲避来袭攻击。\n\nY · 奔涌\n击杀蓄能，充满后激活，暂时提高伤害、移速与资源获取。\n\n右键移动，鼠标指向决定攻击方向。"
+            "左键 · {basic}\n{gain}\n\n按住 Alt / 鼠标中键 · 蓄力重击\n蓄力拉满后松手释放高伤重击与强力硬直。\n\nShift · 闪避\n躲避来袭攻击。\n\nY · 奔涌\n击杀蓄能，充满后激活，暂时提高伤害、移速与资源获取。\n\n0 · 协作动作\n轮换集结号令、致敬、欢呼与集火标点动作。\n\n右键移动，鼠标指向决定攻击方向。"
         )
     } else {
         format!(
-            "LMB · {basic}\n{gain}\n\nShift · Evade\nDodge incoming attacks.\n\nY · Surge\nKills charge Surge. Activate when full for increased damage, speed and resource gain.\n\nMove with RMB; aim attacks with the cursor."
+            "LMB · {basic}\n{gain}\n\nHold Alt / MMB · Charged Strike\nHold to charge a heavy stance and release for boosted damage and stagger.\n\nShift · Evade\nDodge incoming attacks.\n\nY · Surge\nKills charge Surge. Activate when full for increased damage, speed and resource gain.\n\n0 · Co-op Emotes\nCycle Rally, Salute, Cheer, and Point Target gestures.\n\nMove with RMB; aim attacks with the cursor."
         )
     };
     let bonus = talents.basic_fury_bonus(growth);

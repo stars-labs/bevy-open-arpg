@@ -68,7 +68,7 @@ fn hit_react_for_contact(
 }
 
 #[derive(Component)]
-struct Vulnerable {
+pub(crate) struct Vulnerable {
     timer: Timer,
     damage_multiplier: f32,
 }
@@ -450,6 +450,7 @@ type CombatPlayerCoreQuery<'w, 's> = Query<
         &'static mut PlayerAnimation,
         &'static mut CastLedger,
         Option<&'static PendingPlayerStrike>,
+        Option<&'static mut crate::motion::MotionState>,
     ),
     With<Player>,
 >;
@@ -558,6 +559,8 @@ struct CombatInputs<'w, 's> {
     selected: Res<'w, SelectedClass>,
     dungeon_layout: Res<'w, DungeonLayout>,
     input_buffer: ResMut<'w, SkillInputBuffer>,
+    charge: Option<ResMut<'w, crate::motion::PlayerChargeState>>,
+    language: Option<Res<'w, crate::ui::localization::UiLanguage>>,
     basic_attack_intent: ResMut<'w, BasicAttackIntent>,
 }
 
@@ -942,6 +945,7 @@ fn player_attacks(
         mut animation,
         mut ledger,
         pending_strike,
+        mut motion_state,
     )) = player_core.single_mut()
     else {
         return;
@@ -1051,6 +1055,81 @@ fn player_attacks(
         return;
     }
 
+    // Active Charge-Up Release (Hold LeftAlt or Middle Mouse -> Release for Charged Strike!)
+    let released_charge = inputs
+        .charge
+        .as_deref_mut()
+        .and_then(|c| c.pending_release_ratio.take());
+    if let Some(charge_ratio) = released_charge
+        && !inputs.ui_capture.0
+    {
+        let aim = primary_attack_target
+            .map(|target| target.position)
+            .or(cursor_ground);
+        let facing = attack_facing_from_cursor(
+            player_transform.translation,
+            player_transform.forward().as_vec3(),
+            aim,
+        );
+        animation.face_direction(facing);
+        let cycle = (cooldowns.basic_base * 1.15 * talents.cooldown_multiplier()).max(0.28);
+        let heavy_motion = match inputs.selected.0 {
+            crate::class::HeroClass::Warden => PlayerAttackMotion::Rupture,
+            crate::class::HeroClass::Stalker => PlayerAttackMotion::Shoot,
+            crate::class::HeroClass::Embercaller | crate::class::HeroClass::Soulbinder => {
+                PlayerAttackMotion::Cast
+            }
+        };
+        animation.trigger_attack(heavy_motion, cycle);
+        if let Some(motion) = motion_state.as_deref_mut() {
+            let clip = crate::motion::class_basic_combo_motion(inputs.selected.0, 2);
+            motion.play(clip, Some(cycle), true);
+        }
+        let dmg_mult = crate::motion::PlayerChargeState::damage_multiplier(charge_ratio);
+        let imp_mult = crate::motion::PlayerChargeState::impact_multiplier(charge_ratio);
+        let profile = StrikeProfile {
+            damage: (class.basic.damage + damage_bonus) * total_multiplier * dmg_mult,
+            impact_scale: talents.combat_impact_multiplier(growth) * imp_mult,
+            crit_chance: (crit_chance + charge_ratio * 0.25).min(0.85),
+            legendary_powers,
+            skill: None,
+            hit_stop: true,
+            long_shot,
+            cast: ledger.begin(),
+            fury_bonus: talents.basic_fury_bonus(growth) + 8.0 * charge_ratio,
+            barrier_reward: 0.0,
+        };
+        world
+            .commands
+            .entity(player_entity)
+            .try_insert(queued_strike(
+                cycle,
+                facing,
+                aim.unwrap_or(player_transform.translation + facing),
+                class.basic.strike,
+                heavy_motion,
+                profile,
+            ));
+        let zh = inputs
+            .language
+            .as_deref()
+            .is_some_and(|l| *l == crate::ui::localization::UiLanguage::Chinese);
+        let pct = ((dmg_mult - 1.0) * 100.0).round() as u32;
+        world.floating_text.write(FloatingCombatTextEvent {
+            text: if zh {
+                format!("蓄力重击 +{pct}%!")
+            } else {
+                format!("CHARGED +{pct}%!")
+            },
+            position: player_transform.translation + Vec3::Y * 1.9,
+            critical: true,
+        });
+        world
+            .screen_shake
+            .write(ScreenShakeEvent::new(0.032 + charge_ratio * 0.025, 0.14));
+        return;
+    }
+
     if !inputs.ui_capture.0
         && cursor_ground.is_some()
         && animation.can_chain_attack()
@@ -1078,6 +1157,11 @@ fn player_attacks(
         animation.face_direction(facing);
         let cycle = cooldowns.basic_base * talents.cooldown_multiplier();
         animation.trigger_attack(class.basic.motion, cycle);
+        if let Some(motion) = motion_state.as_deref_mut() {
+            let combo_step = motion.advance_combo();
+            let clip = crate::motion::class_basic_combo_motion(inputs.selected.0, combo_step);
+            motion.play(clip, Some(cycle), false);
+        }
         let profile = StrikeProfile {
             damage: (class.basic.damage + damage_bonus) * total_multiplier,
             impact_scale: talents.combat_impact_multiplier(growth),
@@ -1222,6 +1306,14 @@ fn player_attacks(
             skill.cast_secs
         };
         animation.trigger_attack(skill.motion, cast_secs);
+        if let Some(motion) = motion_state.as_deref_mut() {
+            let clip = crate::motion::class_skill_motion(
+                inputs.selected.0,
+                slot,
+                loadout.alt[slot.index()],
+            );
+            motion.play(clip, Some(cast_secs), true);
+        }
 
         let start = player_transform.translation;
         let destination = clamp_dungeon_translation(
@@ -2644,6 +2736,13 @@ fn apply_strike(
             ),
             EnemyTargetFocus::new(critical),
         ));
+        let enemy_facing = transform.forward().as_vec3();
+        let hit_motion = crate::motion::directional_hit_motion(
+            enemy_facing,
+            transform.translation - recoil_origin,
+            critical || profile.impact_scale >= 1.3,
+        );
+        crate::motion::queue_play_motion(commands, entity, hit_motion, None, critical);
         if rune == Some(Rune::Frost) {
             commands.entity(entity).try_insert(Chilled {
                 timer: Timer::from_seconds(2.8, TimerMode::Once),
