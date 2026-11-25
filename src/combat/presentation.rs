@@ -44,6 +44,7 @@ impl Plugin for CombatPresentationPlugin {
                     show_talent_procs,
                     animate_contacts,
                     animate_impact_sparks,
+                    tick_enemy_mesh_hit_flashes,
                 )
                     .chain()
                     .after(super::CombatSet::PlayerDamage)
@@ -372,6 +373,109 @@ fn spawn_aaa_impact_burst(
     }
 }
 
+/// Temporary 75ms opaque emissive hit-flash applied directly to a struck enemy's
+/// descendant mesh materials (skipping health-bar/UI decorations) and restored cleanly.
+#[derive(Component)]
+struct EnemyMeshHitFlash {
+    timer: Timer,
+    original: Handle<StandardMaterial>,
+}
+
+fn queue_enemy_mesh_hit_flash(
+    commands: &mut Commands,
+    target: Entity,
+    art: ContactArt,
+    critical: bool,
+) {
+    let color = impact_accent_color(art, critical);
+    commands.queue(move |world: &mut World| {
+        if world.get_entity(target).is_err()
+            || world.get_resource::<Assets<StandardMaterial>>().is_none()
+        {
+            return;
+        }
+        let lin = LinearRgba::from(color);
+        let boost = if critical { 4.8 } else { 3.2 };
+        let flash_mat = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.96, 0.88),
+                emissive: LinearRgba::new(
+                    (lin.red * 0.65 + 0.35) * boost,
+                    (lin.green * 0.65 + 0.35) * boost,
+                    (lin.blue * 0.65 + 0.35) * boost,
+                    1.0,
+                ),
+                alpha_mode: AlphaMode::Opaque,
+                perceptual_roughness: 0.35,
+                ..default()
+            });
+
+        // Walk up to 4 levels of descendants, skipping DeathDecoration (health bars/focus rings)
+        let mut stack = vec![(target, 0_u8)];
+        let mut mesh_entities = Vec::new();
+        while let Some((node, depth)) = stack.pop() {
+            if world
+                .get::<crate::enemy_death::DeathDecoration>(node)
+                .is_some()
+            {
+                continue;
+            }
+            if world
+                .get::<MeshMaterial3d<StandardMaterial>>(node)
+                .is_some()
+            {
+                mesh_entities.push(node);
+            }
+            if depth < 4
+                && let Some(children) = world.get::<Children>(node)
+            {
+                for child in children.iter() {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        let duration = if critical { 0.09 } else { 0.072 };
+        for mesh_entity in mesh_entities {
+            // Preserve the true original material if already mid-flash!
+            let original = if let Some(existing) = world.get::<EnemyMeshHitFlash>(mesh_entity) {
+                existing.original.clone()
+            } else if let Some(mat) = world.get::<MeshMaterial3d<StandardMaterial>>(mesh_entity) {
+                mat.0.clone()
+            } else {
+                continue;
+            };
+            if let Ok(mut em) = world.get_entity_mut(mesh_entity) {
+                em.insert((
+                    MeshMaterial3d(flash_mat.clone()),
+                    EnemyMeshHitFlash {
+                        timer: Timer::from_seconds(duration, TimerMode::Once),
+                        original,
+                    },
+                ));
+            }
+        }
+    });
+}
+
+fn tick_enemy_mesh_hit_flashes(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut flashes: Query<(
+        Entity,
+        &mut EnemyMeshHitFlash,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
+) {
+    for (entity, mut flash, mut mat) in &mut flashes {
+        flash.timer.tick(time.delta());
+        if flash.timer.is_finished() {
+            mat.0 = flash.original.clone();
+            commands.entity(entity).try_remove::<EnemyMeshHitFlash>();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn show_contacts(
     mut commands: Commands,
@@ -491,6 +595,7 @@ fn show_contacts(
                 event.critical,
                 event.killed,
             );
+            queue_enemy_mesh_hit_flash(&mut commands, event.target, art, event.critical);
         }
     }
 }
@@ -594,12 +699,21 @@ fn clear_contacts(
     mut commands: Commands,
     particles: Query<Entity, With<ContactParticle>>,
     sparks: Query<Entity, With<ImpactSpark>>,
+    mut flashes: Query<(
+        Entity,
+        &EnemyMeshHitFlash,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
 ) {
     for entity in &particles {
         commands.entity(entity).despawn();
     }
     for entity in &sparks {
         commands.entity(entity).despawn();
+    }
+    for (entity, flash, mut mat) in &mut flashes {
+        mat.0 = flash.original.clone();
+        commands.entity(entity).try_remove::<EnemyMeshHitFlash>();
     }
 }
 
@@ -658,5 +772,73 @@ mod tests {
                 assert_eq!(end, Vec3::ZERO);
             }
         }
+    }
+
+    #[test]
+    fn enemy_mesh_hit_flash_swaps_mesh_material_and_restores_original() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(Update, tick_enemy_mesh_hit_flashes);
+
+        let original_mat = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let bar_mat = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+
+        let enemy = app.world_mut().spawn(Transform::default()).id();
+        let body_mesh = app
+            .world_mut()
+            .spawn((MeshMaterial3d(original_mat.clone()), ChildOf(enemy)))
+            .id();
+        let health_bar = app
+            .world_mut()
+            .spawn((
+                MeshMaterial3d(bar_mat.clone()),
+                crate::enemy_death::DeathDecoration,
+                ChildOf(enemy),
+            ))
+            .id();
+
+        {
+            let mut cmds = app.world_mut().commands();
+            queue_enemy_mesh_hit_flash(&mut cmds, enemy, ContactArt::Steel, false);
+        }
+        app.world_mut().flush();
+        app.update();
+
+        // Body mesh flashed to new emissive handle; health bar decoration untouched!
+        assert_ne!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(body_mesh)
+                .unwrap()
+                .0,
+            original_mat
+        );
+        assert_eq!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(health_bar)
+                .unwrap()
+                .0,
+            bar_mat
+        );
+
+        // After 80ms the body mesh restores its exact original handle cleanly.
+        app.world_mut()
+            .resource_mut::<Time<()>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.08));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(body_mesh)
+                .unwrap()
+                .0,
+            original_mat
+        );
+        assert!(app.world().get::<EnemyMeshHitFlash>(body_mesh).is_none());
     }
 }

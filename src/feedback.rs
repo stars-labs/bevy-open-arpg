@@ -9,6 +9,7 @@ use crate::{
     not_paused,
     player::{Health, Player, PlayerLevelUp},
 };
+use bevy::post_process::effect_stack::{ChromaticAberration, Vignette};
 use bevy::prelude::*;
 use bevy::time::Real;
 use bevy::window::PrimaryWindow;
@@ -141,6 +142,63 @@ struct CameraShakeState {
     duration_secs: f32,
     intensity: f32,
     offset: Vec3,
+}
+
+#[derive(Resource, Debug, Default)]
+struct PostProcessImpactState {
+    chroma_pulse: f32,
+    damage_vignette: f32,
+    streak_hits: u32,
+    streak_timer: f32,
+    streak_pop_secs: f32,
+}
+
+impl PostProcessImpactState {
+    fn register_hit(&mut self) -> u32 {
+        self.streak_hits = self.streak_hits.saturating_add(1);
+        self.streak_timer = 2.6;
+        self.streak_pop_secs = 0.16;
+        self.streak_hits
+    }
+
+    fn spike_chroma(&mut self, shake_intensity: f32) {
+        if shake_intensity >= 0.045 {
+            let bonus = (0.012 + (shake_intensity - 0.045) * 0.22).clamp(0.012, 0.032);
+            self.chroma_pulse = self.chroma_pulse.max(bonus);
+        }
+    }
+
+    fn spike_damage_vignette(&mut self) {
+        self.damage_vignette = 1.0;
+    }
+}
+
+fn streak_pitch_multiplier(streak_hits: u32) -> f32 {
+    1.0 + (streak_hits.saturating_sub(1).min(8) as f32) * 0.03
+}
+
+fn impact_chroma_intensity(chroma_pulse: f32) -> f32 {
+    (0.004 + chroma_pulse.max(0.0)).clamp(0.004, 0.038)
+}
+
+fn damage_vignette_params(damage_flash: f32, low_hp_ratio: f32, elapsed_secs: f32) -> (f32, Color) {
+    let base_intensity = 0.52;
+    let base_r = 0.025_f32;
+    let base_g = 0.012_f32;
+    let base_b = 0.035_f32;
+    let low_hp_pulse = if low_hp_ratio > 0.0 {
+        low_hp_ratio * (0.45 + 0.55 * (elapsed_secs * 5.2).sin().abs())
+    } else {
+        0.0
+    };
+    let crimson = (damage_flash.clamp(0.0, 1.0) * 0.85 + low_hp_pulse * 0.65).clamp(0.0, 1.0);
+    let intensity = base_intensity + crimson * 0.34;
+    let color = Color::srgb(
+        base_r.lerp(0.54, crimson),
+        base_g.lerp(0.02, crimson),
+        base_b.lerp(0.03, crimson),
+    );
+    (intensity, color)
 }
 
 #[derive(Clone, Copy)]
@@ -588,6 +646,7 @@ impl Plugin for FeedbackPlugin {
         app.add_systems(Update, play_web_sound_cues);
         app.init_resource::<CombatLog>()
             .init_resource::<CameraShakeState>()
+            .init_resource::<PostProcessImpactState>()
             .init_resource::<GameAudio>()
             .init_resource::<AudioBackendRetry>()
             .init_resource::<AudioBackendStatus>()
@@ -609,7 +668,14 @@ impl Plugin for FeedbackPlugin {
                     .in_set(FeedbackSet::ContactPause)
                     .run_if(in_state(GameState::InGame)),
             )
-            .add_systems(Startup, (setup_audio_backend, start_ambient_music))
+            .add_systems(
+                Startup,
+                (
+                    setup_audio_backend,
+                    start_ambient_music,
+                    spawn_hit_streak_hud,
+                ),
+            )
             .add_systems(Update, (maintain_audio_backend, sync_ambient_music_mute))
             .add_systems(
                 Update,
@@ -634,12 +700,18 @@ impl Plugin for FeedbackPlugin {
                     update_camera_shake
                         .in_set(FeedbackSet::CameraShake)
                         .after(FeedbackSet::CameraRestore),
+                    update_post_process_impacts.after(FeedbackSet::CameraShake),
+                    update_hit_streak_hud,
                 )
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
             )
             .add_systems(
                 OnExit(GameState::InGame),
-                (reset_hit_stop, clear_level_up_glow),
+                (
+                    reset_hit_stop,
+                    clear_level_up_glow,
+                    reset_post_process_impacts,
+                ),
             )
             .add_systems(OnEnter(GameState::Victory), play_victory_sound)
             .add_systems(OnEnter(GameState::GameOver), play_defeat_sound);
@@ -801,20 +873,26 @@ fn play_contact_audio(
     mut events: MessageReader<ContactSoundEvent>,
     time: Res<Time<Real>>,
     mut gate: ResMut<ContactAudioGate>,
+    mut impact_state: ResMut<PostProcessImpactState>,
     audio: Res<GameAudio>,
     settings: Res<AudioSettings>,
 ) {
-    let strongest = events
-        .read()
-        .filter(|event| event.strength > 0.0)
-        .max_by(|a, b| a.strength.total_cmp(&b.strength));
+    let mut strongest: Option<ContactSoundEvent> = None;
+    for event in events.read().filter(|event| event.strength > 0.0) {
+        impact_state.register_hit();
+        if strongest.is_none_or(|prev| event.strength >= prev.strength) {
+            strongest = Some(*event);
+        }
+    }
     if let Some(event) = strongest
         && gate.admit(time.elapsed_secs())
     {
-        play_sound_cue(
+        let pitch_boost = streak_pitch_multiplier(impact_state.streak_hits);
+        play_sound_cue_pitched(
             &audio,
             &settings,
             SoundCue::Contact(event.kind, event.strength >= 1.3),
+            pitch_boost,
         );
     }
 }
@@ -943,6 +1021,15 @@ fn play_defeat_sound(audio: Res<GameAudio>, audio_settings: Res<AudioSettings>) 
 }
 
 fn play_sound_cue(audio: &GameAudio, audio_settings: &AudioSettings, cue: SoundCue) {
+    play_sound_cue_pitched(audio, audio_settings, cue, 1.0);
+}
+
+fn play_sound_cue_pitched(
+    audio: &GameAudio,
+    audio_settings: &AudioSettings,
+    cue: SoundCue,
+    pitch_scale: f32,
+) {
     if !audio_settings.enabled {
         return;
     }
@@ -952,7 +1039,7 @@ fn play_sound_cue(audio: &GameAudio, audio_settings: &AudioSettings, cue: SoundC
     let (pitch, gain) = sound_variation(sequence);
     let playback = SoundPlayback {
         cue,
-        pitch,
+        pitch: (pitch * pitch_scale).clamp(0.75, 1.45),
         gain: sound_cue_gain(cue) * gain,
     };
     #[cfg(target_arch = "wasm32")]
@@ -2474,12 +2561,16 @@ fn update_camera_shake(
     time: Res<Time<Real>>,
     mut events: MessageReader<ScreenShakeEvent>,
     mut state: ResMut<CameraShakeState>,
+    mut impact_state: Option<ResMut<PostProcessImpactState>>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
 ) {
     let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     for event in events.read() {
+        if let Some(impact) = impact_state.as_deref_mut() {
+            impact.spike_chroma(event.intensity);
+        }
         if event.intensity >= state.intensity {
             let duration = event
                 .duration_secs
@@ -2507,6 +2598,181 @@ fn update_camera_shake(
     let punch = transform.forward().as_vec3() * punch_dist;
     state.offset = shake + punch;
     transform.translation += state.offset;
+}
+
+#[derive(Component)]
+struct HitStreakHudRoot;
+
+#[derive(Component)]
+struct HitStreakHudText;
+
+fn spawn_hit_streak_hud(mut commands: Commands, server: Res<AssetServer>) {
+    commands
+        .spawn((
+            HitStreakHudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(22.0),
+                top: Val::Px(246.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.02, 0.02, 0.84)),
+            BorderColor::all(Color::srgba(0.95, 0.68, 0.24, 0.85)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                HitStreakHudText,
+                crate::ui::localization::NativeLanguageName,
+                Text::new(""),
+                TextFont {
+                    font: server.load("fonts/NotoSansSC.ttf").into(),
+                    font_size: FontSize::Px(20.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.86, 0.36)),
+            ));
+        });
+}
+
+#[allow(clippy::type_complexity)]
+fn update_post_process_impacts(
+    time: Res<Time<Real>>,
+    mut state: ResMut<PostProcessImpactState>,
+    player: Query<(&Health, Option<Ref<crate::player::PlayerHitReact>>), With<Player>>,
+    mut cameras: Query<(Option<&mut ChromaticAberration>, Option<&mut Vignette>), With<Camera3d>>,
+) {
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+
+    // Decay impact chromatic pulse swiftly (110ms snap feel)
+    state.chroma_pulse = (state.chroma_pulse - dt * 0.24).max(0.0);
+    state.damage_vignette = (state.damage_vignette - dt * 2.6).max(0.0);
+    if state.streak_timer > 0.0 {
+        state.streak_timer = (state.streak_timer - dt).max(0.0);
+        if state.streak_timer <= 0.0 {
+            state.streak_hits = 0;
+        }
+    }
+    state.streak_pop_secs = (state.streak_pop_secs - dt).max(0.0);
+
+    let mut low_hp_ratio = 0.0_f32;
+    if let Ok((health, hit_react)) = player.single() {
+        if health.max > 0.0 {
+            let frac = (health.current / health.max).clamp(0.0, 1.0);
+            if frac < 0.35 {
+                low_hp_ratio = ((0.35 - frac) / 0.35).clamp(0.0, 1.0);
+            }
+        }
+        if let Some(hr) = hit_react
+            && hr.kind == crate::player::PlayerHitReactKind::Health
+            && hr.is_added()
+        {
+            state.spike_damage_vignette();
+            state.spike_chroma(0.075);
+        }
+    }
+
+    let chroma_val = impact_chroma_intensity(state.chroma_pulse);
+    let (vig_intensity, vig_color) =
+        damage_vignette_params(state.damage_vignette, low_hp_ratio, elapsed);
+    for (chroma, vignette) in &mut cameras {
+        if let Some(mut chroma) = chroma {
+            chroma.intensity = chroma_val;
+        }
+        if let Some(mut vignette) = vignette {
+            vignette.intensity = vig_intensity;
+            vignette.color = vig_color;
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_hit_streak_hud(
+    language: Res<crate::ui::localization::UiLanguage>,
+    state: Res<PostProcessImpactState>,
+    mut root_q: Query<(&mut Node, &mut BorderColor, &mut UiTransform), With<HitStreakHudRoot>>,
+    mut text_q: Query<(&mut Text, &mut TextColor), With<HitStreakHudText>>,
+) {
+    let zh = *language == crate::ui::localization::UiLanguage::Chinese;
+    let visible = state.streak_hits >= 3;
+    let pop = if state.streak_pop_secs > 0.0 {
+        1.0 + (state.streak_pop_secs / 0.16) * 0.28
+    } else {
+        1.0
+    };
+    let (label, fg, border) = if state.streak_hits >= 20 {
+        (
+            if zh {
+                format!("{} 连击 · 狂潮!", state.streak_hits)
+            } else {
+                format!("{} HITS · UNSTOPPABLE!", state.streak_hits)
+            },
+            Color::srgb(1.0, 0.36, 0.16),
+            Color::srgba(1.0, 0.30, 0.12, 0.94),
+        )
+    } else if state.streak_hits >= 10 {
+        (
+            if zh {
+                format!("{} 连击 · 狂热!", state.streak_hits)
+            } else {
+                format!("{} HITS · FRENZY!", state.streak_hits)
+            },
+            Color::srgb(1.0, 0.74, 0.22),
+            Color::srgba(1.0, 0.66, 0.18, 0.90),
+        )
+    } else {
+        (
+            if zh {
+                format!("{} 连击!", state.streak_hits)
+            } else {
+                format!("{} HITS!", state.streak_hits)
+            },
+            Color::srgb(0.98, 0.92, 0.74),
+            Color::srgba(0.86, 0.68, 0.32, 0.80),
+        )
+    };
+
+    for (mut node, mut bc, mut ui_tf) in &mut root_q {
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        *bc = BorderColor::all(border);
+        ui_tf.scale = Vec2::splat(pop);
+    }
+    if visible {
+        for (mut text, mut tc) in &mut text_q {
+            if text.0 != label {
+                text.0 = label.clone();
+            }
+            tc.0 = fg;
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn reset_post_process_impacts(
+    mut state: ResMut<PostProcessImpactState>,
+    mut cameras: Query<(Option<&mut ChromaticAberration>, Option<&mut Vignette>), With<Camera3d>>,
+    mut root_q: Query<&mut Node, With<HitStreakHudRoot>>,
+) {
+    *state = PostProcessImpactState::default();
+    let (base_vig, base_col) = damage_vignette_params(0.0, 0.0, 0.0);
+    for (chroma, vignette) in &mut cameras {
+        if let Some(mut chroma) = chroma {
+            chroma.intensity = impact_chroma_intensity(0.0);
+        }
+        if let Some(mut vignette) = vignette {
+            vignette.intensity = base_vig;
+            vignette.color = base_col;
+        }
+    }
+    for mut node in &mut root_q {
+        node.display = Display::None;
+    }
 }
 
 fn update_hit_stop(
@@ -3006,6 +3272,19 @@ mod tests {
         let crit_settle = floating_text_pop_scale(0.36, true);
         assert!(crit_pop > normal_pop);
         assert!(crit_pop > crit_settle);
+
+        // Streak pitch escalates cleanly and clamps at +24%
+        assert_eq!(streak_pitch_multiplier(1), 1.0);
+        assert!(streak_pitch_multiplier(5) > streak_pitch_multiplier(2));
+        assert_eq!(streak_pitch_multiplier(25), streak_pitch_multiplier(9));
+
+        // Chromatic pulse & crimson damage vignette respond proportionally and restore cleanly
+        let mut impact = PostProcessImpactState::default();
+        impact.spike_chroma(0.11);
+        assert!(impact_chroma_intensity(impact.chroma_pulse) > impact_chroma_intensity(0.0));
+        let (base_v, _) = damage_vignette_params(0.0, 0.0, 0.0);
+        let (hurt_v, _) = damage_vignette_params(1.0, 0.5, 0.3);
+        assert!(hurt_v > base_v);
     }
 
     #[test]
