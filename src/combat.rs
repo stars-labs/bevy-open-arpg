@@ -1085,6 +1085,14 @@ fn player_attacks(
             let clip = crate::motion::class_basic_combo_motion(inputs.selected.0, 2);
             motion.play(clip, Some(cycle), true);
         }
+        crate::motion::queue_combo_smear(
+            &mut world.commands,
+            inputs.selected.0,
+            player_transform.translation,
+            facing,
+            2,
+            true,
+        );
         let dmg_mult = crate::motion::PlayerChargeState::damage_multiplier(charge_ratio);
         let imp_mult = crate::motion::PlayerChargeState::impact_multiplier(charge_ratio);
         let profile = StrikeProfile {
@@ -1161,6 +1169,14 @@ fn player_attacks(
             let combo_step = motion.advance_combo();
             let clip = crate::motion::class_basic_combo_motion(inputs.selected.0, combo_step);
             motion.play(clip, Some(cycle), false);
+            crate::motion::queue_combo_smear(
+                &mut world.commands,
+                inputs.selected.0,
+                player_transform.translation,
+                facing,
+                combo_step,
+                false,
+            );
         }
         let profile = StrikeProfile {
             damage: (class.basic.damage + damage_bonus) * total_multiplier,

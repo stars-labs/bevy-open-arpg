@@ -480,8 +480,10 @@ struct FloatingCombatText {
     timer: Timer,
     lifetime_secs: f32,
     velocity: Vec3,
+    gravity: f32,
     base_scale: Vec3,
     color: Color,
+    critical: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -698,12 +700,50 @@ fn floating_text_style(text: &str, critical: bool) -> FloatingTextStyle {
 }
 
 fn camera_shake_offset(elapsed_secs: f32, duration_secs: f32, intensity: f32) -> Vec3 {
-    let fade = (1.0 - elapsed_secs / duration_secs.max(0.001)).clamp(0.0, 1.0);
-    Vec3::new(
-        (elapsed_secs * 58.0).sin() * intensity * fade,
-        (elapsed_secs * 37.0).cos() * intensity * 0.35 * fade,
-        (elapsed_secs * 43.0).sin() * intensity * 0.5 * fade,
-    )
+    let t = (elapsed_secs / duration_secs.max(0.001)).clamp(0.0, 1.0);
+    let fade = (1.0 - t) * (1.0 - t);
+    let x = ((elapsed_secs * 62.0).sin() + 0.45 * (elapsed_secs * 108.0).cos()) * intensity * fade;
+    let y = ((elapsed_secs * 41.0).cos() + 0.35 * (elapsed_secs * 87.0).sin())
+        * intensity
+        * 0.42
+        * fade;
+    let z = ((elapsed_secs * 47.0).sin() + 0.40 * (elapsed_secs * 95.0).cos())
+        * intensity
+        * 0.55
+        * fade;
+    Vec3::new(x, y, z)
+}
+
+fn camera_zoom_punch_distance(elapsed_secs: f32, duration_secs: f32, intensity: f32) -> f32 {
+    if intensity < 0.045 || duration_secs <= 0.0 {
+        return 0.0;
+    }
+    let t = (elapsed_secs / duration_secs).clamp(0.0, 1.0);
+    // Fast snap-in over the first 22% of the impact, elastic ease-out over the remaining 78%
+    let curve = if t < 0.22 {
+        (t / 0.22).powf(0.55)
+    } else {
+        let r = ((1.0 - t) / 0.78).clamp(0.0, 1.0);
+        r * r
+    };
+    let strength = ((intensity - 0.04) / 0.12).clamp(0.0, 1.0);
+    (0.14 + strength * 0.28) * curve
+}
+
+fn floating_text_pop_scale(elapsed_ratio: f32, critical: bool) -> f32 {
+    let t = elapsed_ratio.clamp(0.0, 1.0);
+    let peak = if critical { 1.78 } else { 1.38 };
+    let settle = if critical { 1.14 } else { 1.0 };
+    if t < 0.14 {
+        let u = t / 0.14;
+        0.48 + (peak - 0.48) * (1.0 - (1.0 - u) * (1.0 - u))
+    } else if t < 0.34 {
+        let u = (t - 0.14) / 0.20;
+        peak + (settle - peak) * u * u
+    } else {
+        let u = (t - 0.34) / 0.66;
+        settle * (1.0 - u * 0.12)
+    }
 }
 
 fn collect_combat_events(
@@ -1375,10 +1415,19 @@ fn sound_cue_for_combat_event(text: &str) -> Option<SoundCue> {
 
 fn spawn_floating_combat_text(
     mut commands: Commands,
+    mut sequence: Local<u32>,
     mut events: MessageReader<FloatingCombatTextEvent>,
 ) {
     for event in events.read() {
         let style = floating_text_style(&event.text, event.critical);
+        *sequence = sequence.wrapping_add(1);
+        let angle = (*sequence as f32 * 2.399_963) % std::f32::consts::TAU;
+        let spread = if event.critical { 0.68 } else { 0.52 };
+        let initial_vel = Vec3::new(
+            angle.cos() * spread,
+            style.velocity.y * if event.critical { 1.48 } else { 1.32 },
+            angle.sin() * spread * 0.65,
+        );
         commands.spawn((
             Text2d::new(event.text.clone()),
             TextFont {
@@ -1386,13 +1435,18 @@ fn spawn_floating_combat_text(
                 ..default()
             },
             TextColor(style.color),
-            Transform::from_translation(event.position + Vec3::Y * 1.55).with_scale(style.scale),
+            Transform::from_translation(
+                event.position + Vec3::new(angle.cos() * 0.14, 1.52, angle.sin() * 0.10),
+            )
+            .with_scale(style.scale * 0.5),
             FloatingCombatText {
                 timer: Timer::from_seconds(style.lifetime_secs, TimerMode::Once),
                 lifetime_secs: style.lifetime_secs,
-                velocity: style.velocity,
+                velocity: initial_vel,
+                gravity: if event.critical { 2.4 } else { 2.1 },
                 base_scale: style.scale,
                 color: style.color,
+                critical: event.critical,
             },
         ));
     }
@@ -1410,6 +1464,7 @@ fn update_floating_combat_text(
     )>,
 ) {
     let camera_rotation = camera.single().ok().map(|transform| transform.rotation);
+    let dt = time.delta_secs();
     for (entity, mut floating, mut transform, mut text_color) in &mut texts {
         floating.timer.tick(time.delta());
         if floating.timer.is_finished() {
@@ -1420,12 +1475,23 @@ fn update_floating_combat_text(
         }
         let elapsed_ratio =
             (floating.timer.elapsed_secs() / floating.lifetime_secs).clamp(0.0, 1.0);
-        transform.translation += floating.velocity * time.delta_secs();
-        transform.scale = floating.base_scale * (1.0 + elapsed_ratio * 0.35);
+        // Ballistic fountain arc: pops up swiftly, decelerates smoothly at apex
+        floating.velocity.y = (floating.velocity.y - floating.gravity * dt).max(0.18);
+        floating.velocity.x *= (1.0 - dt * 2.4).max(0.0);
+        floating.velocity.z *= (1.0 - dt * 2.4).max(0.0);
+        transform.translation += floating.velocity * dt;
+        transform.scale =
+            floating.base_scale * floating_text_pop_scale(elapsed_ratio, floating.critical);
         if let Some(rotation) = camera_rotation {
             transform.rotation = rotation;
         }
-        text_color.0 = floating.color.with_alpha(1.0 - elapsed_ratio);
+        // Stay razor-sharp for first 62% of life, then snap-fade cleanly
+        let alpha = if elapsed_ratio < 0.62 {
+            1.0
+        } else {
+            (1.0 - (elapsed_ratio - 0.62) / 0.38).clamp(0.0, 1.0)
+        };
+        text_color.0 = floating.color.with_alpha(alpha);
     }
 }
 
@@ -2436,7 +2502,10 @@ fn update_camera_shake(
         state.intensity = 0.0;
         return;
     }
-    state.offset = camera_shake_offset(timer.elapsed_secs(), duration, intensity);
+    let shake = camera_shake_offset(timer.elapsed_secs(), duration, intensity);
+    let punch_dist = camera_zoom_punch_distance(timer.elapsed_secs(), duration, intensity);
+    let punch = transform.forward().as_vec3() * punch_dist;
+    state.offset = shake + punch;
     transform.translation += state.offset;
 }
 
@@ -2922,6 +2991,21 @@ mod tests {
 
         assert!(early > late);
         assert_eq!(camera_shake_offset(0.4, 0.4, 0.2), Vec3::ZERO);
+    }
+
+    #[test]
+    fn camera_zoom_punch_and_ballistic_crit_pop_peak_early_and_settle() {
+        assert_eq!(camera_zoom_punch_distance(0.05, 0.2, 0.02), 0.0);
+        let peak = camera_zoom_punch_distance(0.044, 0.2, 0.12);
+        let end = camera_zoom_punch_distance(0.2, 0.2, 0.12);
+        assert!(peak > 0.25);
+        assert_eq!(end, 0.0);
+
+        let crit_pop = floating_text_pop_scale(0.14, true);
+        let normal_pop = floating_text_pop_scale(0.14, false);
+        let crit_settle = floating_text_pop_scale(0.36, true);
+        assert!(crit_pop > normal_pop);
+        assert!(crit_pop > crit_settle);
     }
 
     #[test]

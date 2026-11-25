@@ -8,6 +8,7 @@ use crate::{
     not_paused,
     player::TalentBranch,
 };
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 
 #[derive(Message, Clone, Copy, Debug)]
@@ -38,7 +39,12 @@ impl Plugin for CombatPresentationPlugin {
             .add_message::<TalentProcFeedback>()
             .add_systems(
                 Update,
-                (show_contacts, show_talent_procs, animate_contacts)
+                (
+                    show_contacts,
+                    show_talent_procs,
+                    animate_contacts,
+                    animate_impact_sparks,
+                )
                     .chain()
                     .after(super::CombatSet::PlayerDamage)
                     .run_if(in_state(GameState::InGame).and_then(not_paused)),
@@ -198,9 +204,180 @@ fn contact_art(event: &ContactFeedback, class: HeroClass) -> ContactArt {
     ContactArt::for_skill(event.skill)
 }
 
+#[derive(Component)]
+struct ImpactSpark {
+    velocity: Vec3,
+    gravity: f32,
+    age: f32,
+    lifetime: f32,
+    base_scale: Vec3,
+    /// When true, scales radially like a shockwave ring rather than stretching along velocity.
+    ring_expand: bool,
+}
+
+fn impact_accent_color(art: ContactArt, critical: bool) -> Color {
+    if critical {
+        return Color::srgba(1.0, 0.88, 0.36, 0.96);
+    }
+    match art {
+        ContactArt::Steel => Color::srgba(1.0, 0.84, 0.56, 0.94),
+        ContactArt::Blood => Color::srgba(1.0, 0.22, 0.16, 0.94),
+        ContactArt::Ember => Color::srgba(1.0, 0.44, 0.10, 0.96),
+        ContactArt::Frost => Color::srgba(0.32, 0.88, 1.0, 0.94),
+        ContactArt::Reap => Color::srgba(0.24, 0.96, 0.82, 0.94),
+        ContactArt::Expose => Color::srgba(1.0, 0.72, 0.20, 0.94),
+        ContactArt::Cleanse | ContactArt::Vigor => Color::srgba(1.0, 0.96, 0.76, 0.92),
+        ContactArt::Focus => Color::srgba(0.68, 0.50, 1.0, 0.92),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_aaa_impact_burst(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    origin: Vec3,
+    direction: Vec3,
+    art: ContactArt,
+    strength: f32,
+    critical: bool,
+    killed: bool,
+) {
+    let dir = if direction.length_squared() > 1e-4 {
+        direction.normalize()
+    } else {
+        Vec3::Z
+    };
+    let right = Vec3::new(dir.z, 0.0, -dir.x).normalize_or_zero();
+    let color = impact_accent_color(art, critical);
+    let lin = LinearRgba::from(color);
+    let boost = if critical || killed { 5.2 } else { 3.6 };
+
+    // 1. Crisp 85ms hot-white/elemental hit-flash core right at the impact point
+    let core_color = Color::linear_rgba(
+        (lin.red * 0.45 + 0.55) * boost,
+        (lin.green * 0.45 + 0.55) * boost,
+        (lin.blue * 0.45 + 0.55) * boost,
+        0.96,
+    );
+    let core_mat = materials.add(StandardMaterial {
+        base_color: core_color,
+        emissive: LinearRgba::from(core_color),
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+    let flash_radius = (0.24 + strength.clamp(0.5, 2.0) * 0.14) * if critical { 1.35 } else { 1.0 };
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(flash_radius).mesh().ico(1).unwrap())),
+        MeshMaterial3d(core_mat.clone()),
+        Transform::from_translation(origin),
+        NotShadowCaster,
+        NotShadowReceiver,
+        ImpactSpark {
+            velocity: dir * 0.8,
+            gravity: 0.0,
+            age: 0.0,
+            lifetime: if critical { 0.11 } else { 0.085 },
+            base_scale: Vec3::new(1.35, 0.95, 1.35),
+            ring_expand: false,
+        },
+        Name::new("AAA Contact Hit Flash"),
+    ));
+
+    // 2. Directional razor hit-sparks spraying along the blade exit vector
+    let spark_mat = materials.add(StandardMaterial {
+        base_color: color,
+        emissive: lin * boost,
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+    let spark_mesh = meshes.add(Cone::new(0.032, 0.42));
+    let spark_count: usize = if killed {
+        8
+    } else if critical {
+        6
+    } else {
+        4
+    };
+    for i in 0..spark_count {
+        let frac = (i as f32 / (spark_count.max(1) as f32)) * 2.0 - 1.0;
+        let up_bias = 0.24 + ((i * 37) % 10) as f32 * 0.055;
+        let spread_dir = (dir * 1.15 + right * (frac * 0.82) + Vec3::Y * up_bias).normalize();
+        let speed = (4.6 + ((i * 53) % 7) as f32 * 0.95) * strength.clamp(0.8, 1.6);
+        let len_scale = if critical || killed { 1.45 } else { 1.05 };
+        commands.spawn((
+            Mesh3d(spark_mesh.clone()),
+            MeshMaterial3d(spark_mat.clone()),
+            Transform::from_translation(origin + spread_dir * 0.12)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, spread_dir))
+                .with_scale(Vec3::new(0.9, len_scale, 0.9)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            ImpactSpark {
+                velocity: spread_dir * speed,
+                gravity: -14.5,
+                age: 0.0,
+                lifetime: 0.17 + (i % 3) as f32 * 0.045,
+                base_scale: Vec3::new(0.9, len_scale, 0.9),
+                ring_expand: false,
+            },
+            Name::new("AAA Directional Hit Spark"),
+        ));
+    }
+
+    // 3. Critical cross-slash glint planes
+    if critical {
+        let glint_mesh = meshes.add(Cuboid::new(0.055, 1.35, 0.055));
+        for tilt in [-0.72_f32, 0.72] {
+            let rot = Quat::from_rotation_y(dir.x.atan2(dir.z)) * Quat::from_rotation_z(tilt);
+            commands.spawn((
+                Mesh3d(glint_mesh.clone()),
+                MeshMaterial3d(core_mat.clone()),
+                Transform::from_translation(origin).with_rotation(rot),
+                NotShadowCaster,
+                NotShadowReceiver,
+                ImpactSpark {
+                    velocity: Vec3::ZERO,
+                    gravity: 0.0,
+                    age: 0.0,
+                    lifetime: 0.14,
+                    base_scale: Vec3::new(1.0, 1.35, 1.0),
+                    ring_expand: false,
+                },
+                Name::new("AAA Crit Cross Glint"),
+            ));
+        }
+    }
+
+    // 4. Finishing-blow kill shockwave ring
+    if killed {
+        commands.spawn((
+            Mesh3d(meshes.add(Torus::new(0.32, 0.44))),
+            MeshMaterial3d(spark_mat),
+            Transform::from_translation(origin.with_y(0.14)).with_scale(Vec3::new(0.5, 0.4, 0.5)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            ImpactSpark {
+                velocity: Vec3::ZERO,
+                gravity: 0.0,
+                age: 0.0,
+                lifetime: 0.34,
+                base_scale: Vec3::new(2.6, 0.12, 2.6),
+                ring_expand: true,
+            },
+            Name::new("AAA Kill Finisher Ring"),
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn show_contacts(
     mut commands: Commands,
     assets: Res<GameAssets>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut events: MessageReader<ContactFeedback>,
     targets: Query<&Transform, Without<ContactParticle>>,
     selected: Res<SelectedClass>,
@@ -300,6 +477,21 @@ fn show_contacts(
             },
             yaw,
         );
+        if let (Some(mesh_assets), Some(mat_assets)) =
+            (meshes.as_deref_mut(), materials.as_deref_mut())
+        {
+            spawn_aaa_impact_burst(
+                &mut commands,
+                mesh_assets,
+                mat_assets,
+                event.position,
+                direction,
+                art,
+                event.strength,
+                event.critical,
+                event.killed,
+            );
+        }
     }
 }
 
@@ -362,8 +554,51 @@ fn animate_contacts(
     }
 }
 
-fn clear_contacts(mut commands: Commands, particles: Query<Entity, With<ContactParticle>>) {
+fn animate_impact_sparks(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut sparks: Query<(Entity, &mut ImpactSpark, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut spark, mut transform) in &mut sparks {
+        spark.age += dt;
+        let t = (spark.age / spark.lifetime.max(0.01)).clamp(0.0, 1.0);
+        if t >= 1.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        if spark.ring_expand {
+            let eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+            let r = 0.45 + eased * spark.base_scale.x;
+            let y = (1.0 - t).max(0.02) * 0.45;
+            transform.scale = Vec3::new(r, y, r);
+        } else {
+            spark.velocity.y += spark.gravity * dt;
+            transform.translation += spark.velocity * dt;
+            if spark.velocity.length_squared() > 0.25 {
+                let dir = spark.velocity.normalize();
+                transform.rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+            }
+            // Fast punch-in, crisp rapid decay
+            let shrink = (1.0 - t * t).max(0.02);
+            transform.scale = Vec3::new(
+                spark.base_scale.x * shrink,
+                spark.base_scale.y * (0.4 + shrink * 0.85),
+                spark.base_scale.z * shrink,
+            );
+        }
+    }
+}
+
+fn clear_contacts(
+    mut commands: Commands,
+    particles: Query<Entity, With<ContactParticle>>,
+    sparks: Query<Entity, With<ImpactSpark>>,
+) {
     for entity in &particles {
+        commands.entity(entity).despawn();
+    }
+    for entity in &sparks {
         commands.entity(entity).despawn();
     }
 }

@@ -2728,6 +2728,7 @@ fn bind_enemy_limbs(
 #[allow(clippy::type_complexity)]
 fn update_enemy_motion_states(
     time: Res<Time>,
+    real_time: Option<Res<Time<bevy::time::Real>>>,
     mut enemies: Query<(
         &Enemy,
         &EnemyAnimation,
@@ -2738,10 +2739,12 @@ fn update_enemy_motion_states(
         Option<&crate::player::Burning>,
         Option<&Chilled>,
         Option<&crate::combat::Vulnerable>,
+        Option<&crate::feedback::ContactPause>,
     )>,
 ) {
     let dt = time.delta_secs();
     let elapsed = time.elapsed_secs();
+    let real_elapsed = real_time.map_or(elapsed, |r| r.elapsed_secs());
     for (
         enemy,
         animation,
@@ -2752,8 +2755,13 @@ fn update_enemy_motion_states(
         burning,
         chilled,
         vulnerable,
+        contact_pause,
     ) in &mut enemies
     {
+        // Remove previous frame's zero-drift hitstop tremor before updating
+        transform.translation -= motion.tremor_offset;
+        motion.tremor_offset = Vec3::ZERO;
+
         // Status ailment posture priority: Staggered > Burning > Chilled > Vulnerable
         motion.status_motion = if staggered.is_some() {
             Some(
@@ -2805,6 +2813,25 @@ fn update_enemy_motion_states(
             pose.body_pitch * 0.75,
             pose.body_roll * 0.75,
         );
+
+        // AAA hitstop micro-tremor: victims violently vibrate at ~65Hz during contact freeze!
+        if let Some(pause) = contact_pause {
+            let freeze_strength = (1.0 - pause.animation_scale()).clamp(0.0, 1.0);
+            if freeze_strength > 0.12 {
+                let amp = 0.068 * freeze_strength;
+                let jitter = Vec3::new(
+                    (real_elapsed * 410.0).sin() * amp,
+                    (real_elapsed * 290.0).cos().abs() * amp * 0.25,
+                    (real_elapsed * 370.0).cos() * amp,
+                );
+                transform.translation += jitter;
+                motion.tremor_offset = jitter;
+                // Visceral impact squash compression during the freeze window
+                transform.scale.x *= 1.0 + 0.075 * freeze_strength;
+                transform.scale.y *= 1.0 - 0.065 * freeze_strength;
+                transform.scale.z *= 1.0 + 0.075 * freeze_strength;
+            }
+        }
     }
 }
 

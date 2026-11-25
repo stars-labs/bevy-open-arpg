@@ -3,6 +3,8 @@
 //! status ailments, consumables/interactions, bosses, summons, companions,
 //! and co-op/NPC emotes.
 use crate::{GameState, not_paused};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 /// High-level grouping for the 114 actions in [`MotionId`].
@@ -1227,18 +1229,27 @@ pub fn sample_motion_pose(id: MotionId, progress: f32, elapsed_secs: f32) -> Art
     let pi = std::f32::consts::PI;
     // Smooth bell curve peaking at 0.5, zero at endpoints
     let bell = (p * pi).sin();
-    // Sharp attack impulse peaking near 0.35
-    let snap = if p < 0.35 {
-        (p / 0.35).powf(0.65)
+    // AAA asymmetric impact curve: rapid exponential snap-in, weighty damped settle
+    let snap = if p < 0.28 {
+        let u = (p / 0.28).clamp(0.0, 1.0);
+        // Overshoots briefly to 1.12 at contact apex for crisp impact punch
+        (1.0 - (1.0 - u).powi(3)) * 1.12
     } else {
-        ((1.0 - p) / 0.65).max(0.0).powf(1.35)
+        let r = ((1.0 - p) / 0.72).clamp(0.0, 1.0);
+        r * r * (1.0 + 0.12 * r)
     };
-    // Windup-to-strike curve: negative coil (<0.38), positive release (>0.38)
-    let coil_strike = if p < 0.38 {
-        -(p / 0.38 * pi * 0.5).sin()
+    // AAA anticipation -> explosive release -> follow-through settle curve:
+    // slow cubic windup (<0.34), ultra-fast expo whip (0.34..0.56), heavy settle (>0.56)
+    let coil_strike = if p < 0.34 {
+        let u = (p / 0.34).clamp(0.0, 1.0);
+        -(u * u * (3.0 - 2.0 * u))
+    } else if p < 0.56 {
+        let u = ((p - 0.34) / 0.22).clamp(0.0, 1.0);
+        let fast_out = 1.0 - (1.0 - u).powi(4);
+        -1.0 + fast_out * 2.18
     } else {
-        let r = ((p - 0.38) / 0.62).clamp(0.0, 1.0);
-        (r * pi).sin()
+        let u = ((p - 0.56) / 0.44).clamp(0.0, 1.0);
+        1.18 * (1.0 - u * u)
     };
     let cyc = (elapsed_secs * tau).sin();
     let cyc_cos = (elapsed_secs * tau).cos();
@@ -2295,6 +2306,12 @@ pub struct MotionState {
     pub combo_reset_timer: f32,
     pub blended_pose: ArticulatedPose,
     pub emote_cursor: usize,
+    /// Previous frame's zero-drift hitstop micro-tremor offset (subtracted before re-applying).
+    pub tremor_offset: Vec3,
+    /// Previous speed for sprint acceleration lean & skid-stop inertia.
+    pub prev_speed: f32,
+    /// Tracks foot-plant phase crossings for subtle footstep dust puffs.
+    pub last_foot_sign: f32,
 }
 
 impl Default for MotionState {
@@ -2311,6 +2328,9 @@ impl Default for MotionState {
             combo_reset_timer: 0.0,
             blended_pose: ArticulatedPose::ZERO,
             emote_cursor: 0,
+            tremor_offset: Vec3::ZERO,
+            prev_speed: 0.0,
+            last_foot_sign: 1.0,
         }
     }
 }
@@ -2634,7 +2654,9 @@ impl Plugin for MotionPlugin {
                     observe_world_motion_triggers,
                     animate_merchant_npc_beckon,
                     update_player_charge_and_emotes,
+                    update_locomotion_inertia_and_dust,
                     update_motion_status_vfx,
+                    animate_combo_smears_and_dust,
                     update_motion_hud_badge,
                 )
                     .chain()
@@ -2799,6 +2821,295 @@ struct ChargeAuraRing;
 
 #[derive(Component)]
 struct StatusAuraRing;
+
+#[derive(Component)]
+struct ComboSmearVfx {
+    age: f32,
+    lifetime: f32,
+    sweep_speed: f32,
+    base_scale: Vec3,
+}
+
+#[derive(Component)]
+struct FootstepDustPuff {
+    age: f32,
+    lifetime: f32,
+    velocity: Vec3,
+    start_scale: f32,
+    end_scale: f32,
+}
+
+/// Vertex-colored tapered crescent smear mesh: blazing leading edge fading to black tail
+/// so `AlphaMode::Add` draws a crisp AAA sword/staff arc with zero hard edges.
+fn combo_smear_mesh(inner_r: f32, outer_r: f32, sweep_rad: f32, segments: usize) -> Mesh {
+    let segs = segments.max(10);
+    let mut positions = Vec::with_capacity((segs + 1) * 2);
+    let mut normals = Vec::with_capacity((segs + 1) * 2);
+    let mut colors = Vec::with_capacity((segs + 1) * 2);
+    let mut indices = Vec::with_capacity(segs * 6);
+
+    for i in 0..=segs {
+        let t = i as f32 / segs as f32;
+        let angle = -sweep_rad * 0.5 + t * sweep_rad;
+        let (s, c) = angle.sin_cos();
+        // Leading edge (t -> 1.0) is thickest & hottest; trailing tail (t -> 0.0) tapers to zero
+        let width_profile = (t * std::f32::consts::PI).sin().powf(0.55) * (0.25 + 0.75 * t);
+        let r_in = outer_r - (outer_r - inner_r) * width_profile;
+        let bright = t.powf(1.6);
+        let inner_bright = bright * 0.35;
+
+        positions.push([s * r_in, 0.0, c * r_in]);
+        normals.push([0.0, 1.0, 0.0]);
+        colors.push([inner_bright, inner_bright, inner_bright, inner_bright]);
+
+        positions.push([s * outer_r, 0.0, c * outer_r]);
+        normals.push([0.0, 1.0, 0.0]);
+        colors.push([bright, bright, bright, bright]);
+    }
+
+    for i in 0..segs as u32 {
+        let a = i * 2;
+        let b = a + 1;
+        let c = a + 2;
+        let d = a + 3;
+        indices.extend_from_slice(&[a, b, d, a, d, c]);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Queue a class-colored angled 3-hit combo blade/staff crescent smear at `origin`.
+pub fn queue_combo_smear(
+    commands: &mut Commands,
+    class: crate::class::HeroClass,
+    origin: Vec3,
+    facing: Vec3,
+    combo_step: u8,
+    charged: bool,
+) {
+    commands.queue(move |world: &mut World| {
+        if world.get_resource::<Assets<Mesh>>().is_none()
+            || world.get_resource::<Assets<StandardMaterial>>().is_none()
+        {
+            return;
+        }
+        let step = combo_step % 3;
+        let (base_color, boost) = match class {
+            crate::class::HeroClass::Warden => {
+                if charged || step == 2 {
+                    (Color::srgba(1.0, 0.72, 0.22, 0.96), 4.6)
+                } else {
+                    (Color::srgba(1.0, 0.88, 0.64, 0.92), 3.4)
+                }
+            }
+            crate::class::HeroClass::Stalker => (Color::srgba(0.24, 0.96, 0.74, 0.92), 3.8),
+            crate::class::HeroClass::Embercaller => (Color::srgba(1.0, 0.42, 0.10, 0.96), 4.4),
+            crate::class::HeroClass::Soulbinder => (Color::srgba(0.26, 0.90, 0.96, 0.92), 3.8),
+        };
+        let outer_r = if charged {
+            2.35
+        } else if step == 2 {
+            2.05
+        } else {
+            1.68
+        };
+        let inner_r = outer_r * 0.56;
+        let sweep = if charged || step == 2 { 2.35 } else { 1.88 };
+        let mesh = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(combo_smear_mesh(inner_r, outer_r, sweep, 18));
+        let lin = LinearRgba::from(base_color) * boost;
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color,
+                emissive: lin,
+                unlit: true,
+                cull_mode: None,
+                alpha_mode: AlphaMode::Add,
+                ..default()
+            });
+
+        let yaw = facing.x.atan2(facing.z);
+        // Distinct 3-hit combo slash planes: diagonal right->left, reverse left->right, vertical overhead smash!
+        let (roll, sweep_speed, height) = match (step, charged) {
+            (_, true) => (std::f32::consts::FRAC_PI_2 * 0.86, 8.8, 1.18),
+            (0, false) => (0.36, 7.6, 1.04),
+            (1, false) => (-0.42, -7.8, 1.08),
+            _ => (std::f32::consts::FRAC_PI_2 * 0.82, 8.4, 1.16),
+        };
+        world.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::from_translation(origin + Vec3::Y * height + facing * 0.25)
+                .with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(roll))
+                .with_scale(Vec3::new(0.85, 1.0, 0.85)),
+            bevy::light::NotShadowCaster,
+            bevy::light::NotShadowReceiver,
+            ComboSmearVfx {
+                age: 0.0,
+                lifetime: if charged { 0.24 } else { 0.18 },
+                sweep_speed,
+                base_scale: Vec3::ONE,
+            },
+            Name::new("AAA Combo Blade Smear"),
+        ));
+    });
+}
+
+fn spawn_dust_puff(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    position: Vec3,
+    velocity: Vec3,
+    heavy: bool,
+) {
+    let color = if heavy {
+        Color::srgba(0.68, 0.56, 0.44, 0.55)
+    } else {
+        Color::srgba(0.54, 0.46, 0.38, 0.42)
+    };
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(0.11).mesh().ico(1).unwrap())),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: color,
+            emissive: LinearRgba::from(color) * 0.55,
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            ..default()
+        })),
+        Transform::from_translation(position),
+        bevy::light::NotShadowCaster,
+        bevy::light::NotShadowReceiver,
+        FootstepDustPuff {
+            age: 0.0,
+            lifetime: if heavy { 0.34 } else { 0.24 },
+            velocity,
+            start_scale: if heavy { 0.75 } else { 0.55 },
+            end_scale: if heavy { 2.4 } else { 1.65 },
+        },
+        Name::new("AAA Footstep Dust Puff"),
+    ));
+}
+
+#[allow(clippy::type_complexity)]
+fn update_locomotion_inertia_and_dust(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut player: Query<
+        (
+            &Transform,
+            &crate::player::Velocity,
+            Option<&crate::player::Evade>,
+            &mut MotionState,
+        ),
+        With<crate::player::Player>,
+    >,
+) {
+    let Ok((transform, velocity, evade, mut motion)) = player.single_mut() else {
+        return;
+    };
+    let speed = velocity.0.length();
+    let prev_speed = motion.prev_speed;
+    motion.prev_speed = speed;
+    let evading = evade.is_some_and(|e| crate::player::evade_seconds_remaining(e) > 0.0);
+
+    // 1. Abrupt sprint-to-stop skid inertia!
+    if !evading && prev_speed > 3.4 && speed < 0.75 && motion.action.is_none() {
+        motion.play(MotionId::StopSkidRecover, None, false);
+        if let (Some(mesh_assets), Some(mat_assets)) =
+            (meshes.as_deref_mut(), materials.as_deref_mut())
+        {
+            for side in [-0.24_f32, 0.24] {
+                spawn_dust_puff(
+                    &mut commands,
+                    mesh_assets,
+                    mat_assets,
+                    transform.translation + Vec3::new(side, 0.08, 0.0),
+                    Vec3::new(side * 1.4, 0.65, 0.0),
+                    true,
+                );
+            }
+        }
+        return;
+    }
+
+    // 2. Foot-plant ash dust puffs synced to sprint stride cadence
+    if !evading && speed > 2.2 {
+        let cadence = (time.elapsed_secs() * (7.2 + speed * 0.62)).sin();
+        let sign = if cadence >= 0.0 { 1.0 } else { -1.0 };
+        if sign != motion.last_foot_sign {
+            motion.last_foot_sign = sign;
+            if let (Some(mesh_assets), Some(mat_assets)) =
+                (meshes.as_deref_mut(), materials.as_deref_mut())
+            {
+                let forward = velocity.0.normalize_or_zero();
+                let right = Vec3::new(forward.z, 0.0, -forward.x);
+                let foot_pos = transform.translation + right * (sign * 0.22) + Vec3::Y * 0.06;
+                spawn_dust_puff(
+                    &mut commands,
+                    mesh_assets,
+                    mat_assets,
+                    foot_pos,
+                    -forward * 0.75 + Vec3::Y * 0.45 + right * (sign * 0.25),
+                    speed > 5.2,
+                );
+            }
+        }
+    }
+}
+
+fn animate_combo_smears_and_dust(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut smears: Query<(Entity, &mut ComboSmearVfx, &mut Transform), Without<FootstepDustPuff>>,
+    mut puffs: Query<(Entity, &mut FootstepDustPuff, &mut Transform), Without<ComboSmearVfx>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut smear, mut tf) in &mut smears {
+        smear.age += dt;
+        let t = (smear.age / smear.lifetime.max(0.01)).clamp(0.0, 1.0);
+        if t >= 1.0 {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+        // Whip fast through the swing arc, expand slightly, then snap-shrink cleanly
+        tf.rotate_local_y(smear.sweep_speed * dt * (1.0 - t * 0.45));
+        let scale_xz = 0.88 + (1.0 - (1.0 - t).powi(3)) * 0.36;
+        let fade_y = (1.0 - t * t).max(0.04);
+        tf.scale = Vec3::new(
+            smear.base_scale.x * scale_xz,
+            smear.base_scale.y * fade_y,
+            smear.base_scale.z * scale_xz,
+        );
+    }
+
+    for (entity, mut puff, mut tf) in &mut puffs {
+        puff.age += dt;
+        let t = (puff.age / puff.lifetime.max(0.01)).clamp(0.0, 1.0);
+        if t >= 1.0 {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+        tf.translation += puff.velocity * dt * (1.0 - t * 0.7);
+        let r = puff
+            .start_scale
+            .lerp(puff.end_scale, 1.0 - (1.0 - t).powi(2));
+        let squash = (1.0 - t).max(0.05) * 0.55;
+        tf.scale = Vec3::new(r, r * squash, r);
+    }
+}
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_motion_status_vfx(
@@ -3051,6 +3362,8 @@ fn cleanup_motion_runtime(
     mut charge: ResMut<PlayerChargeState>,
     charge_rings: Query<Entity, With<ChargeAuraRing>>,
     status_rings: Query<Entity, With<StatusAuraRing>>,
+    smears: Query<Entity, With<ComboSmearVfx>>,
+    puffs: Query<Entity, With<FootstepDustPuff>>,
     mut badge: Query<&mut Node, With<MotionHudBadgeRoot>>,
 ) {
     *charge = PlayerChargeState::default();
@@ -3058,6 +3371,12 @@ fn cleanup_motion_runtime(
         commands.entity(e).try_despawn();
     }
     for e in &status_rings {
+        commands.entity(e).try_despawn();
+    }
+    for e in &smears {
+        commands.entity(e).try_despawn();
+    }
+    for e in &puffs {
         commands.entity(e).try_despawn();
     }
     for mut node in &mut badge {
@@ -3247,6 +3566,38 @@ mod tests {
         assert_eq!(
             app.world().get::<MotionState>(hero).unwrap().status_motion,
             Some(MotionId::StatusJailedStrain)
+        );
+    }
+
+    #[test]
+    fn combo_smear_mesh_has_vertex_colors_and_skid_stop_triggers_on_abrupt_halt() {
+        let smear = combo_smear_mesh(0.9, 1.8, 2.0, 14);
+        assert!(smear.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+        assert!(smear.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+        assert!(smear.indices().is_some());
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .add_systems(Update, update_locomotion_inertia_and_dust);
+        let hero = app
+            .world_mut()
+            .spawn((
+                crate::player::Player,
+                Transform::default(),
+                crate::player::Velocity(Vec3::Z * 4.5),
+                MotionState::default(),
+            ))
+            .id();
+        app.update();
+        // Abruptly halt from sprint -> triggers StopSkidRecover inertia motion
+        app.world_mut()
+            .get_mut::<crate::player::Velocity>(hero)
+            .unwrap()
+            .0 = Vec3::ZERO;
+        app.update();
+        assert_eq!(
+            app.world().get::<MotionState>(hero).unwrap().action,
+            Some(MotionId::StopSkidRecover)
         );
     }
 }
